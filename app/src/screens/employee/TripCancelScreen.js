@@ -17,7 +17,7 @@ function sourceLabel(source) {
   return source === SOURCE.ROSTER ? 'Self Roster' : 'Adhoc';
 }
 
-export default function TripCancelScreen() {
+export default function TripCancelScreen({ navigation }) {
   const { myActiveBookings, cancelBooking } = useApp();
   const rides = myActiveBookings();
 
@@ -75,6 +75,16 @@ export default function TripCancelScreen() {
         )}
       />
 
+      {/* Always-visible return to Home */}
+      <Button
+        mode="contained"
+        icon="home"
+        style={styles.homeBtn}
+        onPress={() => navigation.navigate('EmployeeHome')}
+      >
+        Back to Home
+      </Button>
+
       {/* Confirmation dialog */}
       <Portal>
         <Dialog visible={!!toCancel} onDismiss={() => setToCancel(null)}>
@@ -115,4 +125,5 @@ const styles = StyleSheet.create({
   detail: { opacity: 0.8, marginTop: 2 },
   cancelBtn: { marginTop: 12, borderColor: '#C62828', alignSelf: 'flex-start' },
   empty: { textAlign: 'center', marginTop: 40, opacity: 0.6 },
+  homeBtn: { margin: 12, paddingVertical: 4 },
 });

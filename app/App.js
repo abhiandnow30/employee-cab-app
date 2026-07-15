@@ -60,6 +60,12 @@ function AppHeader({ navigation, route, options, back }) {
           color="#FFFFFF"
           titleStyle={styles.appbarTitle}
           style={styles.appbarContent}
+          // Tapping the brand title returns to the role's home screen.
+          onPress={
+            currentUser
+              ? () => navigation.navigate(isEmployee ? 'EmployeeHome' : 'Bookings')
+              : undefined
+          }
         />
         {/* Only offer Log out once actually signed in (not on the OTP step). */}
         {currentUser ? (

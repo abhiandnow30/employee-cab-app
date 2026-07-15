@@ -89,18 +89,21 @@ export default function BookCabScreen({ navigation }) {
   return (
     <View style={styles.flex}>
       <ScrollView contentContainerStyle={styles.content}>
-        {/* Page title + CANCEL (discards the form and returns home) */}
+        {/* Centered "Adhoc" title with CANCEL on the right */}
         <View style={styles.titleRow}>
+          <View style={styles.side} />
           <Text variant="titleLarge" style={styles.pageTitle}>
             Adhoc
           </Text>
-          <Text
-            variant="titleMedium"
-            style={styles.cancel}
-            onPress={() => navigation.navigate('EmployeeHome')}
-          >
-            CANCEL
-          </Text>
+          <View style={[styles.side, styles.sideRight]}>
+            <Text
+              variant="titleMedium"
+              style={styles.cancel}
+              onPress={() => navigation.navigate('EmployeeHome')}
+            >
+              CANCEL
+            </Text>
+          </View>
         </View>
 
         <Text variant="labelLarge" style={styles.label}>
@@ -196,11 +199,12 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
   titleRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 4,
   },
-  pageTitle: { fontWeight: 'bold' },
+  side: { flex: 1 },
+  sideRight: { alignItems: 'flex-end' },
+  pageTitle: { fontWeight: 'bold', textAlign: 'center' },
   cancel: { color: '#D32F2F', fontWeight: 'bold' },
   label: { marginTop: 16, marginBottom: 6 },
   comment: { marginTop: 2 },
