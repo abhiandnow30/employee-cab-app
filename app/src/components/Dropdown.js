@@ -21,6 +21,7 @@ export default function Dropdown({
   compact = true,
   format = (v) => String(v),
   placeholder = 'Select',
+  disabled = false,
 }) {
   const [visible, setVisible] = useState(false);
 
@@ -33,6 +34,7 @@ export default function Dropdown({
           mode="outlined"
           compact={compact}
           icon="chevron-down"
+          disabled={disabled}
           contentStyle={{ flexDirection: 'row-reverse' }} // icon on the right
           onPress={() => setVisible(true)}
         >

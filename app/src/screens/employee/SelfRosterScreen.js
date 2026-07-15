@@ -13,6 +13,7 @@ import { Text, IconButton, Button, Divider, HelperText } from 'react-native-pape
 import Dropdown from '../../components/Dropdown';
 import { useApp } from '../../context/AppContext';
 import { PICKUP_TIMES, DROP_TIMES, NONE, WEEKDAYS, SOURCE } from '../../data/mockData';
+import { isPastDateKey, isPastDateTime, futureTimesForDate } from '../../utils/datetime';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -115,6 +116,8 @@ export default function SelfRosterScreen({ navigation }) {
         const ex = existingFor(d.key, leg);
 
         if (value !== NONE) {
+          // Never create a booking in the past.
+          if (isPastDateTime(d.key, value)) return;
           // A time is chosen: create if new, or replace if the time changed.
           if (!ex) {
             toCreate.push({ source: SOURCE.ROSTER, date: d.key, shift: value, direction: DIRECTION[leg], pickup: PICKUP_LOC[leg] });
@@ -179,30 +182,37 @@ export default function SelfRosterScreen({ navigation }) {
 
       {/* Table rows */}
       <ScrollView contentContainerStyle={styles.scroll}>
-        {days.map((d) => (
-          <View key={d.key} style={[styles.row, d.isWeekend && styles.weekendRow]}>
-            <View style={[styles.cell, styles.colDate]}>
-              <Text variant="titleSmall">{d.label}</Text>
-              <Text variant="bodySmall" style={styles.dateSub}>
-                {d.display}
-              </Text>
+        {days.map((d) => {
+          const past = isPastDateKey(d.key); // whole day already gone
+          return (
+            <View key={d.key} style={[styles.row, d.isWeekend && styles.weekendRow]}>
+              <View style={[styles.cell, styles.colDate]}>
+                <Text variant="titleSmall" style={past && styles.pastText}>
+                  {d.label}
+                </Text>
+                <Text variant="bodySmall" style={[styles.dateSub, past && styles.pastText]}>
+                  {d.display}
+                </Text>
+              </View>
+              <View style={[styles.cell, styles.colLeg]}>
+                <Dropdown
+                  value={cellValue(d.key, 'pickup')}
+                  options={futureTimesForDate(d.key, PICKUP_TIMES)}
+                  onSelect={(v) => setLeg(d.key, 'pickup', v)}
+                  disabled={past}
+                />
+              </View>
+              <View style={[styles.cell, styles.colLeg]}>
+                <Dropdown
+                  value={cellValue(d.key, 'drop')}
+                  options={futureTimesForDate(d.key, DROP_TIMES)}
+                  onSelect={(v) => setLeg(d.key, 'drop', v)}
+                  disabled={past}
+                />
+              </View>
             </View>
-            <View style={[styles.cell, styles.colLeg]}>
-              <Dropdown
-                value={cellValue(d.key, 'pickup')}
-                options={PICKUP_TIMES}
-                onSelect={(v) => setLeg(d.key, 'pickup', v)}
-              />
-            </View>
-            <View style={[styles.cell, styles.colLeg]}>
-              <Dropdown
-                value={cellValue(d.key, 'drop')}
-                options={DROP_TIMES}
-                onSelect={(v) => setLeg(d.key, 'drop', v)}
-              />
-            </View>
-          </View>
-        ))}
+          );
+        })}
 
         {error ? (
           <HelperText type="error" visible={true}>
@@ -243,6 +253,7 @@ const styles = StyleSheet.create({
   colDate: { flex: 1 },
   colLeg: { flex: 1.4, alignItems: 'flex-start' },
   dateSub: { opacity: 0.6 },
+  pastText: { opacity: 0.35 },
   scroll: { paddingBottom: 24 },
   buttonRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
   actionBtn: { flex: 1, paddingVertical: 4 },

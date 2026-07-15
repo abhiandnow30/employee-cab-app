@@ -17,6 +17,7 @@ import {
   SHIFT_TIMES,
   SOURCE,
 } from '../../data/mockData';
+import { futureTimesForDate, isPastDateTime } from '../../utils/datetime';
 
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -59,10 +60,23 @@ export default function BookCabScreen({ navigation }) {
   const [comment, setComment] = useState('');
   const [error, setError] = useState('');
 
+  // For today, hide shift times that have already passed.
+  const shiftOptions = date ? futureTimesForDate(date, SHIFT_TIMES) : SHIFT_TIMES;
+
+  // Changing the date may make the chosen shift invalid (e.g. today, past time).
+  function handleDateChange(newDate) {
+    setDate(newDate);
+    if (shift && isPastDateTime(newDate, shift)) setShift('');
+  }
+
   function handleRaise() {
     setError('');
     if (!officeLocation || !reason || !requestType || !date || !shift) {
       setError('Please fill Office location, Reason, Request Type, Date and Shift.');
+      return;
+    }
+    if (isPastDateTime(date, shift)) {
+      setError('That date/time has already passed. Please pick a future time.');
       return;
     }
 
@@ -145,7 +159,7 @@ export default function BookCabScreen({ navigation }) {
           value={date}
           placeholder="Select a date"
           options={dateOptions}
-          onSelect={setDate}
+          onSelect={handleDateChange}
           format={(iso) => formatDate(iso, todayIso)}
           compact={false}
         />
@@ -156,7 +170,7 @@ export default function BookCabScreen({ navigation }) {
         <Dropdown
           value={shift}
           placeholder="Select shift time"
-          options={SHIFT_TIMES}
+          options={shiftOptions}
           onSelect={setShift}
           compact={false}
         />
