@@ -55,7 +55,12 @@ function AppHeader({ navigation, route, options, back }) {
         ) : back ? (
           <Appbar.BackAction color="#FFFFFF" onPress={navigation.goBack} />
         ) : null}
-        <Appbar.Content title={title} color="#FFFFFF" titleStyle={styles.appbarTitle} />
+        <Appbar.Content
+          title={title}
+          color="#FFFFFF"
+          titleStyle={styles.appbarTitle}
+          style={styles.appbarContent}
+        />
         {/* Only offer Log out once actually signed in (not on the OTP step). */}
         {currentUser ? (
           <Appbar.Action icon="logout" color="#FFFFFF" onPress={logout} />
@@ -193,5 +198,6 @@ export default function App() {
 
 const styles = StyleSheet.create({
   appbar: { backgroundColor: colors.primary },
-  appbarTitle: { fontWeight: 'bold', letterSpacing: 0.3 },
+  appbarContent: { alignItems: 'center' },
+  appbarTitle: { fontWeight: 'bold', letterSpacing: 0.3, textAlign: 'center' },
 });

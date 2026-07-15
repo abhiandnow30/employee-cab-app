@@ -101,8 +101,11 @@ export default function EmployeeHomeScreen({ navigation }) {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text variant="titleMedium" style={styles.services}>
-        My Services - [{currentUser?.empId || '—'}]
+      <Text variant="titleLarge" style={styles.empName}>
+        {currentUser?.name || 'Employee'}
+      </Text>
+      <Text variant="bodyMedium" style={styles.services}>
+        Employee ID: {currentUser?.empId || '—'}
       </Text>
 
       {/* Top action tiles */}
@@ -142,7 +145,8 @@ export default function EmployeeHomeScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { padding: 16 },
-  services: { color: colors.muted, marginBottom: 16, fontWeight: '600' },
+  empName: { fontWeight: 'bold', color: colors.text },
+  services: { color: colors.muted, marginBottom: 16, marginTop: 2 },
   tileRow: { flexDirection: 'row', gap: 12, marginBottom: 24 },
   tile: { flex: 1, borderRadius: 16 },
   tileContent: { alignItems: 'center', justifyContent: 'center', paddingVertical: 18, gap: 10 },
