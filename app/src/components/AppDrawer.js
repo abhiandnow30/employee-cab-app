@@ -16,6 +16,9 @@ export const DRAWER_ITEMS = [
   { label: 'View Roster', icon: 'calendar-search', screen: 'MyRides' },
   { label: 'Roster History', icon: 'history', screen: 'RosterHistory' },
   { label: 'Trip Cancel', icon: 'car-off', screen: 'TripCancel' },
+  { label: 'Track Cab', icon: 'map-marker-radius', screen: 'TrackCab' },
+  { label: 'Driver (demo)', icon: 'steering', screen: 'DriverSim' },
+  { label: 'Driver (live GPS)', icon: 'crosshairs-gps', screen: 'DriverLive' },
   { label: 'Feedback', icon: 'message-text', screen: 'Feedback' },
   { label: 'Rate Us', icon: 'star', screen: 'RateUs' },
 ];

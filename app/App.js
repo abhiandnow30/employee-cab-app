@@ -27,6 +27,9 @@ import MyRidesScreen from './src/screens/employee/MyRidesScreen';
 import BookCabScreen from './src/screens/employee/BookCabScreen';
 import RosterHistoryScreen from './src/screens/employee/RosterHistoryScreen';
 import TripCancelScreen from './src/screens/employee/TripCancelScreen';
+import TrackCabScreen from './src/screens/employee/TrackCabScreen';
+import DriverSimScreen from './src/screens/employee/DriverSimScreen';
+import DriverLiveScreen from './src/screens/employee/DriverLiveScreen';
 import RateUsScreen from './src/screens/employee/RateUsScreen';
 import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
@@ -150,6 +153,21 @@ function RootNavigator() {
               name="TripCancel"
               component={TripCancelScreen}
               options={{ title: 'Trip Cancel' }}
+            />
+            <Stack.Screen
+              name="TrackCab"
+              component={TrackCabScreen}
+              options={{ title: 'Track Cab' }}
+            />
+            <Stack.Screen
+              name="DriverSim"
+              component={DriverSimScreen}
+              options={{ title: 'Driver (demo)' }}
+            />
+            <Stack.Screen
+              name="DriverLive"
+              component={DriverLiveScreen}
+              options={{ title: 'Driver (live GPS)' }}
             />
             <Stack.Screen
               name="RateUs"
