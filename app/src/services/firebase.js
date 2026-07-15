@@ -39,7 +39,7 @@ if (isFirebaseConfigured) {
   database = getDatabase(app);
 } else {
   console.warn(
-    '[firebase] Not configured yet — fill in src/firebaseConfig.js to enable live tracking.'
+    '[firebase] Not configured yet — fill in src/services/firebase.js to enable live tracking.'
   );
 }
 

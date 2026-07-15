@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { ref, onValue, set } from 'firebase/database';
-import { db } from '../firebaseConfig';
+import { db } from './firebase';
 
 // Where a given cab's live location lives in the database.
 function cabLocationRef(cabId) {
