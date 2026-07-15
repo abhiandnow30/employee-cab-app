@@ -4,18 +4,21 @@
 // automatically switches to the employee or admin screens (see App.js).
 // ---------------------------------------------------------------------------
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { StyleSheet, View, KeyboardAvoidingView, Platform } from 'react-native';
 import { Text, TextInput, Button, HelperText, Card } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../context/AppContext';
+import { colors } from '../theme';
 
-export default function LoginScreen() {
-  const { login } = useApp();
+export default function LoginScreen({ navigation }) {
+  const { verifyCredentials } = useApp();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const passwordRef = useRef(null); // lets Enter on the email field jump here
 
   function handleLogin() {
     setError('');
@@ -23,12 +26,13 @@ export default function LoginScreen() {
       setError('Please enter both email and password.');
       return;
     }
-    const result = login(email, password);
+    const result = verifyCredentials(email, password);
     if (!result.ok) {
       setError(result.message);
+      return;
     }
-    // On success we do nothing here — App.js notices the user is logged in
-    // and shows the right home screen automatically.
+    // Credentials are good — go to the OTP screen to finish signing in.
+    navigation.navigate('Otp', { email: result.user.email });
   }
 
   return (
@@ -37,8 +41,11 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.inner}>
+        <View style={styles.logoCircle}>
+          <MaterialCommunityIcons name="car-multiple" size={40} color="#FFFFFF" />
+        </View>
         <Text variant="headlineMedium" style={styles.title}>
-          Employee Cab
+          Cab Service
         </Text>
         <Text variant="bodyMedium" style={styles.subtitle}>
           Book your company cab
@@ -53,9 +60,13 @@ export default function LoginScreen() {
           keyboardType="email-address"
           left={<TextInput.Icon icon="email" />}
           style={styles.input}
+          returnKeyType="next"
+          onSubmitEditing={() => passwordRef.current?.focus()}
+          blurOnSubmit={false}
         />
 
         <TextInput
+          ref={passwordRef}
           label="Password"
           value={password}
           onChangeText={setPassword}
@@ -69,6 +80,8 @@ export default function LoginScreen() {
             />
           }
           style={styles.input}
+          returnKeyType="go"
+          onSubmitEditing={handleLogin}
         />
 
         {error ? (
@@ -78,7 +91,7 @@ export default function LoginScreen() {
         ) : null}
 
         <Button mode="contained" onPress={handleLogin} style={styles.button}>
-          Log in
+          Continue
         </Button>
 
         {/* Demo helper — remove once real login exists. */}
@@ -97,7 +110,17 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   inner: { flex: 1, justifyContent: 'center', padding: 24 },
-  title: { textAlign: 'center', fontWeight: 'bold' },
+  logoCircle: {
+    alignSelf: 'center',
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  title: { textAlign: 'center', fontWeight: 'bold', color: colors.primary },
   subtitle: { textAlign: 'center', marginBottom: 28, opacity: 0.7 },
   input: { marginBottom: 12 },
   button: { marginTop: 8, paddingVertical: 4 },

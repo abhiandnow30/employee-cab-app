@@ -12,6 +12,7 @@
 export const employees = [
   {
     id: 'u1',
+    empId: '900093452', // shown in the "My Services - [ ... ]" header
     name: 'Roopa Y',
     email: 'employee@demo.com',
     password: '1234',
@@ -20,6 +21,7 @@ export const employees = [
   },
   {
     id: 'u2',
+    empId: '900000001',
     name: 'Transport Desk',
     email: 'admin@demo.com',
     password: '1234',
@@ -48,6 +50,7 @@ export const initialBookings = [
     pickup: 'Gachibowli',
     status: 'Booked', // Booked → Cab assigned  (more statuses come later)
     assignedCabId: null,
+    source: 'roster',
   },
 ];
 
@@ -61,8 +64,51 @@ export const SHIFT_OPTIONS = [
 
 export const DIRECTION_OPTIONS = ['Home → Office', 'Office → Home'];
 
+// A single fixed OTP for the demo. Later, the backend sends a real code by SMS.
+export const TEST_OTP = '123456';
+
+// Shift times shown in the Self Roster table.
+// "Pickup" = cab picks you up from home to office (morning-ish times).
+// "Drop"   = cab drops you home from office (evening-ish times).
+// "NA" is the default (no ride that leg), matching the reference design.
+export const NONE = 'NA';
+export const PICKUP_TIMES = [NONE, '07:00 AM', '08:00 AM', '09:00 AM', '10:00 AM'];
+export const DROP_TIMES = [NONE, '05:00 PM', '06:00 PM', '07:00 PM', '09:00 PM'];
+
+export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// --- Ad-hoc request form options ---
+export const OFFICE_LOCATIONS = ['Vamsiram building'];
+
+export const REASONS = [
+  'Extended Shift Hours',
+  'Personal Emergency',
+  'Roaster not updated',
+  'Other',
+];
+
+// Pick = cab picks you up from home (Home → Office).
+// Drop = cab drops you home from office (Office → Home).
+export const REQUEST_TYPES = ['Pick', 'Drop'];
+
+// All shift times an ad-hoc request can choose from (morning + evening).
+export const SHIFT_TIMES = [
+  '07:00 AM',
+  '08:00 AM',
+  '09:00 AM',
+  '10:00 AM',
+  '05:00 PM',
+  '06:00 PM',
+  '07:00 PM',
+  '09:00 PM',
+];
+
+// Where a booking came from — used by the home "My ORS" / "My Adhoc" lists.
+export const SOURCE = { ROSTER: 'roster', ADHOC: 'adhoc' };
+
 // The stages a booking moves through. Used for coloring status chips.
 export const STATUS = {
   BOOKED: 'Booked',
   ASSIGNED: 'Cab assigned',
+  CANCELLED: 'Cancelled',
 };

@@ -25,18 +25,29 @@ export function AppProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null); // null = logged out
   const [bookings, setBookings] = useState(initialBookings);
   const [cabs] = useState(initialCabs);
+  const [feedbacks, setFeedbacks] = useState([]);
+  const [ratings, setRatings] = useState([]);
 
   // --- Auth ---------------------------------------------------------------
-  // Returns { ok: true } on success, or { ok: false, message } on failure.
-  function login(email, password) {
+  // Step 1: check email + password. Does NOT log the user in yet — the OTP
+  // screen does that. Returns { ok, message?, user? }.
+  function verifyCredentials(email, password) {
     const user = employees.find(
       (e) => e.email.toLowerCase() === email.trim().toLowerCase() && e.password === password
     );
     if (!user) {
       return { ok: false, message: 'Wrong email or password.' };
     }
-    setCurrentUser(user);
-    return { ok: true };
+    return { ok: true, user };
+  }
+
+  // Step 2 (after OTP is confirmed): actually log the user in by email.
+  function signInByEmail(email) {
+    const user = employees.find(
+      (e) => e.email.toLowerCase() === email.trim().toLowerCase()
+    );
+    if (user) setCurrentUser(user);
+    return !!user;
   }
 
   function logout() {
@@ -44,21 +55,31 @@ export function AppProvider({ children }) {
   }
 
   // --- Bookings -----------------------------------------------------------
-  // Employee creates a new booking. It starts in the "Booked" state.
-  function addBooking({ date, shift, direction, pickup }) {
-    const newBooking = {
+  // Fills in the fields every booking needs, then lets `data` add/override
+  // the rest (date, shift, direction, source, reason, comment, ...).
+  function buildBooking(data) {
+    return {
       id: nextBookingId(),
       employeeId: currentUser.id,
       employeeName: currentUser.name,
-      date,
-      shift,
-      direction,
-      pickup,
       status: 'Booked',
       assignedCabId: null,
+      ...data,
     };
+  }
+
+  // Employee creates a single booking (used by the Ad-hoc request page).
+  function addBooking(data) {
+    const newBooking = buildBooking(data);
     setBookings((prev) => [newBooking, ...prev]);
     return newBooking;
+  }
+
+  // Create several bookings at once (used by the weekly Self Roster).
+  function addBookings(entries) {
+    const created = entries.map((e) => buildBooking(e));
+    setBookings((prev) => [...created, ...prev]);
+    return created;
   }
 
   // Admin assigns a cab to a booking. It moves to "Cab assigned".
@@ -68,6 +89,35 @@ export function AppProvider({ children }) {
         b.id === bookingId ? { ...b, assignedCabId: cabId, status: 'Cab assigned' } : b
       )
     );
+  }
+
+  // Employee cancels a booking. It moves to "Cancelled" (kept for history).
+  // This one change is reflected everywhere the booking is shown.
+  function cancelBooking(bookingId) {
+    setBookings((prev) =>
+      prev.map((b) => (b.id === bookingId ? { ...b, status: 'Cancelled' } : b))
+    );
+  }
+
+  // Employee feedback (kept in memory for the demo).
+  function addFeedback({ category, message }) {
+    setFeedbacks((prev) => [
+      { id: 'f' + (prev.length + 1), employeeName: currentUser.name, category, message },
+      ...prev,
+    ]);
+  }
+
+  // Employee rating (1–5 stars + optional comment).
+  function addRating({ stars, comment }) {
+    setRatings((prev) => [
+      { id: 'r' + (prev.length + 1), employeeName: currentUser.name, stars, comment },
+      ...prev,
+    ]);
+  }
+
+  // My bookings that are still active (not cancelled) — for View Roster & Trip Cancel.
+  function myActiveBookings() {
+    return myBookings().filter((b) => b.status !== 'Cancelled');
   }
 
   // Helpers used by screens.
@@ -83,14 +133,22 @@ export function AppProvider({ children }) {
 
   const value = {
     currentUser,
-    login,
+    verifyCredentials,
+    signInByEmail,
     logout,
     bookings,
     cabs,
     addBooking,
+    addBookings,
     assignCab,
+    cancelBooking,
     getCabById,
     myBookings,
+    myActiveBookings,
+    feedbacks,
+    addFeedback,
+    ratings,
+    addRating,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

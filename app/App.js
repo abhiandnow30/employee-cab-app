@@ -5,36 +5,73 @@
 //   3. Navigation     → decides which screens to show based on the logged-in user
 // ---------------------------------------------------------------------------
 
-import React from 'react';
+import React, { useState } from 'react';
+import { StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { PaperProvider, Appbar } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-import { theme } from './src/theme';
+import { theme, colors } from './src/theme';
 import { AppProvider, useApp } from './src/context/AppContext';
+import AppDrawer from './src/components/AppDrawer';
 
 import LoginScreen from './src/screens/LoginScreen';
+import OtpScreen from './src/screens/OtpScreen';
+import EmployeeHomeScreen from './src/screens/employee/EmployeeHomeScreen';
+import SelfRosterScreen from './src/screens/employee/SelfRosterScreen';
+import FeedbackScreen from './src/screens/employee/FeedbackScreen';
 import MyRidesScreen from './src/screens/employee/MyRidesScreen';
 import BookCabScreen from './src/screens/employee/BookCabScreen';
+import RosterHistoryScreen from './src/screens/employee/RosterHistoryScreen';
+import TripCancelScreen from './src/screens/employee/TripCancelScreen';
+import RateUsScreen from './src/screens/employee/RateUsScreen';
+import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
 import AssignCabScreen from './src/screens/admin/AssignCabScreen';
 
 const Stack = createNativeStackNavigator();
 
+const BRAND = 'Cab Service';
+
 // A custom header that shows the screen title and a Log out action on the right.
 // We use Paper's Appbar so the header matches the app's look.
 function AppHeader({ navigation, route, options, back }) {
-  const { logout } = useApp();
-  const title = options.title ?? route.name;
+  const { logout, currentUser } = useApp();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const isEmployee = currentUser?.role === 'employee';
+  // After login the brand name stays fixed; before login use the screen title.
+  const title = currentUser ? BRAND : options.title ?? route.name;
 
   return (
-    <Appbar.Header elevated>
-      {back ? <Appbar.BackAction onPress={navigation.goBack} /> : null}
-      <Appbar.Content title={title} />
-      <Appbar.Action icon="logout" onPress={logout} />
-    </Appbar.Header>
+    <>
+      <Appbar.Header style={styles.appbar} dark>
+        {isEmployee ? (
+          // Employees get the ☰ menu on the left (opens the drawer).
+          <Appbar.Action icon="menu" color="#FFFFFF" onPress={() => setDrawerOpen(true)} />
+        ) : back ? (
+          <Appbar.BackAction color="#FFFFFF" onPress={navigation.goBack} />
+        ) : null}
+        <Appbar.Content title={title} color="#FFFFFF" titleStyle={styles.appbarTitle} />
+        {/* Only offer Log out once actually signed in (not on the OTP step). */}
+        {currentUser ? (
+          <Appbar.Action icon="logout" color="#FFFFFF" onPress={logout} />
+        ) : null}
+      </Appbar.Header>
+
+      <AppDrawer
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        email={currentUser?.email}
+        onNavigate={(item) => {
+          setDrawerOpen(false);
+          navigation.navigate(item.screen, item.params);
+        }}
+      />
+    </>
   );
 }
 
@@ -48,27 +85,70 @@ function RootNavigator() {
         screenOptions={{
           // Use our Paper-based header everywhere EXCEPT login (set below).
           header: (props) => <AppHeader {...props} />,
+          contentStyle: { backgroundColor: colors.background },
         }}
       >
         {!currentUser ? (
-          // ---- Logged out ----
-          <Stack.Screen
-            name="Login"
-            component={LoginScreen}
-            options={{ headerShown: false }}
-          />
+          // ---- Logged out: email/password → OTP ----
+          <>
+            <Stack.Screen
+              name="Login"
+              component={LoginScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="Otp"
+              component={OtpScreen}
+              options={{ title: 'Verify' }}
+            />
+          </>
         ) : currentUser.role === 'employee' ? (
           // ---- Employee screens ----
           <>
+            <Stack.Screen
+              name="EmployeeHome"
+              component={EmployeeHomeScreen}
+              options={{ title: 'Home' }}
+            />
+            <Stack.Screen
+              name="SelfRoster"
+              component={SelfRosterScreen}
+              options={{ title: 'Self Roster' }}
+            />
+            <Stack.Screen
+              name="BookCab"
+              component={BookCabScreen}
+              options={{ title: 'Adhoc Request' }}
+            />
+            <Stack.Screen
+              name="Feedback"
+              component={FeedbackScreen}
+              options={{ title: 'Feedback' }}
+            />
             <Stack.Screen
               name="MyRides"
               component={MyRidesScreen}
               options={{ title: 'My Rides' }}
             />
             <Stack.Screen
-              name="BookCab"
-              component={BookCabScreen}
-              options={{ title: 'Book a Cab' }}
+              name="RosterHistory"
+              component={RosterHistoryScreen}
+              options={{ title: 'Roster History' }}
+            />
+            <Stack.Screen
+              name="TripCancel"
+              component={TripCancelScreen}
+              options={{ title: 'Trip Cancel' }}
+            />
+            <Stack.Screen
+              name="RateUs"
+              component={RateUsScreen}
+              options={{ title: 'Rate Us' }}
+            />
+            <Stack.Screen
+              name="Profile"
+              component={ProfileScreen}
+              options={{ title: 'Profile' }}
             />
           </>
         ) : (
@@ -94,7 +174,14 @@ function RootNavigator() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <PaperProvider theme={theme}>
+      <PaperProvider
+        theme={theme}
+        settings={{
+          // Tells Paper which icon set to draw (Material Community Icons via Expo).
+          // Without this, Paper icons (email, lock, +, etc.) render blank.
+          icon: (props) => <MaterialCommunityIcons {...props} />,
+        }}
+      >
         <AppProvider>
           <StatusBar style="light" />
           <RootNavigator />
@@ -103,3 +190,8 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  appbar: { backgroundColor: colors.primary },
+  appbarTitle: { fontWeight: 'bold', letterSpacing: 0.3 },
+});
