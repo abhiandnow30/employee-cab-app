@@ -13,7 +13,7 @@ export const employees = [
   {
     id: 'u1',
     empId: '1399', // employee id shown on the home page
-    name: 'Roopa Y',
+    name: 'Abhilasha K',
     email: 'employee@demo.com',
     password: '1234',
     role: 'employee',
