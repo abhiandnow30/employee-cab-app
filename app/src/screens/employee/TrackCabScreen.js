@@ -1,38 +1,84 @@
 // ---------------------------------------------------------------------------
 // TRACK CAB
-// Shows the employee where their cab is, live. It subscribes to the cab's
-// location in Firebase (via the tracking service) and updates the map + the
-// info card every time a new position arrives — no refresh needed.
+// Shows the employee where THEIR cab is, live. It finds the cab assigned to the
+// employee's current booking (by the admin) and subscribes to that cab's
+// location in Firebase — updating the map every time a new position arrives.
 //
-// Which cab? We track the cab assigned to the employee's first active booking;
-// if none is assigned yet, we fall back to a demo cab ('c1') so there's always
-// something to watch during development.
+// States handled:
+//   • No active bookings          → "No upcoming rides"
+//   • Booking but no cab assigned  → "Cab not assigned yet"
+//   • Cab assigned                 → live map + trip details
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text, Card, Chip, Button } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeCabLocation } from '../../services/tracking';
 import TrackMap from '../../components/TrackMap';
 
-const DEMO_CAB_ID = 'c1'; // used when no cab is assigned yet
+// Shown when there's nothing (yet) to track.
+function EmptyState({ navigation, icon, title, body }) {
+  return (
+    <View style={styles.emptyWrap}>
+      <MaterialCommunityIcons name={icon} size={56} color="#90A4AE" />
+      <Text variant="titleMedium" style={styles.emptyTitle}>
+        {title}
+      </Text>
+      <Text variant="bodyMedium" style={styles.emptyBody}>
+        {body}
+      </Text>
+      <Button mode="contained" icon="home" onPress={() => navigation.navigate('EmployeeHome')}>
+        Back to Home
+      </Button>
+    </View>
+  );
+}
 
 export default function TrackCabScreen({ navigation }) {
   const { myActiveBookings, getCabById } = useApp();
 
-  // Pick the cab to track.
-  const activeWithCab = myActiveBookings().find((b) => b.assignedCabId);
-  const cabId = activeWithCab?.assignedCabId || DEMO_CAB_ID;
-  const cab = getCabById(cabId);
+  const active = myActiveBookings();
+  // Track the first active booking that actually has a cab assigned.
+  const trackedBooking = active.find((b) => b.assignedCabId) || null;
+  const cabId = trackedBooking?.assignedCabId || null;
+  const cab = cabId ? getCabById(cabId) : null;
 
   const [location, setLocation] = useState(null); // { latitude, longitude, updatedAt }
 
   useEffect(() => {
-    // Start listening; clean up when leaving the screen or switching cabs.
+    if (!cabId) {
+      setLocation(null);
+      return;
+    }
     const unsubscribe = subscribeCabLocation(cabId, setLocation);
     return unsubscribe;
   }, [cabId]);
+
+  // No bookings at all.
+  if (active.length === 0) {
+    return (
+      <EmptyState
+        navigation={navigation}
+        icon="calendar-remove"
+        title="No upcoming rides"
+        body="You have no active bookings to track. Book a cab, and once the transport desk assigns one you can follow it here."
+      />
+    );
+  }
+
+  // Booking exists but no cab assigned yet.
+  if (!cabId) {
+    return (
+      <EmptyState
+        navigation={navigation}
+        icon="clock-outline"
+        title="Cab not assigned yet"
+        body="Your booking is confirmed, but the transport desk hasn't assigned a cab yet. This screen will show your cab live as soon as they do."
+      />
+    );
+  }
 
   const isLive = !!location;
 
@@ -41,7 +87,7 @@ export default function TrackCabScreen({ navigation }) {
       <Card style={styles.infoCard} mode="outlined">
         <Card.Content>
           <View style={styles.rowBetween}>
-            <Text variant="titleMedium">{cab?.cabNumber || 'Cab'}</Text>
+            <Text variant="titleMedium">{cab?.cabNumber || 'Your cab'}</Text>
             <Chip
               compact
               icon={isLive ? 'circle' : 'circle-outline'}
@@ -51,16 +97,27 @@ export default function TrackCabScreen({ navigation }) {
               {isLive ? 'LIVE' : 'Waiting…'}
             </Chip>
           </View>
-          <Text variant="bodyMedium" style={styles.detail}>
+
+          {/* Which trip this is */}
+          <Text variant="bodyMedium" style={styles.trip}>
+            {trackedBooking.direction} · {trackedBooking.date} · {trackedBooking.shift}
+          </Text>
+          <Text variant="bodySmall" style={styles.detail}>
+            Pickup: {trackedBooking.pickup || '—'}
+          </Text>
+
+          {/* Driver */}
+          <Text variant="bodyMedium" style={styles.driver}>
             Driver: {cab?.driverName || '—'} · {cab?.driverPhone || '—'}
           </Text>
+
           {location ? (
             <Text variant="bodySmall" style={styles.coords}>
               Position: {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
             </Text>
           ) : (
             <Text variant="bodySmall" style={styles.coords}>
-              No location yet. Start the Driver (demo) screen to see the cab move.
+              Waiting for the driver to start sharing location…
             </Text>
           )}
         </Card.Content>
@@ -91,8 +148,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
-  detail: { opacity: 0.85 },
+  trip: { marginTop: 2 },
+  detail: { opacity: 0.8, marginTop: 2 },
+  driver: { marginTop: 8 },
   coords: { opacity: 0.7, marginTop: 4 },
   mapWrap: { flex: 1 },
   homeBtn: { marginTop: 12, paddingVertical: 4 },
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
+  emptyTitle: { marginTop: 6 },
+  emptyBody: { textAlign: 'center', opacity: 0.7, marginBottom: 12 },
 });

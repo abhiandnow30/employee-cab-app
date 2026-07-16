@@ -10,13 +10,14 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, Platform } from 'react-native';
-import { Text, Card, Button } from 'react-native-paper';
+import { Text, Card, Button, SegmentedButtons } from 'react-native-paper';
 import * as Location from 'expo-location';
 import { updateCabLocation } from '../../services/tracking';
-
-const DEMO_CAB_ID = 'c1';
+import { useApp } from '../../context/AppContext';
 
 export default function DriverLiveScreen() {
+  const { cabs } = useApp();
+  const [cabId, setCabId] = useState(cabs[0]?.id); // which cab this driver is driving
   const [status, setStatus] = useState('idle'); // idle | requesting | sharing | denied | error
   const [coords, setCoords] = useState(null);
   const [error, setError] = useState('');
@@ -44,7 +45,7 @@ export default function DriverLiveScreen() {
         (loc) => {
           const { latitude, longitude } = loc.coords;
           setCoords({ latitude, longitude });
-          updateCabLocation(DEMO_CAB_ID, { latitude, longitude }, Date.now());
+          updateCabLocation(cabId, { latitude, longitude }, Date.now());
         }
       );
       setStatus('sharing');
@@ -73,9 +74,21 @@ export default function DriverLiveScreen() {
         <Card.Content>
           <Text variant="titleMedium">Driver — share live location</Text>
           <Text variant="bodyMedium" style={styles.detail}>
-            Sends this device's real GPS position for cab {DEMO_CAB_ID} to
-            Firebase. Employees tracking this cab see you move live.
+            Pick your cab, then share this device's real GPS. Employees assigned
+            to this cab see you move live.
           </Text>
+
+          {/* Which cab am I driving? */}
+          <Text variant="labelLarge" style={styles.pickLabel}>
+            Your cab
+          </Text>
+          <SegmentedButtons
+            value={cabId}
+            onValueChange={setCabId}
+            density="small"
+            buttons={cabs.map((c) => ({ value: c.id, label: c.driverName, disabled: sharing }))}
+            style={styles.picker}
+          />
 
           <Text variant="bodyLarge" style={styles.status}>
             {status === 'idle' && 'Not sharing'}
@@ -137,6 +150,8 @@ export default function DriverLiveScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 12 },
   detail: { opacity: 0.85, marginTop: 6 },
+  pickLabel: { marginTop: 14, marginBottom: 6, opacity: 0.8 },
+  picker: { marginBottom: 4 },
   status: { marginTop: 14, fontWeight: 'bold' },
   coords: { opacity: 0.7, marginTop: 4 },
   help: { opacity: 0.7, marginTop: 8 },

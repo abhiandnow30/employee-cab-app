@@ -10,10 +10,9 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Text, Card, Button } from 'react-native-paper';
+import { Text, Card, Button, SegmentedButtons } from 'react-native-paper';
 import { updateCabLocation } from '../../services/tracking';
-
-const DEMO_CAB_ID = 'c1';
+import { useApp } from '../../context/AppContext';
 
 // A short route across Hyderabad: start → pickup (Gachibowli).
 const START = { latitude: 17.4200, longitude: 78.3700 };
@@ -21,6 +20,8 @@ const PICKUP = { latitude: 17.4400, longitude: 78.3489 };
 const STEPS = 40; // how many hops from start to pickup
 
 export default function DriverSimScreen() {
+  const { cabs } = useApp();
+  const [cabId, setCabId] = useState(cabs[0]?.id); // which cab to drive
   const [running, setRunning] = useState(false);
   const [step, setStep] = useState(0);
   const intervalRef = useRef(null);
@@ -43,7 +44,7 @@ export default function DriverSimScreen() {
       const t = stepRef.current / STEPS;
       const latitude = START.latitude + (PICKUP.latitude - START.latitude) * t;
       const longitude = START.longitude + (PICKUP.longitude - START.longitude) * t;
-      updateCabLocation(DEMO_CAB_ID, { latitude, longitude }, Date.now());
+      updateCabLocation(cabId, { latitude, longitude }, Date.now());
       setStep(stepRef.current);
       if (stepRef.current >= STEPS) {
         stop(); // arrived at pickup
@@ -64,9 +65,21 @@ export default function DriverSimScreen() {
         <Card.Content>
           <Text variant="titleMedium">Driver simulator</Text>
           <Text variant="bodyMedium" style={styles.detail}>
-            Sends cab {DEMO_CAB_ID}'s location to Firebase once per second, driving
-            from the start point to the pickup.
+            Pick a cab, then drive it from the start point to the pickup — sends a
+            new location to Firebase once per second.
           </Text>
+
+          <Text variant="labelLarge" style={styles.pickLabel}>
+            Cab
+          </Text>
+          <SegmentedButtons
+            value={cabId}
+            onValueChange={setCabId}
+            density="small"
+            buttons={cabs.map((c) => ({ value: c.id, label: c.driverName, disabled: running }))}
+            style={styles.picker}
+          />
+
           <Text variant="bodyLarge" style={styles.progress}>
             {running ? `Driving… ${pct}%` : step > 0 ? 'Arrived ✓' : 'Idle'}
           </Text>
@@ -105,6 +118,8 @@ export default function DriverSimScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 12 },
   detail: { opacity: 0.85, marginTop: 6 },
+  pickLabel: { marginTop: 14, marginBottom: 6, opacity: 0.8 },
+  picker: { marginBottom: 4 },
   progress: { marginTop: 14, fontWeight: 'bold' },
   buttons: { flexDirection: 'row', gap: 12, marginTop: 14 },
   btn: { flex: 1 },

@@ -1,0 +1,300 @@
+<title>Employee Cab App — Architecture</title>
+<style>
+  :root {
+    --bg: #f6f8fb;
+    --surface: #ffffff;
+    --surface-2: #eef2f8;
+    --border: #dbe2ec;
+    --text: #172033;
+    --muted: #5a6576;
+    --accent: #1565c0;
+    --accent-soft: #e4f0fd;
+    --live: #2e7d32;
+    --live-soft: #e6f4ea;
+    --mock: #a2660a;
+    --mock-soft: #fbf0da;
+    --driver: #cf4a1c;
+    --driver-soft: #fce8df;
+    --shadow: 0 1px 2px rgba(20,35,60,.06), 0 6px 20px rgba(20,35,60,.06);
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Consolas", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e131b;
+      --surface: #161d29;
+      --surface-2: #1d2634;
+      --border: #2a3547;
+      --text: #e7ecf4;
+      --muted: #9aa6b8;
+      --accent: #62a6f2;
+      --accent-soft: #12324f;
+      --live: #6cc27a;
+      --live-soft: #143021;
+      --mock: #e6ad57;
+      --mock-soft: #3a2c12;
+      --driver: #f08256;
+      --driver-soft: #3a1f13;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f6f8fb; --surface: #ffffff; --surface-2: #eef2f8; --border: #dbe2ec;
+    --text: #172033; --muted: #5a6576; --accent: #1565c0; --accent-soft: #e4f0fd;
+    --live: #2e7d32; --live-soft: #e6f4ea; --mock: #a2660a; --mock-soft: #fbf0da;
+    --driver: #cf4a1c; --driver-soft: #fce8df;
+    --shadow: 0 1px 2px rgba(20,35,60,.06), 0 6px 20px rgba(20,35,60,.06);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e131b; --surface: #161d29; --surface-2: #1d2634; --border: #2a3547;
+    --text: #e7ecf4; --muted: #9aa6b8; --accent: #62a6f2; --accent-soft: #12324f;
+    --live: #6cc27a; --live-soft: #143021; --mock: #e6ad57; --mock-soft: #3a2c12;
+    --driver: #f08256; --driver-soft: #3a1f13;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.28);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 40px 22px 80px; }
+
+  header { margin-bottom: 30px; }
+  .eyebrow {
+    font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; margin: 0 0 8px;
+  }
+  h1 {
+    font-size: clamp(26px, 4.5vw, 38px); line-height: 1.1; margin: 0 0 10px;
+    letter-spacing: -.02em; text-wrap: balance;
+  }
+  .lede { color: var(--muted); font-size: 16px; max-width: 62ch; margin: 0 0 18px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono); font-size: 12px; padding: 4px 10px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+  }
+
+  section { margin-top: 40px; }
+  h2 {
+    font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+    margin: 0 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    font-weight: 700;
+  }
+
+  /* layered architecture */
+  .layer {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px; box-shadow: var(--shadow); margin-bottom: 14px; position: relative;
+  }
+  .layer-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .layer-head .n {
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    background: var(--accent-soft); padding: 2px 8px; border-radius: 6px; font-weight: 700;
+  }
+  .layer-head h3 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+  .layer-head .sub { color: var(--muted); font-size: 13px; margin-left: auto; }
+  .boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .box {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 13px;
+  }
+  .box .t { font-weight: 650; font-size: 14px; margin: 0 0 3px; }
+  .box .d { color: var(--muted); font-size: 12.5px; margin: 0; }
+  .box code { font-family: var(--mono); font-size: 11.5px; color: var(--accent); }
+
+  .flow-down { text-align: center; color: var(--border); font-size: 20px; line-height: 1; margin: -4px 0 10px; }
+  .flow-down span { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+
+  .tag { font-family: var(--mono); font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 5px; letter-spacing: .03em; }
+  .tag.real { background: var(--live-soft); color: var(--live); }
+  .tag.mock { background: var(--mock-soft); color: var(--mock); }
+
+  /* data flow rail */
+  .rail {
+    display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: stretch; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px; box-shadow: var(--shadow);
+  }
+  .node { border-radius: 11px; padding: 14px; text-align: center; border: 1px solid var(--border); }
+  .node.driver { background: var(--driver-soft); border-color: color-mix(in srgb, var(--driver) 35%, var(--border)); }
+  .node.db { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+  .node.rider { background: var(--live-soft); border-color: color-mix(in srgb, var(--live) 30%, var(--border)); }
+  .node .ico { font-size: 22px; }
+  .node .nt { font-weight: 700; font-size: 14px; margin: 6px 0 2px; }
+  .node .nd { font-size: 12px; color: var(--muted); }
+  .node .np { font-family: var(--mono); font-size: 11px; margin-top: 6px; display: block; color: var(--text); opacity: .8; }
+  .arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); }
+  .arrow .a { font-size: 20px; line-height: 1; }
+  .arrow .l { font-family: var(--mono); font-size: 9.5px; writing-mode: horizontal-tb; margin-top: 2px; text-align: center; max-width: 70px; }
+  @media (max-width: 640px) {
+    .rail { grid-template-columns: 1fr; }
+    .arrow .a { transform: rotate(90deg); }
+    .arrow .l { max-width: none; }
+  }
+
+  /* real vs mock table */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .tblwrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+  th { background: var(--surface-2); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  td { background: var(--surface); }
+  tr:last-child td { border-bottom: none; }
+  td code { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+
+  /* stages */
+  .stages { display: flex; flex-direction: column; gap: 10px; }
+  .stage {
+    display: flex; gap: 14px; align-items: flex-start;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .stage .mark {
+    flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+    font-size: 14px; font-weight: 700; margin-top: 1px;
+  }
+  .stage.done .mark { background: var(--live-soft); color: var(--live); }
+  .stage.next .mark { background: var(--accent-soft); color: var(--accent); }
+  .stage .st { margin: 0 0 3px; font-size: 15px; font-weight: 650; }
+  .stage .sd { margin: 0; color: var(--muted); font-size: 13px; }
+  .stage.next .st::after {
+    content: "NEXT"; font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--accent);
+    background: var(--accent-soft); padding: 2px 6px; border-radius: 5px; margin-left: 8px; letter-spacing: .05em;
+  }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 14px; font-size: 12.5px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 3px; }
+  footer { margin-top: 46px; color: var(--muted); font-size: 12.5px; text-align: center; }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Project Architecture · as built</p>
+    <h1>Employee Cab App</h1>
+    <p class="lede">An Expo (React Native) app for booking company cabs, with a real-time cab-tracking feature layered on Firebase. This is the system as it stands today — what's live, what's still demo data, and what's next.</p>
+    <div class="chips">
+      <span class="chip">Expo SDK 57</span>
+      <span class="chip">React Native 0.86</span>
+      <span class="chip">React Navigation</span>
+      <span class="chip">React Native Paper</span>
+      <span class="chip">Firebase 12</span>
+      <span class="chip">expo-location</span>
+      <span class="chip">web · Android · iOS</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Three layers, top to bottom</h2>
+
+    <div class="layer">
+      <div class="layer-head">
+        <span class="n">1</span>
+        <h3>App / UI</h3>
+        <span class="sub">what the employee & admin see</span>
+      </div>
+      <div class="boxes">
+        <div class="box"><p class="t">Employee screens</p><p class="d">Home, Self Roster, Adhoc, My Rides, Trip Cancel, <strong>Track Cab</strong>, Driver screens</p></div>
+        <div class="box"><p class="t">Admin screens</p><p class="d">All Bookings, Assign Cab</p></div>
+        <div class="box"><p class="t">Navigation + Drawer</p><p class="d">Stack navigator, ☰ side menu, shared Paper header</p></div>
+        <div class="box"><p class="t">Map component</p><p class="d"><code>TrackMap.web</code> = Leaflet/OSM · <code>TrackMap.native</code> = phone map</p></div>
+      </div>
+    </div>
+
+    <div class="flow-down">↓ <span>screens read shared state & call services via </span><code style="font-family:var(--mono);font-size:12px;color:var(--accent)">useApp()</code></div>
+
+    <div class="layer">
+      <div class="layer-head">
+        <span class="n">2</span>
+        <h3>State &amp; Services</h3>
+        <span class="sub">the glue between UI and backend</span>
+      </div>
+      <div class="boxes">
+        <div class="box"><p class="t">AppContext <span class="tag mock">mock</span></p><p class="d">In-memory store for bookings, cabs, feedback, ratings</p></div>
+        <div class="box"><p class="t">auth service <span class="tag real">Firebase</span></p><p class="d"><code>signIn</code>, <code>watchAuth</code>, <code>signOut</code> — real email/password</p></div>
+        <div class="box"><p class="t">profile service <span class="tag real">Firebase</span></p><p class="d">Reads/creates <code>employees/&lt;uid&gt;</code> in Firestore</p></div>
+        <div class="box"><p class="t">tracking service <span class="tag real">Firebase</span></p><p class="d"><code>updateCabLocation</code> / <code>subscribeCabLocation</code></p></div>
+      </div>
+    </div>
+
+    <div class="flow-down">↓ <span>services talk to Firebase SDK (one shared init in </span><code style="font-family:var(--mono);font-size:12px;color:var(--accent)">services/firebase.js</code><span>)</span></div>
+
+    <div class="layer">
+      <div class="layer-head">
+        <span class="n">3</span>
+        <h3>Firebase Backend</h3>
+        <span class="sub">project: cab-app-eec4c</span>
+      </div>
+      <div class="boxes">
+        <div class="box"><p class="t">Authentication <span class="tag real">live</span></p><p class="d">Verifies logins securely — passwords never touch the app</p></div>
+        <div class="box"><p class="t">Realtime Database <span class="tag real">live</span></p><p class="d">Live cab location at <code>cabs/&lt;id&gt;/location</code> — pushes updates instantly</p></div>
+        <div class="box"><p class="t">Firestore <span class="tag real">live</span></p><p class="d">Employee profiles — persists across reloads</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The live-tracking flow — the feature we built</h2>
+    <div class="rail">
+      <div class="node driver">
+        <div class="ico">🚕</div>
+        <div class="nt">Driver</div>
+        <div class="nd">phone GPS via expo-location</div>
+        <code class="np">writes location</code>
+      </div>
+      <div class="arrow"><span class="a">→</span><span class="l">every ~3s</span></div>
+      <div class="node db">
+        <div class="ico">🗄️</div>
+        <div class="nt">Realtime DB</div>
+        <div class="nd">cabs/c1/location</div>
+        <code class="np">{ lat, lng, updatedAt }</code>
+      </div>
+      <div class="arrow"><span class="a">→</span><span class="l">pushes live</span></div>
+      <div class="node rider">
+        <div class="ico">📍</div>
+        <div class="nt">Track Cab</div>
+        <div class="nd">employee sees it move on a map</div>
+        <code class="np">subscribeCabLocation</code>
+      </div>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--driver)"></span> Driver (sends)</span>
+      <span><span class="dot" style="background:var(--accent)"></span> Backend (relays)</span>
+      <span><span class="dot" style="background:var(--live)"></span> Employee (receives)</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>What's real vs. still demo data</h2>
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>Capability</th><th>Today</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr><td>Login (email / password)</td><td><span class="tag real">Firebase Auth</span></td><td><code>services/auth.js</code></td></tr>
+          <tr><td>Employee profiles</td><td><span class="tag real">Firestore</span></td><td><code>services/profile.js</code></td></tr>
+          <tr><td>Live cab location</td><td><span class="tag real">Realtime DB</span></td><td><code>services/tracking.js</code></td></tr>
+          <tr><td>OTP step</td><td><span class="tag mock">demo gate</span></td><td>fixed code, no SMS yet</td></tr>
+          <tr><td>Bookings &amp; roster</td><td><span class="tag mock">in-memory</span></td><td><code>context/AppContext.js</code></td></tr>
+          <tr><td>Cabs &amp; drivers</td><td><span class="tag mock">in-memory</span></td><td><code>data/mockData.js</code></td></tr>
+          <tr><td>Feedback &amp; ratings</td><td><span class="tag mock">in-memory</span></td><td><code>context/AppContext.js</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Progress</h2>
+    <div class="stages">
+      <div class="stage done"><div class="mark">✓</div><div><p class="st">Stage 1 — Backend + Track screen</p><p class="sd">Firebase connected and verified; employee Track Cab screen shows a live location on a web map (free OpenStreetMap).</p></div></div>
+      <div class="stage done"><div class="mark">✓</div><div><p class="st">Stage 2 — Cab moves</p><p class="sd">Driver simulator writes moving coordinates to Firebase; the cab drives toward the pickup in real time.</p></div></div>
+      <div class="stage done"><div class="mark">✓</div><div><p class="st">Stage 3 — Real device GPS</p><p class="sd">Driver (live GPS) screen streams the phone's real location via expo-location. Proven live on web with a real position.</p></div></div>
+      <div class="stage next"><div class="mark">4</div><div><p class="st">Stage 4 — Make it a product</p><p class="sd">Per-booking cab matching (each employee tracks their own assigned cab), ETA + route, the native Google map on phone via a dev build, and locking down the API key + database rules.</p></div></div>
+    </div>
+  </section>
+
+  <footer>
+    Employee Cab App · architecture snapshot · backend project <code style="font-family:var(--mono)">cab-app-eec4c</code>
+  </footer>
+</div>
