@@ -6,9 +6,9 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { PaperProvider, Appbar } from 'react-native-paper';
+import { PaperProvider, Appbar, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
@@ -91,7 +91,17 @@ function AppHeader({ navigation, route, options, back }) {
 
 // Chooses which set of screens to show. Reads the current user from context.
 function RootNavigator() {
-  const { currentUser } = useApp();
+  const { currentUser, authReady } = useApp();
+
+  // While Firebase checks for an existing session, show a spinner instead of
+  // briefly flashing the login screen.
+  if (!authReady) {
+    return (
+      <View style={styles.splash}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
 
   return (
     <NavigationContainer>
@@ -224,4 +234,10 @@ const styles = StyleSheet.create({
   appbar: { backgroundColor: colors.primary },
   appbarContent: { alignItems: 'center' },
   appbarTitle: { fontWeight: 'bold', letterSpacing: 0.3, textAlign: 'center' },
+  splash: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+  },
 });

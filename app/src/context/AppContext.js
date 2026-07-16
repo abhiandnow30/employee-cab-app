@@ -1,33 +1,34 @@
 // ---------------------------------------------------------------------------
 // APP CONTEXT  (shared state for the whole app)
 //
-// This is a small in-memory "store" so different screens share the same data.
-// Example: when an employee creates a booking, the admin's list updates too,
-// because both read from here.
-//
-// It lives only in memory, so it resets when you reload the app. That's fine
-// for a mock front-end. Real persistence comes with the backend + database.
+// Auth comes from Firebase Authentication; bookings come live from Cloud
+// Firestore (so they persist across refreshes and sync between the employee
+// and the admin in real time). Feedback & ratings are still in memory —
+// those move to Firestore in Stage 3.
 // ---------------------------------------------------------------------------
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { cabs as initialCabs, initialBookings } from '../data/mockData';
+import { cabs as initialCabs } from '../data/mockData';
 import { watchAuth, signIn, signOutUser, friendlyAuthError } from '../services/auth';
 import { getOrCreateProfile } from '../services/profile';
+import {
+  createBooking,
+  createBookings,
+  assignCabToBooking,
+  setBookingStatus,
+  subscribeMyBookings,
+  subscribeAllBookings,
+} from '../services/bookings';
+import { firestore } from '../services/firebase';
 
 const AppContext = createContext(null);
-
-// A tiny id generator for new bookings (b2, b3, ...). Good enough for a demo.
-let bookingCounter = initialBookings.length;
-function nextBookingId() {
-  bookingCounter += 1;
-  return 'b' + bookingCounter;
-}
 
 export function AppProvider({ children }) {
   const [firebaseUser, setFirebaseUser] = useState(null); // raw Firebase auth user
   const [profile, setProfile] = useState(null); // employee profile from Firestore
   const [awaitingOtp, setAwaitingOtp] = useState(false); // gate the OTP step
-  const [bookings, setBookings] = useState(initialBookings);
+  const [authReady, setAuthReady] = useState(false); // false until first auth check
+  const [bookings, setBookings] = useState([]); // filled live from Firestore
   const [cabs] = useState(initialCabs);
   const [feedbacks, setFeedbacks] = useState([]);
   const [ratings, setRatings] = useState([]);
@@ -44,6 +45,7 @@ export function AppProvider({ children }) {
         setProfile(null);
         setAwaitingOtp(false);
       }
+      setAuthReady(true); // first auth check is done — safe to render
     });
     return unsub;
   }, []);
@@ -77,13 +79,28 @@ export function AppProvider({ children }) {
     setAwaitingOtp(false);
   }
 
-  // --- Bookings -----------------------------------------------------------
-  // Fills in the fields every booking needs, then lets `data` add/override
-  // the rest (date, shift, direction, source, reason, comment, ...).
-  function buildBooking(data) {
+  // --- Bookings (live from Firestore) -------------------------------------
+  // Subscribe to bookings for the signed-in user: employees see their own,
+  // the admin sees all. The list updates automatically on any change.
+  useEffect(() => {
+    if (!currentUser || !firestore) {
+      setBookings([]);
+      return;
+    }
+    const onErr = (e) =>
+      console.warn('[bookings] Firestore subscription error:', e.message);
+    const unsub =
+      currentUser.role === 'admin'
+        ? subscribeAllBookings(setBookings, onErr)
+        : subscribeMyBookings(currentUser.uid, setBookings, onErr);
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid, currentUser?.role]);
+
+  // The fields every new booking needs; `data` fills in the rest.
+  function newBookingPayload(data) {
     return {
-      id: nextBookingId(),
-      employeeId: currentUser.id,
+      employeeId: currentUser.uid,
       employeeName: currentUser.name,
       status: 'Booked',
       assignedCabId: null,
@@ -91,35 +108,25 @@ export function AppProvider({ children }) {
     };
   }
 
-  // Employee creates a single booking (used by the Ad-hoc request page).
-  function addBooking(data) {
-    const newBooking = buildBooking(data);
-    setBookings((prev) => [newBooking, ...prev]);
-    return newBooking;
+  // Employee creates a single booking (Ad-hoc page). Saved to Firestore;
+  // the live subscription then shows it.
+  async function addBooking(data) {
+    return createBooking(newBookingPayload(data));
   }
 
-  // Create several bookings at once (used by the weekly Self Roster).
-  function addBookings(entries) {
-    const created = entries.map((e) => buildBooking(e));
-    setBookings((prev) => [...created, ...prev]);
-    return created;
+  // Create several bookings at once (weekly Self Roster).
+  async function addBookings(entries) {
+    return createBookings(entries.map((e) => newBookingPayload(e)));
   }
 
-  // Admin assigns a cab to a booking. It moves to "Cab assigned".
-  function assignCab(bookingId, cabId) {
-    setBookings((prev) =>
-      prev.map((b) =>
-        b.id === bookingId ? { ...b, assignedCabId: cabId, status: 'Cab assigned' } : b
-      )
-    );
+  // Admin assigns a cab → booking moves to "Cab assigned".
+  async function assignCab(bookingId, cabId) {
+    return assignCabToBooking(bookingId, cabId);
   }
 
-  // Employee cancels a booking. It moves to "Cancelled" (kept for history).
-  // This one change is reflected everywhere the booking is shown.
-  function cancelBooking(bookingId) {
-    setBookings((prev) =>
-      prev.map((b) => (b.id === bookingId ? { ...b, status: 'Cancelled' } : b))
-    );
+  // Employee cancels a booking → "Cancelled" (kept for history).
+  async function cancelBooking(bookingId) {
+    return setBookingStatus(bookingId, 'Cancelled');
   }
 
   // Employee feedback (kept in memory for the demo).
@@ -156,6 +163,7 @@ export function AppProvider({ children }) {
 
   const value = {
     currentUser,
+    authReady,
     login,
     confirmOtp,
     logout,
