@@ -1,10 +1,9 @@
 // ---------------------------------------------------------------------------
 // APP CONTEXT  (shared state for the whole app)
 //
-// Auth comes from Firebase Authentication; bookings come live from Cloud
-// Firestore (so they persist across refreshes and sync between the employee
-// and the admin in real time). Feedback & ratings are still in memory —
-// those move to Firestore in Stage 3.
+// Auth comes from Firebase Authentication; bookings, feedback and ratings all
+// live in Cloud Firestore (so they persist across refreshes and sync between
+// the employee and the admin in real time).
 // ---------------------------------------------------------------------------
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
@@ -19,6 +18,7 @@ import {
   subscribeMyBookings,
   subscribeAllBookings,
 } from '../services/bookings';
+import { addFeedbackDoc, addRatingDoc } from '../services/feedback';
 import { firestore } from '../services/firebase';
 
 const AppContext = createContext(null);
@@ -30,8 +30,6 @@ export function AppProvider({ children }) {
   const [authReady, setAuthReady] = useState(false); // false until first auth check
   const [bookings, setBookings] = useState([]); // filled live from Firestore
   const [cabs] = useState(initialCabs);
-  const [feedbacks, setFeedbacks] = useState([]);
-  const [ratings, setRatings] = useState([]);
 
   // --- Auth ---------------------------------------------------------------
   // Watch Firebase login state and load the profile when signed in.
@@ -129,20 +127,24 @@ export function AppProvider({ children }) {
     return setBookingStatus(bookingId, 'Cancelled');
   }
 
-  // Employee feedback (kept in memory for the demo).
-  function addFeedback({ category, message }) {
-    setFeedbacks((prev) => [
-      { id: 'f' + (prev.length + 1), employeeName: currentUser.name, category, message },
-      ...prev,
-    ]);
+  // Employee feedback → Firestore.
+  async function addFeedback({ category, message }) {
+    return addFeedbackDoc({
+      employeeId: currentUser.uid,
+      employeeName: currentUser.name,
+      category,
+      message,
+    });
   }
 
-  // Employee rating (1–5 stars + optional comment).
-  function addRating({ stars, comment }) {
-    setRatings((prev) => [
-      { id: 'r' + (prev.length + 1), employeeName: currentUser.name, stars, comment },
-      ...prev,
-    ]);
+  // Employee rating (1–5 stars + optional comment) → Firestore.
+  async function addRating({ stars, comment }) {
+    return addRatingDoc({
+      employeeId: currentUser.uid,
+      employeeName: currentUser.name,
+      stars,
+      comment,
+    });
   }
 
   // My bookings that are still active (not cancelled) — for View Roster & Trip Cancel.
@@ -176,9 +178,7 @@ export function AppProvider({ children }) {
     getCabById,
     myBookings,
     myActiveBookings,
-    feedbacks,
     addFeedback,
-    ratings,
     addRating,
   };
 

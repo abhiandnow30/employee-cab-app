@@ -36,10 +36,12 @@ function loadLeaflet() {
   });
 }
 
-export default function TrackMap({ latitude, longitude }) {
+export default function TrackMap({ latitude, longitude, route, destination }) {
   const containerRef = useRef(null); // the DOM <div> Leaflet draws into
   const mapRef = useRef(null);
   const markerRef = useRef(null);
+  const routeRef = useRef(null); // the route polyline
+  const destRef = useRef(null); // the pickup/destination marker
 
   // Create the map once.
   useEffect(() => {
