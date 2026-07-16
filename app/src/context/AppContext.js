@@ -9,8 +9,10 @@
 // for a mock front-end. Real persistence comes with the backend + database.
 // ---------------------------------------------------------------------------
 
-import React, { createContext, useContext, useState } from 'react';
-import { employees, cabs as initialCabs, initialBookings } from '../data/mockData';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { cabs as initialCabs, initialBookings } from '../data/mockData';
+import { watchAuth, signIn, signOutUser, friendlyAuthError } from '../services/auth';
+import { getOrCreateProfile } from '../services/profile';
 
 const AppContext = createContext(null);
 
@@ -22,36 +24,57 @@ function nextBookingId() {
 }
 
 export function AppProvider({ children }) {
-  const [currentUser, setCurrentUser] = useState(null); // null = logged out
+  const [firebaseUser, setFirebaseUser] = useState(null); // raw Firebase auth user
+  const [profile, setProfile] = useState(null); // employee profile from Firestore
+  const [awaitingOtp, setAwaitingOtp] = useState(false); // gate the OTP step
   const [bookings, setBookings] = useState(initialBookings);
   const [cabs] = useState(initialCabs);
   const [feedbacks, setFeedbacks] = useState([]);
   const [ratings, setRatings] = useState([]);
 
   // --- Auth ---------------------------------------------------------------
-  // Step 1: check email + password. Does NOT log the user in yet — the OTP
-  // screen does that. Returns { ok, message?, user? }.
-  function verifyCredentials(email, password) {
-    const user = employees.find(
-      (e) => e.email.toLowerCase() === email.trim().toLowerCase() && e.password === password
-    );
-    if (!user) {
-      return { ok: false, message: 'Wrong email or password.' };
+  // Watch Firebase login state and load the profile when signed in.
+  useEffect(() => {
+    const unsub = watchAuth(async (user) => {
+      setFirebaseUser(user);
+      if (user) {
+        const p = await getOrCreateProfile(user);
+        setProfile(p);
+      } else {
+        setProfile(null);
+        setAwaitingOtp(false);
+      }
+    });
+    return unsub;
+  }, []);
+
+  // The app treats you as logged in only once you're signed in AND past the OTP
+  // gate. A refreshed/restored session has awaitingOtp=false, so it skips OTP.
+  const currentUser =
+    firebaseUser && profile && !awaitingOtp
+      ? { id: firebaseUser.uid, uid: firebaseUser.uid, email: firebaseUser.email, ...profile }
+      : null;
+
+  // Step 1: verify email + password with Firebase. On success we still require
+  // the OTP step (a demo gate) before the app unlocks.
+  async function login(email, password) {
+    try {
+      await signIn(email, password);
+      setAwaitingOtp(true);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
     }
-    return { ok: true, user };
   }
 
-  // Step 2 (after OTP is confirmed): actually log the user in by email.
-  function signInByEmail(email) {
-    const user = employees.find(
-      (e) => e.email.toLowerCase() === email.trim().toLowerCase()
-    );
-    if (user) setCurrentUser(user);
-    return !!user;
+  // Step 2: OTP confirmed → unlock the app.
+  function confirmOtp() {
+    setAwaitingOtp(false);
   }
 
-  function logout() {
-    setCurrentUser(null);
+  async function logout() {
+    await signOutUser();
+    setAwaitingOtp(false);
   }
 
   // --- Bookings -----------------------------------------------------------
@@ -133,8 +156,8 @@ export function AppProvider({ children }) {
 
   const value = {
     currentUser,
-    verifyCredentials,
-    signInByEmail,
+    login,
+    confirmOtp,
     logout,
     bookings,
     cabs,

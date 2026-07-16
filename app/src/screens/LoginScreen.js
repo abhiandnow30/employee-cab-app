@@ -12,27 +12,30 @@ import { useApp } from '../context/AppContext';
 import { colors } from '../theme';
 
 export default function LoginScreen({ navigation }) {
-  const { verifyCredentials } = useApp();
+  const { login } = useApp();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const passwordRef = useRef(null); // lets Enter on the email field jump here
 
-  function handleLogin() {
+  async function handleLogin() {
     setError('');
     if (!email || !password) {
       setError('Please enter both email and password.');
       return;
     }
-    const result = verifyCredentials(email, password);
+    setLoading(true);
+    const result = await login(email, password); // checks with Firebase
+    setLoading(false);
     if (!result.ok) {
       setError(result.message);
       return;
     }
     // Credentials are good — go to the OTP screen to finish signing in.
-    navigation.navigate('Otp', { email: result.user.email });
+    navigation.navigate('Otp', { email: email.trim() });
   }
 
   return (
@@ -90,14 +93,20 @@ export default function LoginScreen({ navigation }) {
           </HelperText>
         ) : null}
 
-        <Button mode="contained" onPress={handleLogin} style={styles.button}>
+        <Button
+          mode="contained"
+          onPress={handleLogin}
+          style={styles.button}
+          loading={loading}
+          disabled={loading}
+        >
           Continue
         </Button>
 
         {/* Demo helper — remove once real login exists. */}
         <Card style={styles.hintCard} mode="contained">
           <Card.Content>
-            <Text variant="labelLarge">Demo logins (password: 1234)</Text>
+            <Text variant="labelLarge">Demo logins (password: cab12345)</Text>
             <Text variant="bodySmall">Employee → employee@demo.com</Text>
             <Text variant="bodySmall">Admin → admin@demo.com</Text>
           </Card.Content>

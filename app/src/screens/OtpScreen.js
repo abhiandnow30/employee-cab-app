@@ -15,7 +15,7 @@ import { colors } from '../theme';
 
 export default function OtpScreen({ route }) {
   const { email } = route.params;
-  const { signInByEmail } = useApp();
+  const { confirmOtp } = useApp();
 
   const [otp, setOtp] = useState('');
   const [error, setError] = useState('');
@@ -26,8 +26,9 @@ export default function OtpScreen({ route }) {
       setError('Incorrect code. Please try again.');
       return;
     }
-    // Correct code → log the user in. App.js then shows the home screen.
-    signInByEmail(email);
+    // Correct code → unlock the app. App.js then shows the home screen.
+    // (You're already signed in with Firebase; this is the demo OTP gate.)
+    confirmOtp();
   }
 
   return (

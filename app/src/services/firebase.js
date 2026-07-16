@@ -17,6 +17,8 @@
 
 import { initializeApp } from 'firebase/app';
 import { getDatabase } from 'firebase/database';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyAVOqkSyw71WtL3u91M-5QKGIQbDl83TKM',
@@ -34,9 +36,14 @@ const firebaseConfig = {
 export const isFirebaseConfigured = !firebaseConfig.databaseURL.startsWith('PASTE_');
 
 let database = null;
+let authInstance = null;
+let firestoreInstance = null;
+
 if (isFirebaseConfigured) {
   const app = initializeApp(firebaseConfig);
-  database = getDatabase(app);
+  database = getDatabase(app); // Realtime DB → live cab location
+  authInstance = getAuth(app); // Authentication → login
+  firestoreInstance = getFirestore(app); // Firestore → employees, bookings, etc.
 } else {
   console.warn(
     '[firebase] Not configured yet — fill in src/services/firebase.js to enable live tracking.'
@@ -45,3 +52,7 @@ if (isFirebaseConfigured) {
 
 // The Realtime Database instance (null until configured) — used by the tracking service.
 export const db = database;
+
+// Authentication + Firestore instances (null until configured).
+export const auth = authInstance;
+export const firestore = firestoreInstance;
