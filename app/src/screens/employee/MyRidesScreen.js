@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
-import { Text, Card, Chip, FAB, Divider } from 'react-native-paper';
+import { Text, Card, Chip, FAB, Divider, Button } from 'react-native-paper';
 import { useApp } from '../../context/AppContext';
 import { statusColors } from '../../theme';
 
@@ -57,6 +57,15 @@ export default function MyRidesScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
+      <Button
+        icon="home"
+        mode="contained-tonal"
+        onPress={() => navigation.navigate('EmployeeHome')}
+        style={styles.homeBtn}
+      >
+        Back to Home
+      </Button>
+
       {rides.length === 0 ? (
         <View style={styles.empty}>
           <Text variant="titleMedium" style={styles.emptyTitle}>
@@ -87,6 +96,7 @@ export default function MyRidesScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  homeBtn: { margin: 12, marginBottom: 0, alignSelf: 'flex-start' },
   listContent: { padding: 12, paddingBottom: 90 },
   card: { marginBottom: 12 },
   rowBetween: {
