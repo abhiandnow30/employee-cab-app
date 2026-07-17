@@ -1,0 +1,62 @@
+rules_version = '2';
+
+// ---------------------------------------------------------------------------
+// FIRESTORE SECURITY RULES
+// Replaces the open "test mode" rules. The core rule: you must be SIGNED IN
+// (Firebase Auth) to read or write anything. Unauthenticated requests from the
+// public internet are now rejected.
+//
+// Notes / possible future tightening:
+//   • Any signed-in user can read all bookings (admins & drivers need broad
+//     reads; fine for an internal company app). To scope employees to only
+//     their own bookings, add per-document owner checks.
+//   • A user can only write their OWN profile document (employees/<uid>).
+// ---------------------------------------------------------------------------
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Is the signed-in user an admin? (Reads their own profile's role.)
+    function isAdmin() {
+      return signedIn()
+        && get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Employee/driver/admin profiles. You may write your OWN profile; an admin
+    // may write any profile (e.g. to assign a cab to a driver).
+    match /employees/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && (request.auth.uid == uid || isAdmin());
+    }
+
+    // Bookings — signed-in users can read/create/update (admin assigns,
+    // driver updates status, employee cancels).
+    match /bookings/{bookingId} {
+      allow read, create, update: if signedIn();
+      allow delete: if false; // keep history — never hard-delete
+    }
+
+    // Cabs (the fleet). Everyone signed in can read; only an admin can
+    // add / edit / remove cabs.
+    match /cabs/{cabId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Feedback & ratings — signed-in users can add and read.
+    match /feedback/{docId} {
+      allow read, create: if signedIn();
+      allow update, delete: if false;
+    }
+    match /ratings/{docId} {
+      allow read, create: if signedIn();
+      allow update, delete: if false;
+    }
+
+    // Anything not matched above is denied by default.
+  }
+}

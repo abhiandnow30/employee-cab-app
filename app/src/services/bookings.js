@@ -19,6 +19,7 @@ import {
   query,
   where,
   serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { firestore } from './firebase';
 
@@ -55,11 +56,27 @@ export function subscribeAllBookings(cb, onError) {
   return onSnapshot(collection(firestore, COL), (snap) => cb(toList(snap)), onError);
 }
 
+// Live list of bookings assigned to one cab (driver). Returns an unsubscribe fn.
+export function subscribeCabBookings(cabId, cb, onError) {
+  const q = query(collection(firestore, COL), where('assignedCabId', '==', cabId));
+  return onSnapshot(q, (snap) => cb(toList(snap)), onError);
+}
+
 export async function assignCabToBooking(bookingId, cabId) {
   return updateDoc(doc(firestore, COL, bookingId), {
     assignedCabId: cabId,
     status: 'Cab assigned',
   });
+}
+
+// Assign ONE cab to MANY bookings at once (carpool grouping). All the selected
+// employees then share that cab. Done as a single atomic batch.
+export async function assignCabToBookings(bookingIds, cabId) {
+  const batch = writeBatch(firestore);
+  bookingIds.forEach((id) =>
+    batch.update(doc(firestore, COL, id), { assignedCabId: cabId, status: 'Cab assigned' })
+  );
+  return batch.commit();
 }
 
 export async function setBookingStatus(bookingId, status) {

@@ -19,7 +19,7 @@ import { AppProvider, useApp } from './src/context/AppContext';
 import AppDrawer from './src/components/AppDrawer';
 
 import LoginScreen from './src/screens/LoginScreen';
-import OtpScreen from './src/screens/OtpScreen';
+import SignUpScreen from './src/screens/SignUpScreen';
 import EmployeeHomeScreen from './src/screens/employee/EmployeeHomeScreen';
 import SelfRosterScreen from './src/screens/employee/SelfRosterScreen';
 import FeedbackScreen from './src/screens/employee/FeedbackScreen';
@@ -28,16 +28,54 @@ import BookCabScreen from './src/screens/employee/BookCabScreen';
 import RosterHistoryScreen from './src/screens/employee/RosterHistoryScreen';
 import TripCancelScreen from './src/screens/employee/TripCancelScreen';
 import TrackCabScreen from './src/screens/employee/TrackCabScreen';
-import DriverSimScreen from './src/screens/employee/DriverSimScreen';
-import DriverLiveScreen from './src/screens/employee/DriverLiveScreen';
 import RateUsScreen from './src/screens/employee/RateUsScreen';
 import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
 import AssignCabScreen from './src/screens/admin/AssignCabScreen';
+import ManageDriversScreen from './src/screens/admin/ManageDriversScreen';
+import ManageCabsScreen from './src/screens/admin/ManageCabsScreen';
+import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
+import DriverShareLocationScreen from './src/screens/driver/DriverShareLocationScreen';
+import DriverSimScreen from './src/screens/driver/DriverSimScreen';
 
 const Stack = createNativeStackNavigator();
 
 const BRAND = 'Cab Service';
+
+// URL-based routing: each screen gets its own web address so the browser's
+// back/forward buttons work and pages are refresh-safe. (On the phone this is
+// harmless — navigation still works the same.)
+const linking = {
+  prefixes: [
+    typeof window !== 'undefined' && window.location ? window.location.origin : 'cabservice://',
+  ],
+  config: {
+    screens: {
+      Login: '',
+      SignUp: 'signup',
+      // Employee
+      EmployeeHome: 'home',
+      SelfRoster: 'self-roster',
+      BookCab: 'adhoc',
+      Feedback: 'feedback',
+      MyRides: 'my-rides',
+      RosterHistory: 'roster-history',
+      TripCancel: 'trip-cancel',
+      TrackCab: 'track',
+      RateUs: 'rate-us',
+      Profile: 'profile',
+      // Admin
+      Bookings: 'bookings',
+      AssignCab: 'assign-cab',
+      ManageDrivers: 'drivers',
+      ManageCabs: 'cabs',
+      // Driver
+      DriverHome: 'driver',
+      DriverShareLocation: 'driver/share',
+      DriverSim: 'driver/simulate',
+    },
+  },
+};
 
 // A custom header that shows the screen title and a Log out action on the right.
 // We use Paper's Appbar so the header matches the app's look.
@@ -46,8 +84,22 @@ function AppHeader({ navigation, route, options, back }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const isEmployee = currentUser?.role === 'employee';
+  // Which screen "home" means for this role.
+  const homeRoute =
+    currentUser?.role === 'admin'
+      ? 'Bookings'
+      : currentUser?.role === 'driver'
+      ? 'DriverHome'
+      : 'EmployeeHome';
   // After login the brand name stays fixed; before login use the screen title.
   const title = currentUser ? BRAND : options.title ?? route.name;
+
+  // Go back if there's history; otherwise fall back to the role's home screen
+  // (so the arrow is never a dead end).
+  const goBack = () => {
+    if (navigation.canGoBack()) navigation.goBack();
+    else navigation.navigate(homeRoute);
+  };
 
   return (
     <>
@@ -56,7 +108,7 @@ function AppHeader({ navigation, route, options, back }) {
           // Employees get the ☰ menu on the left (opens the drawer).
           <Appbar.Action icon="menu" color="#FFFFFF" onPress={() => setDrawerOpen(true)} />
         ) : back ? (
-          <Appbar.BackAction color="#FFFFFF" onPress={navigation.goBack} />
+          <Appbar.BackAction color="#FFFFFF" onPress={goBack} />
         ) : null}
         <Appbar.Content
           title={title}
@@ -64,13 +116,9 @@ function AppHeader({ navigation, route, options, back }) {
           titleStyle={styles.appbarTitle}
           style={styles.appbarContent}
           // Tapping the brand title returns to the role's home screen.
-          onPress={
-            currentUser
-              ? () => navigation.navigate(isEmployee ? 'EmployeeHome' : 'Bookings')
-              : undefined
-          }
+          onPress={currentUser ? () => navigation.navigate(homeRoute) : undefined}
         />
-        {/* Only offer Log out once actually signed in (not on the OTP step). */}
+        {/* Log out — shown for every role (employee, admin, driver). */}
         {currentUser ? (
           <Appbar.Action icon="logout" color="#FFFFFF" onPress={logout} />
         ) : null}
@@ -104,7 +152,7 @@ function RootNavigator() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer linking={linking}>
       <Stack.Navigator
         screenOptions={{
           // Use our Paper-based header everywhere EXCEPT login (set below).
@@ -121,9 +169,9 @@ function RootNavigator() {
               options={{ headerShown: false }}
             />
             <Stack.Screen
-              name="Otp"
-              component={OtpScreen}
-              options={{ title: 'Verify' }}
+              name="SignUp"
+              component={SignUpScreen}
+              options={{ headerShown: false }}
             />
           </>
         ) : currentUser.role === 'employee' ? (
@@ -137,12 +185,12 @@ function RootNavigator() {
             <Stack.Screen
               name="SelfRoster"
               component={SelfRosterScreen}
-              options={{ title: 'Self Roster' }}
+              options={{ title: 'Weekly Schedule' }}
             />
             <Stack.Screen
               name="BookCab"
               component={BookCabScreen}
-              options={{ title: 'Adhoc Request' }}
+              options={{ title: 'Book a Ride' }}
             />
             <Stack.Screen
               name="Feedback"
@@ -157,7 +205,7 @@ function RootNavigator() {
             <Stack.Screen
               name="RosterHistory"
               component={RosterHistoryScreen}
-              options={{ title: 'Roster History' }}
+              options={{ title: 'Ride History' }}
             />
             <Stack.Screen
               name="TripCancel"
@@ -170,19 +218,33 @@ function RootNavigator() {
               options={{ title: 'Track Cab' }}
             />
             <Stack.Screen
-              name="DriverSim"
-              component={DriverSimScreen}
-              options={{ title: 'Driver (demo)' }}
-            />
-            <Stack.Screen
-              name="DriverLive"
-              component={DriverLiveScreen}
-              options={{ title: 'Driver (live GPS)' }}
-            />
-            <Stack.Screen
               name="RateUs"
               component={RateUsScreen}
               options={{ title: 'Rate Us' }}
+            />
+            <Stack.Screen
+              name="Profile"
+              component={ProfileScreen}
+              options={{ title: 'Profile' }}
+            />
+          </>
+        ) : currentUser.role === 'driver' ? (
+          // ---- Driver screens ----
+          <>
+            <Stack.Screen
+              name="DriverHome"
+              component={DriverHomeScreen}
+              options={{ title: 'My Trips' }}
+            />
+            <Stack.Screen
+              name="DriverShareLocation"
+              component={DriverShareLocationScreen}
+              options={{ title: 'Share Location' }}
+            />
+            <Stack.Screen
+              name="DriverSim"
+              component={DriverSimScreen}
+              options={{ title: 'Simulate (demo)' }}
             />
             <Stack.Screen
               name="Profile"
@@ -202,6 +264,16 @@ function RootNavigator() {
               name="AssignCab"
               component={AssignCabScreen}
               options={{ title: 'Assign Cab' }}
+            />
+            <Stack.Screen
+              name="ManageDrivers"
+              component={ManageDriversScreen}
+              options={{ title: 'Manage Drivers' }}
+            />
+            <Stack.Screen
+              name="ManageCabs"
+              component={ManageCabsScreen}
+              options={{ title: 'Manage Cabs' }}
             />
           </>
         )}

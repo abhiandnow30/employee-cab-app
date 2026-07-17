@@ -10,12 +10,19 @@
 //   • Cab assigned                 → live map + trip details
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text, Card, Chip, Button } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeCabLocation } from '../../services/tracking';
+import {
+  getRoute,
+  tripDestination,
+  distanceMeters,
+  formatEta,
+  formatDistance,
+} from '../../services/directions';
 import TrackMap from '../../components/TrackMap';
 
 // Shown when there's nothing (yet) to track.
@@ -37,7 +44,7 @@ function EmptyState({ navigation, icon, title, body }) {
 }
 
 export default function TrackCabScreen({ navigation }) {
-  const { myActiveBookings, getCabById } = useApp();
+  const { myActiveBookings, getCabById, currentUser } = useApp();
 
   const active = myActiveBookings();
   // Track the first active booking that actually has a cab assigned.
@@ -46,6 +53,14 @@ export default function TrackCabScreen({ navigation }) {
   const cab = cabId ? getCabById(cabId) : null;
 
   const [location, setLocation] = useState(null); // { latitude, longitude, updatedAt }
+  const [route, setRoute] = useState(null); // { durationSec, distanceMeters, coordinates, source }
+
+  // Where the cab is heading: the fixed office (Home → Office) or the
+  // employee's saved home (Office → Home).
+  const destination = trackedBooking
+    ? tripDestination(trackedBooking.direction, currentUser?.home, trackedBooking.pickup)
+    : null;
+  const lastFetchRef = useRef({ time: 0, lat: 0, lng: 0 });
 
   useEffect(() => {
     if (!cabId) {
@@ -55,6 +70,26 @@ export default function TrackCabScreen({ navigation }) {
     const unsubscribe = subscribeCabLocation(cabId, setLocation);
     return unsubscribe;
   }, [cabId]);
+
+  // Recompute the route + ETA as the cab moves — but throttled, so we don't hit
+  // the routing service on every single GPS ping (only every ~8s or after 80m).
+  useEffect(() => {
+    if (!location || !destination) return;
+    const now = Date.now();
+    const last = lastFetchRef.current;
+    const movedFar =
+      distanceMeters(location, { latitude: last.lat, longitude: last.lng }) > 80;
+    if (route && now - last.time < 8000 && !movedFar) return;
+
+    lastFetchRef.current = { time: now, lat: location.latitude, lng: location.longitude };
+    let cancelled = false;
+    getRoute(location, destination).then((r) => {
+      if (!cancelled) setRoute(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [location, destination]);
 
   // No bookings at all.
   if (active.length === 0) {
@@ -111,9 +146,18 @@ export default function TrackCabScreen({ navigation }) {
             Driver: {cab?.driverName || '—'} · {cab?.driverPhone || '—'}
           </Text>
 
-          {location ? (
+          {/* ETA — shown once we have a live location and a computed route */}
+          {location && route ? (
+            <View style={styles.etaRow}>
+              <MaterialCommunityIcons name="map-marker-distance" size={18} color="#1565C0" />
+              <Text variant="titleSmall" style={styles.eta}>
+                Arriving in {formatEta(route.durationSec)} · {formatDistance(route.distanceMeters)}
+                {route.source === 'estimate' ? ' (approx)' : ''}
+              </Text>
+            </View>
+          ) : location ? (
             <Text variant="bodySmall" style={styles.coords}>
-              Position: {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
+              Calculating route…
             </Text>
           ) : (
             <Text variant="bodySmall" style={styles.coords}>
@@ -124,7 +168,12 @@ export default function TrackCabScreen({ navigation }) {
       </Card>
 
       <View style={styles.mapWrap}>
-        <TrackMap latitude={location?.latitude} longitude={location?.longitude} />
+        <TrackMap
+          latitude={location?.latitude}
+          longitude={location?.longitude}
+          route={route?.coordinates}
+          destination={destination}
+        />
       </View>
 
       <Button
@@ -151,6 +200,8 @@ const styles = StyleSheet.create({
   trip: { marginTop: 2 },
   detail: { opacity: 0.8, marginTop: 2 },
   driver: { marginTop: 8 },
+  etaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  eta: { color: '#1565C0' },
   coords: { opacity: 0.7, marginTop: 4 },
   mapWrap: { flex: 1 },
   homeBtn: { marginTop: 12, paddingVertical: 4 },

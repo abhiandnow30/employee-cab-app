@@ -103,11 +103,11 @@ export default function BookCabScreen({ navigation }) {
   return (
     <View style={styles.flex}>
       <ScrollView contentContainerStyle={styles.content}>
-        {/* Centered "Adhoc" title with CANCEL on the right */}
+        {/* Centered "Book a Ride" title with CANCEL on the right */}
         <View style={styles.titleRow}>
           <View style={styles.side} />
           <Text variant="titleLarge" style={styles.pageTitle}>
-            Adhoc
+            Book a Ride
           </Text>
           <View style={[styles.side, styles.sideRight]}>
             <Text
@@ -142,15 +142,25 @@ export default function BookCabScreen({ navigation }) {
         />
 
         <Text variant="labelLarge" style={styles.label}>
-          Request Type
+          Trip
         </Text>
         <Dropdown
           value={requestType}
-          placeholder="Pick or Drop"
+          placeholder="Choose your trip"
           options={REQUEST_TYPES}
           onSelect={setRequestType}
           compact={false}
+          format={(t) =>
+            t === 'Pick' ? 'Pickup  ·  Home → Office' : 'Drop  ·  Office → Home'
+          }
         />
+        {requestType ? (
+          <HelperText type="info" visible={true}>
+            {requestType === 'Pick'
+              ? 'Cab picks you up from your Home and drops you at the Office.'
+              : 'Cab picks you up from the Office and drops you Home.'}
+          </HelperText>
+        ) : null}
 
         <Text variant="labelLarge" style={styles.label}>
           Date

@@ -84,6 +84,41 @@ export default function TrackMap({ latitude, longitude, route, destination }) {
     mapRef.current.panTo(pos);
   }, [latitude, longitude]);
 
+  // Draw / update the pickup (destination) marker.
+  useEffect(() => {
+    const L = window.L;
+    if (!mapRef.current || !L || !destination) return;
+    const pos = [destination.latitude, destination.longitude];
+    if (!destRef.current) {
+      // A distinct green pin for the pickup point.
+      const icon = L.divIcon({
+        className: '',
+        html: '<div style="background:#2E7D32;width:16px;height:16px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>',
+        iconSize: [16, 16],
+        iconAnchor: [8, 16],
+      });
+      destRef.current = L.marker(pos, { icon }).addTo(mapRef.current).bindPopup('Pickup');
+    } else {
+      destRef.current.setLatLng(pos);
+    }
+  }, [destination]);
+
+  // Draw / update the route line, and fit the map to show the whole route.
+  useEffect(() => {
+    const L = window.L;
+    if (!mapRef.current || !L) return;
+    if (routeRef.current) {
+      routeRef.current.remove();
+      routeRef.current = null;
+    }
+    if (route && route.length > 1) {
+      routeRef.current = L.polyline(route, { color: '#1565C0', weight: 5, opacity: 0.75 }).addTo(
+        mapRef.current
+      );
+      mapRef.current.fitBounds(routeRef.current.getBounds(), { padding: [40, 40] });
+    }
+  }, [route]);
+
   return <View ref={containerRef} style={styles.map} />;
 }
 

@@ -9,6 +9,7 @@
 
 import {
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
 } from 'firebase/auth';
@@ -16,6 +17,12 @@ import { auth } from './firebase';
 
 export function signIn(email, password) {
   return signInWithEmailAndPassword(auth, email.trim(), password);
+}
+
+// Create a brand-new account (used by Sign Up). Firebase stores the password
+// securely and signs the new user in automatically.
+export function signUp(email, password) {
+  return createUserWithEmailAndPassword(auth, email.trim(), password);
 }
 
 export function signOutUser() {
@@ -46,6 +53,10 @@ export function friendlyAuthError(e) {
       return 'Too many attempts. Please wait a moment and try again.';
     case 'auth/operation-not-allowed':
       return 'Email/password sign-in is not enabled in Firebase yet.';
+    case 'auth/email-already-in-use':
+      return 'An account with this email already exists. Please sign in instead.';
+    case 'auth/weak-password':
+      return 'Password is too weak — use at least 6 characters.';
     case 'auth/network-request-failed':
       return 'Network error. Check your connection and try again.';
     default:

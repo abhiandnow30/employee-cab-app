@@ -11,8 +11,18 @@
 // Returns: { durationSec, distanceMeters, coordinates: [[lat,lng]...], source }
 // ---------------------------------------------------------------------------
 
-// Known demo pickup points → coordinates. (Real bookings would store coords or
-// be geocoded; this keeps the demo working without an extra API.)
+// The company office — a FIXED location. All "Home → Office" trips route here.
+// Vamsiram Jyothi Granules, Tower 2, Kondapur, Hyderabad 500084.
+// (Approx. Kondapur coordinates; for the exact building spot, replace with the
+//  lat,lng from Google Maps → right-click the building → copy.)
+export const OFFICE = {
+  latitude: 17.4588,
+  longitude: 78.3731,
+  label: 'Office — Vamsiram Jyothi Granules, Kondapur',
+};
+
+// Fallback pickup coords for demo pickup names, used only if an employee hasn't
+// set their exact home location in their profile yet.
 const PICKUP_COORDS = {
   gachibowli: { latitude: 17.44, longitude: 78.3489 },
   'hitec city': { latitude: 17.4435, longitude: 78.3772 },
@@ -25,6 +35,16 @@ const DEFAULT_DEST = { latitude: 17.44, longitude: 78.3489 }; // Gachibowli
 export function resolvePickup(name) {
   if (!name) return DEFAULT_DEST;
   return PICKUP_COORDS[name.trim().toLowerCase()] || DEFAULT_DEST;
+}
+
+// Where the cab is heading for a given trip:
+//   • Home → Office  → the fixed office
+//   • Office → Home  → the employee's saved home (falls back to pickup area)
+export function tripDestination(direction, employeeHome, pickupName) {
+  if (direction === 'Office → Home') {
+    return employeeHome || resolvePickup(pickupName);
+  }
+  return OFFICE; // Home → Office (and any other case)
 }
 
 // Straight-line distance in metres between two {latitude, longitude} points.

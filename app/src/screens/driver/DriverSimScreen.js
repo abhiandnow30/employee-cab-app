@@ -1,27 +1,29 @@
 // ---------------------------------------------------------------------------
-// DRIVER (DEMO) — a stand-in for a real driver's phone.
-// Press "Start driving" and it writes a new GPS position to Firebase every
-// second, moving the cab in a straight line from a start point toward the
-// pickup. The employee's Track Cab screen receives each update live.
+// DRIVER — SIMULATE MOVEMENT (demo)
+// A convenience for demos/testing WITHOUT a phone: drives the driver's own cab
+// in a straight line from a start point to the pickup, writing a new location
+// to Firebase every second. Employees tracking this cab see it move live.
 //
-// In Stage 3 this is replaced by a real driver screen that reads the phone's
-// actual GPS with expo-location. The Firebase side stays exactly the same.
+// The real driver flow uses "Share Live Location" (actual phone GPS); this is
+// only a stand-in when you don't have a phone handy.
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Text, Card, Button, SegmentedButtons } from 'react-native-paper';
+import { Text, Card, Button } from 'react-native-paper';
 import { updateCabLocation } from '../../services/tracking';
 import { useApp } from '../../context/AppContext';
 
 // A short route across Hyderabad: start → pickup (Gachibowli).
-const START = { latitude: 17.4200, longitude: 78.3700 };
-const PICKUP = { latitude: 17.4400, longitude: 78.3489 };
+const START = { latitude: 17.42, longitude: 78.37 };
+const PICKUP = { latitude: 17.44, longitude: 78.3489 };
 const STEPS = 40; // how many hops from start to pickup
 
-export default function DriverSimScreen() {
-  const { cabs } = useApp();
-  const [cabId, setCabId] = useState(cabs[0]?.id); // which cab to drive
+export default function DriverSimScreen({ navigation }) {
+  const { currentUser, getCabById } = useApp();
+  const cabId = currentUser?.cabId;
+  const cab = cabId ? getCabById(cabId) : null;
+
   const [running, setRunning] = useState(false);
   const [step, setStep] = useState(0);
   const intervalRef = useRef(null);
@@ -36,6 +38,7 @@ export default function DriverSimScreen() {
   }
 
   function start() {
+    if (!cabId) return;
     stop();
     stepRef.current = 0;
     setStep(0);
@@ -63,22 +66,12 @@ export default function DriverSimScreen() {
     <View style={styles.container}>
       <Card mode="outlined">
         <Card.Content>
-          <Text variant="titleMedium">Driver simulator</Text>
+          <Text variant="titleMedium">Simulate movement (demo)</Text>
           <Text variant="bodyMedium" style={styles.detail}>
-            Pick a cab, then drive it from the start point to the pickup — sends a
-            new location to Firebase once per second.
+            {cab ? `Drives cab ${cab.cabNumber} ` : 'No cab linked. '}
+            from a start point to the pickup — no phone needed. Employees tracking
+            your cab see it move live.
           </Text>
-
-          <Text variant="labelLarge" style={styles.pickLabel}>
-            Cab
-          </Text>
-          <SegmentedButtons
-            value={cabId}
-            onValueChange={setCabId}
-            density="small"
-            buttons={cabs.map((c) => ({ value: c.id, label: c.driverName, disabled: running }))}
-            style={styles.picker}
-          />
 
           <Text variant="bodyLarge" style={styles.progress}>
             {running ? `Driving… ${pct}%` : step > 0 ? 'Arrived ✓' : 'Idle'}
@@ -89,7 +82,7 @@ export default function DriverSimScreen() {
               mode="contained"
               icon="play"
               onPress={start}
-              disabled={running}
+              disabled={running || !cabId}
               style={styles.btn}
             >
               Start driving
@@ -106,11 +99,20 @@ export default function DriverSimScreen() {
           </View>
 
           <Text variant="bodySmall" style={styles.hint}>
-            Tip: open this in one browser tab and Track Cab in another to watch the
-            cab move live.
+            Tip: keep this running and open Track Cab (as the employee) in another
+            tab to watch the cab move.
           </Text>
         </Card.Content>
       </Card>
+
+      <Button
+        mode="text"
+        icon="arrow-left"
+        style={styles.backBtn}
+        onPress={() => navigation.navigate('DriverHome')}
+      >
+        Back to My Trips
+      </Button>
     </View>
   );
 }
@@ -118,10 +120,9 @@ export default function DriverSimScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 12 },
   detail: { opacity: 0.85, marginTop: 6 },
-  pickLabel: { marginTop: 14, marginBottom: 6, opacity: 0.8 },
-  picker: { marginBottom: 4 },
   progress: { marginTop: 14, fontWeight: 'bold' },
   buttons: { flexDirection: 'row', gap: 12, marginTop: 14 },
   btn: { flex: 1 },
   hint: { opacity: 0.6, marginTop: 16 },
+  backBtn: { marginTop: 16, alignSelf: 'center' },
 });

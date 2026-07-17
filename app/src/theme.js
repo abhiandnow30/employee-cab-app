@@ -42,6 +42,9 @@ export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
 // Colors used for the booking status chips, so a status reads at a glance.
 export const statusColors = {
   Booked: '#F9A825', // amber = waiting for a cab
-  'Cab assigned': '#2E7D32', // green = sorted
+  'Cab assigned': '#2E7D32', // green = cab assigned
+  'On the way': '#1565C0', // blue = driver en route
+  Arrived: '#00897B', // teal = driver at pickup
+  Completed: '#455A64', // blue-grey = trip done
   Cancelled: '#9E9E9E', // grey = no longer active
 };

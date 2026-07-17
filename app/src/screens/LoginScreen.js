@@ -34,8 +34,8 @@ export default function LoginScreen({ navigation }) {
       setError(result.message);
       return;
     }
-    // Credentials are good — go to the OTP screen to finish signing in.
-    navigation.navigate('Otp', { email: email.trim() });
+    // Success: the auth listener loads the profile and App.js switches to the
+    // right home screen automatically — no further navigation needed here.
   }
 
   return (
@@ -100,7 +100,15 @@ export default function LoginScreen({ navigation }) {
           loading={loading}
           disabled={loading}
         >
-          Continue
+          Sign In
+        </Button>
+
+        <Button
+          mode="text"
+          onPress={() => navigation.navigate('SignUp')}
+          style={styles.link}
+        >
+          New here? Create an account
         </Button>
 
         {/* Demo helper — remove once real login exists. */}
@@ -109,6 +117,7 @@ export default function LoginScreen({ navigation }) {
             <Text variant="labelLarge">Demo logins (password: cab12345)</Text>
             <Text variant="bodySmall">Employee → employee@demo.com</Text>
             <Text variant="bodySmall">Admin → admin@demo.com</Text>
+            <Text variant="bodySmall">Driver → driver@demo.com</Text>
           </Card.Content>
         </Card>
       </View>
@@ -133,5 +142,6 @@ const styles = StyleSheet.create({
   subtitle: { textAlign: 'center', marginBottom: 28, opacity: 0.7 },
   input: { marginBottom: 12 },
   button: { marginTop: 8, paddingVertical: 4 },
+  link: { marginTop: 6 },
   hintCard: { marginTop: 28 },
 });

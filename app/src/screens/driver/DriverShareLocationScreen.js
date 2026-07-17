@@ -1,23 +1,22 @@
 // ---------------------------------------------------------------------------
-// DRIVER (LIVE GPS) — the real driver side.
-// Reads the phone's actual GPS with expo-location and writes each new position
-// to Firebase. The employee's Track Cab screen shows it move in real time.
-//
-// Testing tip: run THIS on your phone in Expo Go (real GPS), and open Track Cab
-// in a web browser — you'll see your phone's real location on the map. Walk
-// around and the marker follows you.
+// DRIVER — SHARE LIVE LOCATION
+// Streams this phone's real GPS (expo-location) to the driver's assigned cab,
+// so employees tracking that cab see it move in real time.
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, Platform } from 'react-native';
-import { Text, Card, Button, SegmentedButtons } from 'react-native-paper';
+import { Text, Card, Button } from 'react-native-paper';
 import * as Location from 'expo-location';
 import { updateCabLocation } from '../../services/tracking';
 import { useApp } from '../../context/AppContext';
+import { colors } from '../../theme';
 
-export default function DriverLiveScreen() {
-  const { cabs } = useApp();
-  const [cabId, setCabId] = useState(cabs[0]?.id); // which cab this driver is driving
+export default function DriverShareLocationScreen({ navigation }) {
+  const { currentUser, getCabById } = useApp();
+  const cabId = currentUser?.cabId;
+  const cab = cabId ? getCabById(cabId) : null;
+
   const [status, setStatus] = useState('idle'); // idle | requesting | sharing | denied | error
   const [coords, setCoords] = useState(null);
   const [error, setError] = useState('');
@@ -25,9 +24,12 @@ export default function DriverLiveScreen() {
 
   async function startSharing() {
     setError('');
+    if (!cabId) {
+      setError('No cab is linked to your account.');
+      return;
+    }
     setStatus('requesting');
 
-    // Ask for permission to read location.
     const { status: perm } = await Location.requestForegroundPermissionsAsync();
     if (perm !== 'granted') {
       setStatus('denied');
@@ -35,13 +37,8 @@ export default function DriverLiveScreen() {
     }
 
     try {
-      // Stream location: a new fix when the phone moves ~5m or every 3s.
       watcherRef.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          distanceInterval: 5,
-          timeInterval: 3000,
-        },
+        { accuracy: Location.Accuracy.High, distanceInterval: 5, timeInterval: 3000 },
         (loc) => {
           const { latitude, longitude } = loc.coords;
           setCoords({ latitude, longitude });
@@ -72,23 +69,11 @@ export default function DriverLiveScreen() {
     <View style={styles.container}>
       <Card mode="outlined">
         <Card.Content>
-          <Text variant="titleMedium">Driver — share live location</Text>
+          <Text variant="titleMedium">Share live location</Text>
           <Text variant="bodyMedium" style={styles.detail}>
-            Pick your cab, then share this device's real GPS. Employees assigned
-            to this cab see you move live.
+            {cab ? `Broadcasting for cab ${cab.cabNumber}.` : 'No cab linked.'} Employees
+            assigned to your cab will see you move in real time.
           </Text>
-
-          {/* Which cab am I driving? */}
-          <Text variant="labelLarge" style={styles.pickLabel}>
-            Your cab
-          </Text>
-          <SegmentedButtons
-            value={cabId}
-            onValueChange={setCabId}
-            density="small"
-            buttons={cabs.map((c) => ({ value: c.id, label: c.driverName, disabled: sharing }))}
-            style={styles.picker}
-          />
 
           <Text variant="bodyLarge" style={styles.status}>
             {status === 'idle' && 'Not sharing'}
@@ -138,11 +123,20 @@ export default function DriverLiveScreen() {
           {Platform.OS === 'web' && (
             <Text variant="bodySmall" style={styles.help}>
               Note: on a laptop the browser's location is approximate. For a real
-              GPS test, run this screen on your phone in Expo Go.
+              GPS test, run this on your phone in Expo Go.
             </Text>
           )}
         </Card.Content>
       </Card>
+
+      <Button
+        mode="text"
+        icon="arrow-left"
+        style={styles.backBtn}
+        onPress={() => navigation.navigate('DriverHome')}
+      >
+        Back to My Trips
+      </Button>
     </View>
   );
 }
@@ -150,11 +144,10 @@ export default function DriverLiveScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 12 },
   detail: { opacity: 0.85, marginTop: 6 },
-  pickLabel: { marginTop: 14, marginBottom: 6, opacity: 0.8 },
-  picker: { marginBottom: 4 },
   status: { marginTop: 14, fontWeight: 'bold' },
-  coords: { opacity: 0.7, marginTop: 4 },
-  help: { opacity: 0.7, marginTop: 8 },
+  coords: { color: colors.muted, marginTop: 4 },
+  help: { color: colors.muted, marginTop: 8 },
   buttons: { flexDirection: 'row', gap: 12, marginTop: 14 },
   btn: { flex: 1 },
+  backBtn: { marginTop: 16, alignSelf: 'center' },
 });

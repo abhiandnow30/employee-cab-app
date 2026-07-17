@@ -112,12 +112,12 @@ export default function EmployeeHomeScreen({ navigation }) {
       <View style={styles.tileRow}>
         <Tile
           icon="calendar-month"
-          label="SELF ROSTER"
+          label="WEEKLY SCHEDULE"
           onPress={() => navigation.navigate('SelfRoster')}
         />
         <Tile
           icon="clipboard-check-outline"
-          label="ADHOC"
+          label="BOOK A RIDE"
           onPress={() => navigation.navigate('BookCab')}
         />
         <Tile
@@ -128,15 +128,15 @@ export default function EmployeeHomeScreen({ navigation }) {
       </View>
 
       <RideSection
-        title="My ORS"
+        title="My Scheduled Rides"
         rides={rosterRides}
-        emptyText="No Ors request found."
+        emptyText="No scheduled rides yet."
         onOpen={openRides}
       />
       <RideSection
-        title="My Adhoc"
+        title="My One-time Rides"
         rides={adhocRides}
-        emptyText="No adhoc request found."
+        emptyText="No one-time rides yet."
         onOpen={openRides}
       />
     </ScrollView>

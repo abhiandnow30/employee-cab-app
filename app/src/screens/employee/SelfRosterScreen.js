@@ -147,7 +147,7 @@ export default function SelfRosterScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <Text variant="titleLarge" style={styles.heading}>
-        Self Roster
+        Weekly Schedule
       </Text>
 
       {/* Week navigator */}
@@ -175,8 +175,14 @@ export default function SelfRosterScreen({ navigation }) {
       {/* Table header */}
       <View style={[styles.row, styles.headerRow]}>
         <Text style={[styles.cell, styles.colDate, styles.headerText]}>Date</Text>
-        <Text style={[styles.cell, styles.colLeg, styles.headerText]}>Pickup</Text>
-        <Text style={[styles.cell, styles.colLeg, styles.headerText]}>Drop</Text>
+        <View style={[styles.cell, styles.colLeg]}>
+          <Text style={styles.headerText}>Pickup</Text>
+          <Text style={styles.headerSub}>Home → Office</Text>
+        </View>
+        <View style={[styles.cell, styles.colLeg]}>
+          <Text style={styles.headerText}>Drop</Text>
+          <Text style={styles.headerSub}>Office → Home</Text>
+        </View>
       </View>
       <Divider />
 
@@ -249,6 +255,7 @@ const styles = StyleSheet.create({
   weekendRow: { backgroundColor: '#FDE0E0', borderRadius: 6 }, // Sat/Sun highlight
   headerRow: { paddingVertical: 4 },
   headerText: { fontWeight: 'bold', opacity: 0.7 },
+  headerSub: { fontSize: 11, opacity: 0.55 },
   cell: { paddingHorizontal: 4, justifyContent: 'center' },
   colDate: { flex: 1 },
   colLeg: { flex: 1.4, alignItems: 'flex-start' },

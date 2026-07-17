@@ -1,0 +1,16 @@
+{
+  "//": "REALTIME DATABASE SECURITY RULES — replaces open test mode.",
+  "//2": "Only signed-in users can read/write a cab's live location. Everything",
+  "//3": "else is denied by default. (Stricter option: allow a cab's location to",
+  "//4": "be written only by that cab's assigned driver — needs a uid->cab map.)",
+  "rules": {
+    "cabs": {
+      "$cabId": {
+        "location": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
+      }
+    }
+  }
+}

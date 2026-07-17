@@ -14,7 +14,7 @@ import { statusColors } from '../../theme';
 import { SOURCE } from '../../data/mockData';
 
 function sourceLabel(source) {
-  return source === SOURCE.ROSTER ? 'Self Roster' : 'Adhoc';
+  return source === SOURCE.ROSTER ? 'Weekly Schedule' : 'One-time';
 }
 
 export default function TripCancelScreen({ navigation }) {

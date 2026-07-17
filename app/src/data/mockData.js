@@ -54,12 +54,12 @@ export const initialBookings = [
   },
 ];
 
-// The choices shown in the "Book a Cab" form.
+// This is a NIGHT-SHIFT cab service: cabs run 9:00 PM → 6:00 AM only.
+// The choices shown in the booking forms all fall inside that window.
 export const SHIFT_OPTIONS = [
-  'Morning (9:00 AM)',
-  'Afternoon (2:00 PM)',
-  'Evening (6:00 PM)',
-  'Night (9:00 PM)',
+  'Night (09:00 PM)',
+  'Late Night (12:00 AM)',
+  'Early Morning (06:00 AM)',
 ];
 
 export const DIRECTION_OPTIONS = ['Home → Office', 'Office → Home'];
@@ -67,13 +67,15 @@ export const DIRECTION_OPTIONS = ['Home → Office', 'Office → Home'];
 // A single fixed OTP for the demo. Later, the backend sends a real code by SMS.
 export const TEST_OTP = '123456';
 
-// Shift times shown in the Self Roster table.
-// "Pickup" = cab picks you up from home to office (morning-ish times).
-// "Drop"   = cab drops you home from office (evening-ish times).
-// "NA" is the default (no ride that leg), matching the reference design.
+// Times shown in the Weekly Schedule table (night-shift service: 9 PM → 6 AM).
+// "Pickup" = cab picks you up from home to office → start of the night shift
+//            (late evening: 9-11 PM).
+// "Drop"   = cab drops you home from office → end of the night shift
+//            (early morning of the next day: 4-6 AM).
+// "NA" is the default (no ride that leg).
 export const NONE = 'NA';
-export const PICKUP_TIMES = [NONE, '07:00 AM', '08:00 AM', '09:00 AM', '10:00 AM'];
-export const DROP_TIMES = [NONE, '05:00 PM', '06:00 PM', '07:00 PM', '09:00 PM'];
+export const PICKUP_TIMES = [NONE, '09:00 PM', '10:00 PM', '11:00 PM'];
+export const DROP_TIMES = [NONE, '04:00 AM', '05:00 AM', '06:00 AM'];
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -91,16 +93,18 @@ export const REASONS = [
 // Drop = cab drops you home from office (Office → Home).
 export const REQUEST_TYPES = ['Pick', 'Drop'];
 
-// All shift times an ad-hoc request can choose from (morning + evening).
+// All times a one-time ride can choose from — the full 9 PM → 6 AM window.
 export const SHIFT_TIMES = [
-  '07:00 AM',
-  '08:00 AM',
-  '09:00 AM',
-  '10:00 AM',
-  '05:00 PM',
-  '06:00 PM',
-  '07:00 PM',
   '09:00 PM',
+  '10:00 PM',
+  '11:00 PM',
+  '12:00 AM',
+  '01:00 AM',
+  '02:00 AM',
+  '03:00 AM',
+  '04:00 AM',
+  '05:00 AM',
+  '06:00 AM',
 ];
 
 // Where a booking came from — used by the home "My ORS" / "My Adhoc" lists.
