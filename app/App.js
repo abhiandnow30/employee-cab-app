@@ -29,6 +29,7 @@ import RosterHistoryScreen from './src/screens/employee/RosterHistoryScreen';
 import TripCancelScreen from './src/screens/employee/TripCancelScreen';
 import TrackCabScreen from './src/screens/employee/TrackCabScreen';
 import RateUsScreen from './src/screens/employee/RateUsScreen';
+import ContactUsScreen from './src/screens/employee/ContactUsScreen';
 import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
 import AssignCabScreen from './src/screens/admin/AssignCabScreen';
@@ -63,6 +64,7 @@ const linking = {
       TripCancel: 'trip-cancel',
       TrackCab: 'track',
       RateUs: 'rate-us',
+      ContactUs: 'contact-us',
       Profile: 'profile',
       // Admin
       Bookings: 'bookings',
@@ -118,6 +120,14 @@ function AppHeader({ navigation, route, options, back }) {
           // Tapping the brand title returns to the role's home screen.
           onPress={currentUser ? () => navigation.navigate(homeRoute) : undefined}
         />
+        {/* Contact us — employees only. */}
+        {isEmployee ? (
+          <Appbar.Action
+            icon="phone"
+            color="#FFFFFF"
+            onPress={() => navigation.navigate('ContactUs')}
+          />
+        ) : null}
         {/* Log out — shown for every role (employee, admin, driver). */}
         {currentUser ? (
           <Appbar.Action icon="logout" color="#FFFFFF" onPress={logout} />
@@ -221,6 +231,11 @@ function RootNavigator() {
               name="RateUs"
               component={RateUsScreen}
               options={{ title: 'Rate Us' }}
+            />
+            <Stack.Screen
+              name="ContactUs"
+              component={ContactUsScreen}
+              options={{ title: 'Contact Us' }}
             />
             <Stack.Screen
               name="Profile"

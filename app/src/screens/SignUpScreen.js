@@ -71,9 +71,6 @@ export default function SignUpScreen({ navigation }) {
         </Text>
 
         {/* Role */}
-        <Text variant="labelLarge" style={styles.label}>
-          I am a
-        </Text>
         <SegmentedButtons
           value={role}
           onValueChange={setRole}
