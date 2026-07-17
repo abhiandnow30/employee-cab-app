@@ -1,16 +1,17 @@
 rules_version = '2';
 
 // ---------------------------------------------------------------------------
-// FIRESTORE SECURITY RULES
-// Replaces the open "test mode" rules. The core rule: you must be SIGNED IN
-// (Firebase Auth) to read or write anything. Unauthenticated requests from the
-// public internet are now rejected.
+// FIRESTORE SECURITY RULES  (Stage 4)
+// Replaces open "test mode". Access is role-scoped:
+//   • Employees  → only their OWN bookings/profile.
+//   • Drivers    → bookings assigned to THEIR cab.
+//   • Admin      → everything.
+// Unauthenticated (public internet) requests are rejected everywhere.
 //
-// Notes / possible future tightening:
-//   • Any signed-in user can read all bookings (admins & drivers need broad
-//     reads; fine for an internal company app). To scope employees to only
-//     their own bookings, add per-document owner checks.
-//   • A user can only write their OWN profile document (employees/<uid>).
+// KNOWN LIMITATION: a signed-in user can write their own profile, including the
+// `role` field, so the in-app "admin code" is not enforced server-side. For
+// production, create admins via the Firebase console and switch the employees
+// write rule to the stricter version noted below.
 // ---------------------------------------------------------------------------
 
 service cloud.firestore {
@@ -19,41 +20,71 @@ service cloud.firestore {
     function signedIn() {
       return request.auth != null;
     }
-
-    // Is the signed-in user an admin? (Reads their own profile's role.)
+    // The signed-in user's own profile data (role, cabId, ...).
+    function myData() {
+      return get(/databases/$(database)/documents/employees/$(request.auth.uid)).data;
+    }
+    function myRole() {
+      return signedIn() ? myData().role : '';
+    }
     function isAdmin() {
-      return signedIn()
-        && get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.role == 'admin';
+      return myRole() == 'admin';
+    }
+    // True if I'm the driver of the given cab.
+    function isDriverForCab(cabId) {
+      return myRole() == 'driver' && myData().cabId == cabId;
     }
 
-    // Employee/driver/admin profiles. You may write your OWN profile; an admin
-    // may write any profile (e.g. to assign a cab to a driver).
+    // --- Profiles -----------------------------------------------------------
+    // You may read your OWN profile; an admin may read any (Manage Drivers).
+    // You may write your OWN profile; an admin may write any (assign a cab).
     match /employees/{uid} {
-      allow read: if signedIn();
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow write: if signedIn() && (request.auth.uid == uid || isAdmin());
+      // Stricter (production) — block self-promotion to admin:
+      //   allow write: if isAdmin()
+      //     || (request.auth.uid == uid && request.resource.data.role != 'admin');
     }
 
-    // Bookings — signed-in users can read/create/update (admin assigns,
-    // driver updates status, employee cancels).
+    // --- Bookings -----------------------------------------------------------
     match /bookings/{bookingId} {
-      allow read, create, update: if signedIn();
+      // Read: the owner, the admin, or the driver of the assigned cab.
+      allow read: if signedIn() && (
+        resource.data.employeeId == request.auth.uid ||
+        isAdmin() ||
+        isDriverForCab(resource.data.assignedCabId)
+      );
+      // Create: an employee may only create bookings for themselves.
+      allow create: if signedIn()
+        && request.resource.data.employeeId == request.auth.uid;
+      // Update: owner (cancel), admin (assign cab), or the cab's driver (status).
+      allow update: if signedIn() && (
+        resource.data.employeeId == request.auth.uid ||
+        isAdmin() ||
+        isDriverForCab(resource.data.assignedCabId)
+      );
       allow delete: if false; // keep history — never hard-delete
     }
 
-    // Cabs (the fleet). Everyone signed in can read; only an admin can
-    // add / edit / remove cabs.
+    // --- Cabs (fleet) -------------------------------------------------------
+    // Everyone signed in can read; only an admin can add/edit/remove.
     match /cabs/{cabId} {
       allow read: if signedIn();
       allow write: if isAdmin();
     }
 
-    // Feedback & ratings — signed-in users can add and read.
+    // --- Feedback & ratings -------------------------------------------------
+    // You may submit your own; only an admin can read them.
     match /feedback/{docId} {
-      allow read, create: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.employeeId == request.auth.uid;
+      allow read: if isAdmin();
       allow update, delete: if false;
     }
     match /ratings/{docId} {
-      allow read, create: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.employeeId == request.auth.uid;
+      allow read: if isAdmin();
       allow update, delete: if false;
     }
 
