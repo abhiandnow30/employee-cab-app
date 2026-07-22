@@ -34,6 +34,7 @@ export default function AssignCabScreen({ route, navigation }) {
 
   return (
     <View style={styles.container}>
+      <View style={styles.centerCol}>
       {/* Summary of the booking we're assigning to. */}
       <Card style={styles.summary} mode="contained">
         <Card.Content>
@@ -86,12 +87,14 @@ export default function AssignCabScreen({ route, navigation }) {
       >
         Assign cab
       </Button>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 12 },
+  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   summary: { marginBottom: 12 },
   detail: { opacity: 0.8, marginTop: 2 },

@@ -5,10 +5,10 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState, useRef } from 'react';
-import { StyleSheet, View, KeyboardAvoidingView, Platform } from 'react-native';
+import { StyleSheet, View, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import { Text, TextInput, Button, HelperText, Card } from 'react-native-paper';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../context/AppContext';
+import { COMPANY_NAME, companyLogo } from '../branding';
 import { colors } from '../theme';
 
 export default function LoginScreen({ navigation }) {
@@ -44,82 +44,90 @@ export default function LoginScreen({ navigation }) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.inner}>
-        <View style={styles.logoCircle}>
-          <MaterialCommunityIcons name="car-multiple" size={40} color="#FFFFFF" />
-        </View>
-        <Text variant="headlineMedium" style={styles.title}>
-          Cab Service
-        </Text>
-        <Text variant="bodyMedium" style={styles.subtitle}>
-          Book your company cab
-        </Text>
-
-        <TextInput
-          label="Email"
-          value={email}
-          onChangeText={setEmail}
-          mode="outlined"
-          autoCapitalize="none"
-          keyboardType="email-address"
-          left={<TextInput.Icon icon="email" />}
-          style={styles.input}
-          returnKeyType="next"
-          onSubmitEditing={() => passwordRef.current?.focus()}
-          blurOnSubmit={false}
-        />
-
-        <TextInput
-          ref={passwordRef}
-          label="Password"
-          value={password}
-          onChangeText={setPassword}
-          mode="outlined"
-          secureTextEntry={!showPassword}
-          left={<TextInput.Icon icon="lock" />}
-          right={
-            <TextInput.Icon
-              icon={showPassword ? 'eye-off' : 'eye'}
-              onPress={() => setShowPassword((s) => !s)}
+        <Card style={styles.card} mode="elevated">
+          <Card.Content style={styles.cardContent}>
+            <Image
+              source={companyLogo}
+              style={styles.brandLogo}
+              resizeMode="contain"
             />
-          }
-          style={styles.input}
-          returnKeyType="go"
-          onSubmitEditing={handleLogin}
-        />
+            <Text variant="titleMedium" style={styles.brandName}>
+              {COMPANY_NAME}
+            </Text>
+            <View style={styles.brandDivider} />
+            <Text variant="titleLarge" style={styles.title}>
+              Cab Service
+            </Text>
+            <Text variant="bodySmall" style={styles.subtitle}>
+              Book your company cab
+            </Text>
 
-        {error ? (
-          <HelperText type="error" visible={true}>
-            {error}
-          </HelperText>
-        ) : null}
+            <TextInput
+              label="Email"
+              value={email}
+              onChangeText={setEmail}
+              mode="outlined"
+              dense
+              autoCapitalize="none"
+              keyboardType="email-address"
+              left={<TextInput.Icon icon="email" />}
+              style={styles.input}
+              returnKeyType="next"
+              onSubmitEditing={() => passwordRef.current?.focus()}
+              blurOnSubmit={false}
+            />
 
-        <Button
-          mode="contained"
-          onPress={handleLogin}
-          style={styles.button}
-          loading={loading}
-          disabled={loading}
-        >
-          Sign In
-        </Button>
+            <TextInput
+              ref={passwordRef}
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              mode="outlined"
+              dense
+              secureTextEntry={!showPassword}
+              left={<TextInput.Icon icon="lock" />}
+              right={
+                <TextInput.Icon
+                  icon={showPassword ? 'eye-off' : 'eye'}
+                  onPress={() => setShowPassword((s) => !s)}
+                />
+              }
+              style={styles.input}
+              returnKeyType="go"
+              onSubmitEditing={handleLogin}
+            />
 
-        <Button
-          mode="text"
-          onPress={() => navigation.navigate('SignUp')}
-          style={styles.link}
-        >
-          New here? Create an account
-        </Button>
+            {error ? (
+              <HelperText type="error" visible={true} style={styles.error}>
+                {error}
+              </HelperText>
+            ) : null}
 
-        {/* Demo helper — remove once real login exists. */}
-        <Card style={styles.hintCard} mode="contained">
-          <Card.Content>
-            <Text variant="labelLarge">Demo logins (password: cab12345)</Text>
-            <Text variant="bodySmall">Employee → employee@demo.com</Text>
-            <Text variant="bodySmall">Admin → admin@demo.com</Text>
-            <Text variant="bodySmall">Driver → driver@demo.com</Text>
+            <Button
+              mode="contained"
+              onPress={handleLogin}
+              style={styles.button}
+              loading={loading}
+              disabled={loading}
+            >
+              Sign In
+            </Button>
+
+            <Button
+              mode="text"
+              onPress={() => navigation.navigate('SignUp')}
+              style={styles.link}
+              compact
+            >
+              New here? Create an account
+            </Button>
           </Card.Content>
         </Card>
+
+        {/* Demo helper — remove once real login exists. */}
+        <Text variant="bodySmall" style={styles.hint}>
+          Demo (password: cab12345) · employee@demo.com · admin@demo.com · driver@demo.com
+        </Text>
       </View>
     </KeyboardAvoidingView>
   );
@@ -127,21 +135,34 @@ export default function LoginScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  inner: { flex: 1, justifyContent: 'center', padding: 24 },
-  logoCircle: {
+  inner: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  card: { width: '100%', maxWidth: 380, borderRadius: 12 },
+  cardContent: { paddingVertical: 24 },
+  brandLogo: { width: 96, height: 64, alignSelf: 'center' },
+  brandName: {
+    textAlign: 'center',
+    fontWeight: 'bold',
+    color: colors.text,
+    marginTop: 4,
+  },
+  brandDivider: {
+    height: 1,
+    backgroundColor: colors.border,
     alignSelf: 'center',
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
+    width: '60%',
+    marginVertical: 14,
   },
   title: { textAlign: 'center', fontWeight: 'bold', color: colors.primary },
-  subtitle: { textAlign: 'center', marginBottom: 28, opacity: 0.7 },
-  input: { marginBottom: 12 },
-  button: { marginTop: 8, paddingVertical: 4 },
-  link: { marginTop: 6 },
-  hintCard: { marginTop: 28 },
+  subtitle: { textAlign: 'center', marginBottom: 20, opacity: 0.6 },
+  input: { marginBottom: 10 },
+  error: { marginTop: -2, marginBottom: 2 },
+  button: { marginTop: 6, paddingVertical: 2, borderRadius: 8 },
+  link: { marginTop: 4 },
+  hint: {
+    maxWidth: 380,
+    textAlign: 'center',
+    marginTop: 16,
+    opacity: 0.5,
+    color: colors.muted,
+  },
 });

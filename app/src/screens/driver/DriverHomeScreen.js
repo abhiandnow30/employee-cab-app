@@ -20,7 +20,7 @@ const NEXT_ACTION = {
 };
 
 export default function DriverHomeScreen({ navigation }) {
-  const { currentUser, bookings, updateBookingStatus, getCabById } = useApp();
+  const { currentUser, bookings, updateBookingStatus, markNoShow, getCabById } = useApp();
 
   const cab = currentUser?.cabId ? getCabById(currentUser.cabId) : null;
   // Trips for this cab that aren't cancelled.
@@ -61,6 +61,19 @@ export default function DriverHomeScreen({ navigation }) {
               >
                 {action.label}
               </Button>
+              {/* At the pickup but the employee isn't here → flag a no-show,
+                  which the admin sees in red on the Bookings screen. */}
+              {item.status === 'Arrived' && (
+                <Button
+                  mode="outlined"
+                  icon="account-alert"
+                  textColor={colors.danger}
+                  style={styles.noShowBtn}
+                  onPress={() => markNoShow(item.id)}
+                >
+                  Employee not here (No-show)
+                </Button>
+              )}
             </>
           )}
         </Card.Content>
@@ -122,7 +135,7 @@ export default function DriverHomeScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
+  container: { flex: 1, padding: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
   header: { marginBottom: 12 },
   name: { fontWeight: 'bold' },
   sub: { color: colors.muted, marginTop: 2 },
@@ -141,6 +154,7 @@ const styles = StyleSheet.create({
   chipText: { color: 'white', fontSize: 12 },
   detail: { opacity: 0.8, marginTop: 2 },
   divider: { marginVertical: 12 },
+  noShowBtn: { marginTop: 8, borderColor: colors.danger },
   empty: { alignItems: 'center', marginTop: 40 },
   emptyText: { color: colors.muted, marginTop: 8 },
 });

@@ -60,7 +60,7 @@ export default function RosterHistoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  listContent: { padding: 12 },
+  listContent: { padding: 12, width: '100%', maxWidth: 720, alignSelf: 'center' },
   card: { marginBottom: 12 },
   rowBetween: {
     flexDirection: 'row',

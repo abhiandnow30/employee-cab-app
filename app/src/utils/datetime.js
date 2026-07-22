@@ -45,6 +45,34 @@ export function isPastDateTime(dateKey, timeStr) {
   return false;
 }
 
+// Hours from now until the ride at `dateKey` + `timeStr` (a float; negative if
+// the ride is already in the past). Returns null if the time can't be parsed.
+export function hoursUntil(dateKey, timeStr) {
+  const mins = timeToMinutes(timeStr);
+  if (mins == null) return null;
+  const [y, m, d] = String(dateKey).split('-').map((n) => parseInt(n, 10));
+  if (!y || !m || !d) return null;
+  const rideAt = new Date(y, m - 1, d, Math.floor(mins / 60), mins % 60, 0, 0);
+  return (rideAt.getTime() - Date.now()) / (1000 * 60 * 60);
+}
+
+// True if a ride is far enough away to still be cancellable (default: at least
+// 4 hours before it starts). Rides inside the window — or already past — can't.
+export function canRequestCancel(dateKey, timeStr, cutoffHours = 4) {
+  const h = hoursUntil(dateKey, timeStr);
+  if (h == null) return true; // no parseable time → don't block on the cutoff
+  return h >= cutoffHours;
+}
+
+// True if a ride at `dateKey` + `timeStr` is far enough in the future to be
+// booked (default: at least 9 hours of lead time). Non-time values (e.g. "NA")
+// aren't gated. Rides too soon — or in the past — return false.
+export function canBook(dateKey, timeStr, leadHours = 9) {
+  const h = hoursUntil(dateKey, timeStr);
+  if (h == null) return true; // non-time values (e.g. "NA") aren't gated
+  return h >= leadHours;
+}
+
 // Keep only times that are still valid for the given date.
 // (For today, drops times that have already passed; non-time entries stay.)
 export function futureTimesForDate(dateKey, times) {
@@ -53,4 +81,11 @@ export function futureTimesForDate(dateKey, times) {
     const m = timeToMinutes(t);
     return m == null || m > nowMinutes();
   });
+}
+
+// Keep only times that satisfy the booking lead time (default 9 hours) for the
+// given date — so a time inside the lead window can't even be picked. Non-time
+// entries (e.g. "NA") always stay.
+export function bookableTimesForDate(dateKey, times, leadHours = 9) {
+  return times.filter((t) => canBook(dateKey, t, leadHours));
 }

@@ -32,12 +32,16 @@ function loadLeaflet() {
   });
 }
 
-export default function LocationPicker({ value, onChange }) {
+export default function LocationPicker({ value, onChange, address }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const addressRef = useRef(address);
+  addressRef.current = address;
+
+  const popupText = (addr) => addr || 'Move the pin to your exact location.';
 
   // Create the map + draggable marker once.
   useEffect(() => {
@@ -52,6 +56,10 @@ export default function LocationPicker({ value, onChange }) {
         maxZoom: 19,
       }).addTo(map);
       const marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+      // Popup shows the pin's address only while hovering the marker.
+      marker.bindPopup(popupText(addressRef.current), { autoClose: false, closeButton: false });
+      marker.on('mouseover', () => marker.openPopup());
+      marker.on('mouseout', () => marker.closePopup());
       marker.on('dragend', () => {
         const p = marker.getLatLng();
         onChangeRef.current({ latitude: p.lat, longitude: p.lng });
@@ -81,6 +89,15 @@ export default function LocationPicker({ value, onChange }) {
     markerRef.current.setLatLng(pos);
     mapRef.current.panTo(pos);
   }, [value?.latitude, value?.longitude]);
+
+  // Keep the marker's popup text in sync with the resolved address.
+  useEffect(() => {
+    const marker = markerRef.current;
+    if (!marker) return;
+    const text = popupText(address);
+    if (marker.getPopup()) marker.setPopupContent(text);
+    else marker.bindPopup(text);
+  }, [address]);
 
   return <View ref={containerRef} style={styles.map} />;
 }

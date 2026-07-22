@@ -12,6 +12,9 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
 } from 'firebase/auth';
 import { auth } from './firebase';
 
@@ -28,6 +31,16 @@ export function signUp(email, password) {
 export function signOutUser() {
   if (!auth) return Promise.resolve();
   return signOut(auth);
+}
+
+// Change the signed-in user's password. Firebase requires a recent login, so we
+// re-verify the current password first, then set the new one.
+export async function changePassword(currentPassword, newPassword) {
+  const user = auth?.currentUser;
+  if (!user) throw new Error('You are not signed in.');
+  const cred = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, cred); // proves the current password
+  await updatePassword(user, newPassword);
 }
 
 // Calls `callback(user | null)` now and on every future login/logout.

@@ -101,59 +101,62 @@ export default function EmployeeHomeScreen({ navigation }) {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text variant="titleLarge" style={styles.empName}>
-        {currentUser?.name || 'Employee'}
-      </Text>
-      <Text variant="bodyMedium" style={styles.services}>
-        Employee ID: {currentUser?.empId || '—'}
-      </Text>
+      <View style={styles.content}>
+        <Text variant="titleLarge" style={styles.empName}>
+          {currentUser?.name || 'Employee'}
+        </Text>
+        <Text variant="bodyMedium" style={styles.services}>
+          Employee ID: {currentUser?.empId || '—'}
+        </Text>
 
-      {/* Top action tiles */}
-      <View style={styles.tileRow}>
-        <Tile
-          icon="calendar-month"
-          label="WEEKLY SCHEDULE"
-          onPress={() => navigation.navigate('SelfRoster')}
+        {/* Top action tiles */}
+        <View style={styles.tileRow}>
+          <Tile
+            icon="calendar-month"
+            label="WEEKLY SCHEDULE"
+            onPress={() => navigation.navigate('SelfRoster')}
+          />
+          <Tile
+            icon="clipboard-check-outline"
+            label="BOOK A RIDE"
+            onPress={() => navigation.navigate('BookCab')}
+          />
+          <Tile
+            icon="message-draw"
+            label="FEEDBACK"
+            onPress={() => navigation.navigate('Feedback')}
+          />
+        </View>
+
+        <RideSection
+          title="My Scheduled Rides"
+          rides={rosterRides}
+          emptyText="No scheduled rides yet."
+          onOpen={openRides}
         />
-        <Tile
-          icon="clipboard-check-outline"
-          label="BOOK A RIDE"
-          onPress={() => navigation.navigate('BookCab')}
-        />
-        <Tile
-          icon="message-draw"
-          label="FEEDBACK"
-          onPress={() => navigation.navigate('Feedback')}
+        <RideSection
+          title="My One-time Rides"
+          rides={adhocRides}
+          emptyText="No one-time rides yet."
+          onOpen={openRides}
         />
       </View>
-
-      <RideSection
-        title="My Scheduled Rides"
-        rides={rosterRides}
-        emptyText="No scheduled rides yet."
-        onOpen={openRides}
-      />
-      <RideSection
-        title="My One-time Rides"
-        rides={adhocRides}
-        emptyText="No one-time rides yet."
-        onOpen={openRides}
-      />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 16 },
+  container: { padding: 16, alignItems: 'center' },
+  content: { width: '100%', maxWidth: 720 },
   empName: { fontWeight: 'bold', color: colors.text },
   services: { color: colors.muted, marginBottom: 16, marginTop: 2 },
   tileRow: { flexDirection: 'row', gap: 12, marginBottom: 24 },
   tile: { flex: 1, borderRadius: 16 },
-  tileContent: { alignItems: 'center', justifyContent: 'center', paddingVertical: 18, gap: 10 },
+  tileContent: { alignItems: 'center', justifyContent: 'center', paddingVertical: 16, gap: 8 },
   iconCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: '#E3F0FF',
     alignItems: 'center',
     justifyContent: 'center',

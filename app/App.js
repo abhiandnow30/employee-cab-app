@@ -6,17 +6,18 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, Image, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { PaperProvider, Appbar, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { theme, colors } from './src/theme';
 import { AppProvider, useApp } from './src/context/AppContext';
 import AppDrawer from './src/components/AppDrawer';
+import { companyLogo } from './src/branding';
 
 import LoginScreen from './src/screens/LoginScreen';
 import SignUpScreen from './src/screens/SignUpScreen';
@@ -35,6 +36,8 @@ import BookingsScreen from './src/screens/admin/BookingsScreen';
 import AssignCabScreen from './src/screens/admin/AssignCabScreen';
 import ManageDriversScreen from './src/screens/admin/ManageDriversScreen';
 import ManageCabsScreen from './src/screens/admin/ManageCabsScreen';
+import ShiftRosterScreen from './src/screens/admin/ShiftRosterScreen';
+import ManageTimingsScreen from './src/screens/admin/ManageTimingsScreen';
 import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
 import DriverShareLocationScreen from './src/screens/driver/DriverShareLocationScreen';
 import DriverSimScreen from './src/screens/driver/DriverSimScreen';
@@ -42,6 +45,10 @@ import DriverSimScreen from './src/screens/driver/DriverSimScreen';
 const Stack = createNativeStackNavigator();
 
 const BRAND = 'Cab Service';
+
+// At/above this width we show a permanent left sidebar (web / tablets) instead
+// of the slide-in drawer.
+const WIDE_BREAKPOINT = 900;
 
 // URL-based routing: each screen gets its own web address so the browser's
 // back/forward buttons work and pages are refresh-safe. (On the phone this is
@@ -71,6 +78,8 @@ const linking = {
       AssignCab: 'assign-cab',
       ManageDrivers: 'drivers',
       ManageCabs: 'cabs',
+      ShiftRoster: 'shift-roster',
+      ManageTimings: 'manage-timings',
       // Driver
       DriverHome: 'driver',
       DriverShareLocation: 'driver/share',
@@ -82,10 +91,14 @@ const linking = {
 // A custom header that shows the screen title and a Log out action on the right.
 // We use Paper's Appbar so the header matches the app's look.
 function AppHeader({ navigation, route, options, back }) {
-  const { logout, currentUser } = useApp();
+  const { logout, currentUser, changePassword } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { width } = useWindowDimensions();
 
   const isEmployee = currentUser?.role === 'employee';
+  // On wide screens the employee sidebar is permanent (rendered in RootNavigator),
+  // so the header's ☰ menu button isn't needed there.
+  const hasPermanentSidebar = isEmployee && width >= WIDE_BREAKPOINT;
   // Which screen "home" means for this role.
   const homeRoute =
     currentUser?.role === 'admin'
@@ -106,11 +119,18 @@ function AppHeader({ navigation, route, options, back }) {
   return (
     <>
       <Appbar.Header style={styles.appbar} dark>
-        {isEmployee ? (
+        {isEmployee && !hasPermanentSidebar ? (
           // Employees get the ☰ menu on the left (opens the drawer).
           <Appbar.Action icon="menu" color="#FFFFFF" onPress={() => setDrawerOpen(true)} />
-        ) : back ? (
+        ) : !hasPermanentSidebar && back ? (
           <Appbar.BackAction color="#FFFFFF" onPress={goBack} />
+        ) : null}
+        {/* Company logo on a small white chip — hidden when the permanent
+            sidebar already shows the brand, to avoid duplicating it. */}
+        {currentUser && !hasPermanentSidebar ? (
+          <View style={styles.headerLogoChip}>
+            <Image source={companyLogo} style={styles.headerLogo} resizeMode="contain" />
+          </View>
         ) : null}
         <Appbar.Content
           title={title}
@@ -137,7 +157,9 @@ function AppHeader({ navigation, route, options, back }) {
       <AppDrawer
         visible={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        email={currentUser?.email}
+        user={currentUser}
+        onChangePassword={changePassword}
+        activeScreen={route.name}
         onNavigate={(item) => {
           setDrawerOpen(false);
           navigation.navigate(item.screen, item.params);
@@ -149,7 +171,13 @@ function AppHeader({ navigation, route, options, back }) {
 
 // Chooses which set of screens to show. Reads the current user from context.
 function RootNavigator() {
-  const { currentUser, authReady } = useApp();
+  const { currentUser, authReady, changePassword } = useApp();
+  const { width } = useWindowDimensions();
+  const navRef = useNavigationContainerRef();
+  const [activeRoute, setActiveRoute] = useState(null);
+
+  // Employees on a wide screen get a permanent left sidebar.
+  const showSidebar = currentUser?.role === 'employee' && width >= WIDE_BREAKPOINT;
 
   // While Firebase checks for an existing session, show a spinner instead of
   // briefly flashing the login screen.
@@ -162,14 +190,30 @@ function RootNavigator() {
   }
 
   return (
-    <NavigationContainer linking={linking}>
-      <Stack.Navigator
-        screenOptions={{
-          // Use our Paper-based header everywhere EXCEPT login (set below).
-          header: (props) => <AppHeader {...props} />,
-          contentStyle: { backgroundColor: colors.background },
-        }}
-      >
+    <NavigationContainer
+      ref={navRef}
+      linking={linking}
+      onReady={() => setActiveRoute(navRef.getCurrentRoute()?.name)}
+      onStateChange={() => setActiveRoute(navRef.getCurrentRoute()?.name)}
+    >
+      <View style={styles.appRow}>
+        {showSidebar ? (
+          <AppDrawer
+            permanent
+            user={currentUser}
+            onChangePassword={changePassword}
+            activeScreen={activeRoute}
+            onNavigate={(item) => navRef.navigate(item.screen, item.params)}
+          />
+        ) : null}
+        <View style={styles.appContent}>
+          <Stack.Navigator
+            screenOptions={{
+              // Use our Paper-based header everywhere EXCEPT login (set below).
+              header: (props) => <AppHeader {...props} />,
+              contentStyle: { backgroundColor: colors.background },
+            }}
+          >
         {!currentUser ? (
           // ---- Logged out: email/password → OTP ----
           <>
@@ -290,9 +334,21 @@ function RootNavigator() {
               component={ManageCabsScreen}
               options={{ title: 'Manage Cabs' }}
             />
+            <Stack.Screen
+              name="ShiftRoster"
+              component={ShiftRosterScreen}
+              options={{ title: 'Shift Roster' }}
+            />
+            <Stack.Screen
+              name="ManageTimings"
+              component={ManageTimingsScreen}
+              options={{ title: 'Manage Timings' }}
+            />
           </>
-        )}
-      </Stack.Navigator>
+          )}
+          </Stack.Navigator>
+        </View>
+      </View>
     </NavigationContainer>
   );
 }
@@ -318,7 +374,20 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  appRow: { flex: 1, flexDirection: 'row' },
+  appContent: { flex: 1 },
   appbar: { backgroundColor: colors.primary },
+  headerLogoChip: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+    marginRight: 4,
+  },
+  headerLogo: { width: 30, height: 30 },
   appbarContent: { alignItems: 'center' },
   appbarTitle: { fontWeight: 'bold', letterSpacing: 0.3, textAlign: 'center' },
   splash: {

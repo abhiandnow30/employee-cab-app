@@ -46,5 +46,6 @@ export const statusColors = {
   'On the way': '#1565C0', // blue = driver en route
   Arrived: '#00897B', // teal = driver at pickup
   Completed: '#455A64', // blue-grey = trip done
+  'No show': '#C62828', // red = employee wasn't at pickup
   Cancelled: '#9E9E9E', // grey = no longer active
 };

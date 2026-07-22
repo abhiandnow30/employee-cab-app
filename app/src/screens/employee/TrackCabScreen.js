@@ -189,7 +189,7 @@ export default function TrackCabScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 12 },
+  container: { flex: 1, padding: 12, width: '100%', maxWidth: 720, alignSelf: 'center' },
   infoCard: { marginBottom: 12 },
   rowBetween: {
     flexDirection: 'row',

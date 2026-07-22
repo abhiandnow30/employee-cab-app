@@ -13,6 +13,7 @@ import { StyleSheet, View } from 'react-native';
 import { Text, Card, Button } from 'react-native-paper';
 import { updateCabLocation } from '../../services/tracking';
 import { useApp } from '../../context/AppContext';
+import ScreenContainer from '../../components/ScreenContainer';
 
 // A short route across Hyderabad: start → pickup (Gachibowli).
 const START = { latitude: 17.42, longitude: 78.37 };
@@ -63,7 +64,7 @@ export default function DriverSimScreen({ navigation }) {
   const pct = Math.round((step / STEPS) * 100);
 
   return (
-    <View style={styles.container}>
+    <ScreenContainer scroll>
       <Card mode="outlined">
         <Card.Content>
           <Text variant="titleMedium">Simulate movement (demo)</Text>
@@ -113,12 +114,11 @@ export default function DriverSimScreen({ navigation }) {
       >
         Back to My Trips
       </Button>
-    </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 12 },
   detail: { opacity: 0.85, marginTop: 6 },
   progress: { marginTop: 14, fontWeight: 'bold' },
   buttons: { flexDirection: 'row', gap: 12, marginTop: 14 },

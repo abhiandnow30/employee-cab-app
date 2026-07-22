@@ -11,6 +11,7 @@ import * as Location from 'expo-location';
 import { updateCabLocation } from '../../services/tracking';
 import { useApp } from '../../context/AppContext';
 import { colors } from '../../theme';
+import ScreenContainer from '../../components/ScreenContainer';
 
 export default function DriverShareLocationScreen({ navigation }) {
   const { currentUser, getCabById } = useApp();
@@ -66,7 +67,7 @@ export default function DriverShareLocationScreen({ navigation }) {
   const sharing = status === 'sharing';
 
   return (
-    <View style={styles.container}>
+    <ScreenContainer scroll>
       <Card mode="outlined">
         <Card.Content>
           <Text variant="titleMedium">Share live location</Text>
@@ -137,12 +138,11 @@ export default function DriverShareLocationScreen({ navigation }) {
       >
         Back to My Trips
       </Button>
-    </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 12 },
   detail: { opacity: 0.85, marginTop: 6 },
   status: { marginTop: 14, fontWeight: 'bold' },
   coords: { color: colors.muted, marginTop: 4 },

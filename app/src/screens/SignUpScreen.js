@@ -21,6 +21,7 @@ export default function SignUpScreen({ navigation }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [empId, setEmpId] = useState('');
+  const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
   const [adminCode, setAdminCode] = useState('');
   const [password, setPassword] = useState('');
@@ -31,6 +32,7 @@ export default function SignUpScreen({ navigation }) {
 
   const isDriver = role === 'driver';
   const isAdmin = role === 'admin';
+  const isEmployee = role === 'employee';
 
   async function handleSignup() {
     setError('');
@@ -40,6 +42,7 @@ export default function SignUpScreen({ navigation }) {
       name,
       email,
       empId,
+      address,
       phone,
       adminCode,
       password,
@@ -60,6 +63,7 @@ export default function SignUpScreen({ navigation }) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled">
+        <View style={styles.form}>
         <View style={styles.logoCircle}>
           <MaterialCommunityIcons name="account-plus" size={38} color="#FFFFFF" />
         </View>
@@ -111,6 +115,21 @@ export default function SignUpScreen({ navigation }) {
             onChangeText={setEmpId}
             mode="outlined"
             left={<TextInput.Icon icon="badge-account" />}
+            style={styles.input}
+          />
+        )}
+
+        {/* Address — for Employee (mandatory; the transport desk uses it for pickup). */}
+        {isEmployee && (
+          <TextInput
+            label="Address"
+            value={address}
+            onChangeText={setAddress}
+            mode="outlined"
+            placeholder="House / street, area, city, pincode"
+            multiline
+            numberOfLines={2}
+            left={<TextInput.Icon icon="map-marker" />}
             style={styles.input}
           />
         )}
@@ -192,6 +211,7 @@ export default function SignUpScreen({ navigation }) {
         <Button mode="text" onPress={() => navigation.navigate('Login')} style={styles.link}>
           Already have an account? Sign In
         </Button>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -199,7 +219,8 @@ export default function SignUpScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  inner: { padding: 24, paddingTop: 40, paddingBottom: 40 },
+  inner: { padding: 24, paddingTop: 40, paddingBottom: 40, alignItems: 'center' },
+  form: { width: '100%', maxWidth: 480 },
   logoCircle: {
     alignSelf: 'center',
     width: 76,

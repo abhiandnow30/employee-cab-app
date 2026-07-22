@@ -71,6 +71,7 @@ export default function ManageDriversScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.centerCol}>
       {error ? (
         <Text style={styles.error}>{error}</Text>
       ) : null}
@@ -88,12 +89,14 @@ export default function ManageDriversScreen() {
           </View>
         }
       />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
   list: { padding: 12 },
   card: { marginBottom: 12 },
   detail: { opacity: 0.7, marginTop: 2 },

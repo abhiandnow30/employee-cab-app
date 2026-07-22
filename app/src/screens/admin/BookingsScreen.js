@@ -1,30 +1,101 @@
 // ---------------------------------------------------------------------------
 // BOOKINGS SCREEN  (admin home)
-// The transport desk sees ALL employee bookings. To arrange a carpool, tick
-// several bookings (employees) and assign them ONE shared cab — they'll all
-// ride together and track the same cab. Cancelled bookings can't be selected.
+// The transport desk sees ALL employee bookings, GROUPED BY ROUTE (the cab
+// location from each employee's shift roster) so people who ride together are
+// listed together. To arrange a carpool, tick several employees on the same
+// route — or "Select all" for a route — and assign them ONE shared cab.
+// Each card shows the employee's route + pickup address so the desk can see
+// where everyone is before grouping. Cancelled bookings can't be selected.
 // ---------------------------------------------------------------------------
 
-import React, { useState } from 'react';
-import { StyleSheet, View, FlatList, Pressable } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, View, SectionList, Pressable } from 'react-native';
 import { Text, Card, Chip, Button, Portal, Dialog, RadioButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
+import { subscribeEmployees } from '../../services/profile';
 import { statusColors, colors } from '../../theme';
 
+const NO_ROUTE = 'No route set';
+
 export default function BookingsScreen({ navigation }) {
-  const { bookings, cabs, getCabById, assignCabToGroup } = useApp();
+  const { bookings, cabs, getCabById, assignCabToGroup, approveCancel, rejectCancel } = useApp();
 
   const [selected, setSelected] = useState([]); // booking ids ticked for grouping
   const [pickerOpen, setPickerOpen] = useState(false);
   const [chosenCab, setChosenCab] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [resolving, setResolving] = useState(null); // booking id being approved/rejected
+  const [empByUid, setEmpByUid] = useState({}); // uid → employee profile (for route/address)
+
+  // Live employee profiles, so each booking can show its owner's route + pickup
+  // address (these live on the profile, not on the booking itself).
+  useEffect(() => {
+    const unsub = subscribeEmployees(
+      (list) => {
+        const map = {};
+        list.forEach((e) => {
+          map[e.uid] = e;
+        });
+        setEmpByUid(map);
+      },
+      (e) => console.warn('[bookings] employees subscription error:', e.message)
+    );
+    return unsub;
+  }, []);
 
   const isSelected = (id) => selected.includes(id);
-  const canSelect = (b) => b.status !== 'Cancelled';
+  // A ride awaiting cancellation shouldn't be handed a cab — resolve it first.
+  const hasPendingCancel = (b) => b.cancelStatus === 'Requested';
+  const canSelect = (b) => b.status === 'Booked' && !hasPendingCancel(b);
+  const isNoShow = (b) => b.status === 'No show';
+
+  // Employee details for a booking (from the live profile map).
+  const empOf = (b) => empByUid[b.employeeId] || {};
+  const routeOf = (b) => empOf(b).roster?.route || NO_ROUTE;
+  const addressOf = (b) => empOf(b).pickupAddress || '';
+
+  const pendingCount = bookings.filter(hasPendingCancel).length;
+  const noShowCount = bookings.filter(isNoShow).length;
+
+  // --- Group bookings by route so carpool candidates sit together ----------
+  const groups = {};
+  bookings.forEach((b) => {
+    const route = routeOf(b);
+    (groups[route] = groups[route] || []).push(b);
+  });
+  const sections = Object.keys(groups)
+    .map((route) => {
+      const data = [...groups[route]].sort(
+        (a, b) => (isNoShow(a) ? 0 : 1) - (isNoShow(b) ? 0 : 1) // no-shows first
+      );
+      return { route, data, hasNoShow: data.some(isNoShow) };
+    })
+    // Routes with a no-show first; then real routes A→Z; "No route set" last.
+    .sort((a, b) => {
+      if (a.hasNoShow !== b.hasNoShow) return a.hasNoShow ? -1 : 1;
+      if (a.route === NO_ROUTE) return 1;
+      if (b.route === NO_ROUTE) return -1;
+      return a.route.localeCompare(b.route);
+    });
+
+  async function resolve(bookingId, approve) {
+    setResolving(bookingId);
+    try {
+      await (approve ? approveCancel(bookingId) : rejectCancel(bookingId));
+    } finally {
+      setResolving(null);
+    }
+  }
 
   function toggle(id) {
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  // Tick every selectable booking in one route (quick carpool grouping).
+  function selectGroup(data) {
+    const ids = data.filter(canSelect).map((b) => b.id);
+    setSelected((prev) => Array.from(new Set([...prev, ...ids])));
   }
 
   function openPicker() {
@@ -44,14 +115,47 @@ export default function BookingsScreen({ navigation }) {
     }
   }
 
+  function renderSectionHeader({ section }) {
+    const selectableCount = section.data.filter(canSelect).length;
+    return (
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionTitleWrap}>
+          <MaterialCommunityIcons name="map-marker" size={18} color={colors.primary} />
+          <Text variant="titleSmall" style={styles.sectionTitle}>
+            {section.route}
+          </Text>
+          <Text variant="bodySmall" style={styles.sectionCount}>
+            ({section.data.length})
+          </Text>
+        </View>
+        {selectableCount > 0 && (
+          <Button compact mode="text" onPress={() => selectGroup(section.data)}>
+            Select all
+          </Button>
+        )}
+      </View>
+    );
+  }
+
   function renderBooking({ item }) {
     const cab = item.assignedCabId ? getCabById(item.assignedCabId) : null;
     const selectable = canSelect(item);
     const ticked = isSelected(item.id);
+    const pendingCancel = hasPendingCancel(item);
+    const busy = resolving === item.id;
+    const address = addressOf(item);
 
     return (
       <Pressable onPress={() => selectable && toggle(item.id)}>
-        <Card style={[styles.card, ticked && styles.cardSelected]} mode="elevated">
+        <Card
+          style={[
+            styles.card,
+            ticked && styles.cardSelected,
+            pendingCancel && styles.cardCancel,
+            isNoShow(item) && styles.cardNoShow,
+          ]}
+          mode="elevated"
+        >
           <Card.Content style={styles.cardRow}>
             {selectable && (
               <MaterialCommunityIcons
@@ -78,13 +182,77 @@ export default function BookingsScreen({ navigation }) {
               <Text variant="bodyMedium" style={styles.detail}>
                 {item.date} · {item.shift}
               </Text>
-              <Text variant="bodyMedium" style={styles.detail}>
-                Pickup: {item.pickup}
-              </Text>
+              {/* Where to pick them up: the real address from their roster if we
+                  have it, otherwise the generic pickup label on the booking. */}
+              <View style={styles.locationRow}>
+                <MaterialCommunityIcons
+                  name="map-marker-outline"
+                  size={15}
+                  color={colors.muted}
+                  style={styles.locationIcon}
+                />
+                <Text variant="bodySmall" style={styles.locationText}>
+                  {address || `Pickup: ${item.pickup}`}
+                </Text>
+              </View>
               {cab && (
                 <Text variant="bodyMedium" style={styles.assigned}>
                   → {cab.cabNumber} · {cab.driverName}
                 </Text>
+              )}
+
+              {/* --- No-show flag raised by the driver --- */}
+              {isNoShow(item) && (
+                <View style={styles.noShowRow}>
+                  <MaterialCommunityIcons name="account-alert" size={16} color={colors.danger} />
+                  <Text variant="bodySmall" style={styles.noShowText}>
+                    Employee was not at the pickup.
+                  </Text>
+                </View>
+              )}
+
+              {/* --- Pending cancellation request: approve or reject --- */}
+              {pendingCancel && (
+                <View style={styles.cancelBox}>
+                  <View style={styles.cancelHeader}>
+                    <MaterialCommunityIcons name="close-circle-outline" size={18} color="#C62828" />
+                    <Text variant="labelLarge" style={styles.cancelTitle}>
+                      Cancellation requested
+                    </Text>
+                  </View>
+                  {item.cancelReason ? (
+                    <Text variant="bodySmall" style={styles.cancelReason}>
+                      “{item.cancelReason}”
+                    </Text>
+                  ) : (
+                    <Text variant="bodySmall" style={styles.cancelReasonMuted}>
+                      No reason given.
+                    </Text>
+                  )}
+                  <View style={styles.cancelActions}>
+                    <Button
+                      mode="outlined"
+                      compact
+                      onPress={() => resolve(item.id, false)}
+                      disabled={busy}
+                      style={styles.cancelActionBtn}
+                    >
+                      Reject
+                    </Button>
+                    <Button
+                      mode="contained"
+                      compact
+                      icon="check"
+                      buttonColor="#C62828"
+                      onPress={() => resolve(item.id, true)}
+                      loading={busy}
+                      disabled={busy}
+                      style={styles.cancelActionBtn}
+                    >
+                      Approve cancel
+                    </Button>
+                  </View>
+                </View>
               )}
             </View>
           </Card.Content>
@@ -95,6 +263,7 @@ export default function BookingsScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
+      <View style={styles.centerCol}>
       <View style={styles.manageRow}>
         <Button
           mode="outlined"
@@ -112,16 +281,53 @@ export default function BookingsScreen({ navigation }) {
         >
           Manage Drivers
         </Button>
+        <Button
+          mode="outlined"
+          icon="calendar-account"
+          style={styles.manageBtn}
+          onPress={() => navigation.navigate('ShiftRoster')}
+        >
+          Shift Roster
+        </Button>
+        <Button
+          mode="outlined"
+          icon="clock-edit-outline"
+          style={styles.manageBtn}
+          onPress={() => navigation.navigate('ManageTimings')}
+        >
+          Manage Timings
+        </Button>
       </View>
 
+      {noShowCount > 0 && (
+        <View style={styles.noShowBanner}>
+          <MaterialCommunityIcons name="account-alert" size={18} color={colors.danger} />
+          <Text variant="bodySmall" style={styles.noShowBannerText}>
+            {noShowCount} no-show{noShowCount > 1 ? 's' : ''}: employee wasn't at the pickup.
+          </Text>
+        </View>
+      )}
+
+      {pendingCount > 0 && (
+        <View style={styles.cancelBanner}>
+          <MaterialCommunityIcons name="bell-alert-outline" size={18} color="#B26A00" />
+          <Text variant="bodySmall" style={styles.cancelBannerText}>
+            {pendingCount} cancellation request{pendingCount > 1 ? 's' : ''} awaiting your approval.
+          </Text>
+        </View>
+      )}
+
       <Text variant="bodySmall" style={styles.hint}>
-        Tick one or more employees, then assign them a shared cab.
+        Employees are grouped by route. Tick people on the same route (or “Select
+        all”) and assign them a shared cab.
       </Text>
 
-      <FlatList
-        data={bookings}
+      <SectionList
+        sections={sections}
         keyExtractor={(item) => item.id}
         renderItem={renderBooking}
+        renderSectionHeader={renderSectionHeader}
+        stickySectionHeadersEnabled={false}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={<Text style={styles.empty}>No bookings yet.</Text>}
       />
@@ -161,18 +367,73 @@ export default function BookingsScreen({ navigation }) {
           </Dialog.Actions>
         </Dialog>
       </Portal>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  manageRow: { flexDirection: 'row', gap: 10, margin: 12, marginBottom: 4 },
-  manageBtn: { flex: 1 },
+  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  manageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, margin: 12, marginBottom: 4 },
+  manageBtn: { flexGrow: 1, flexBasis: 150 },
   hint: { opacity: 0.7, marginHorizontal: 14, marginBottom: 4 },
   listContent: { padding: 12, paddingBottom: 90 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#E3F0FF',
+    borderRadius: 8,
+    paddingLeft: 10,
+    paddingRight: 4,
+    paddingVertical: 4,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  sectionTitleWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  sectionTitle: { color: colors.primaryDark, fontWeight: 'bold' },
+  sectionCount: { color: colors.primaryDark, opacity: 0.7 },
   card: { marginBottom: 12 },
   cardSelected: { borderWidth: 2, borderColor: colors.primary },
+  cardCancel: { borderWidth: 1, borderColor: '#F5B5B0' },
+  cardNoShow: { borderLeftWidth: 5, borderLeftColor: colors.danger },
+  noShowBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FDECEA',
+    borderRadius: 8,
+    padding: 10,
+    marginHorizontal: 12,
+    marginTop: 4,
+  },
+  noShowBannerText: { color: colors.danger, flex: 1, fontWeight: '600' },
+  noShowRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  noShowText: { color: colors.danger, fontWeight: '600' },
+  cancelBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFF6E5',
+    borderRadius: 8,
+    padding: 10,
+    marginHorizontal: 12,
+    marginTop: 4,
+  },
+  cancelBannerText: { color: '#B26A00', flex: 1 },
+  cancelBox: {
+    marginTop: 10,
+    backgroundColor: '#FDECEA',
+    borderRadius: 8,
+    padding: 10,
+  },
+  cancelHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cancelTitle: { color: '#C62828' },
+  cancelReason: { marginTop: 4, fontStyle: 'italic', color: '#7A1F1A' },
+  cancelReasonMuted: { marginTop: 4, opacity: 0.6 },
+  cancelActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },
+  cancelActionBtn: { minWidth: 96 },
   cardRow: { flexDirection: 'row', alignItems: 'flex-start' },
   check: { marginRight: 10, marginTop: 2 },
   cardBody: { flex: 1 },
@@ -184,6 +445,9 @@ const styles = StyleSheet.create({
   },
   chipText: { color: 'white', fontSize: 12 },
   detail: { opacity: 0.8, marginTop: 2 },
+  locationRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 4 },
+  locationIcon: { marginTop: 2, marginRight: 4 },
+  locationText: { flex: 1, opacity: 0.8 },
   assigned: { marginTop: 8, fontWeight: 'bold', color: '#2E7D32' },
   empty: { textAlign: 'center', marginTop: 40, opacity: 0.6 },
   actionBar: {

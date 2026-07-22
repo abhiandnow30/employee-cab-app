@@ -52,7 +52,9 @@ export async function getOrCreateProfile(user) {
       pendingProfile = null;
       return snap.data();
     }
-    // First time we've seen this user → create their profile document.
+    // First time we've seen this user → create their profile document from
+    // whatever they entered at sign-up. The admin sets their route / shift /
+    // working days afterwards in the Shift Roster screen.
     const data = { ...fallback, email };
     await setDoc(ref, data);
     pendingProfile = null;
@@ -89,4 +91,54 @@ export function assignCabToDriver(driverUid, cabId) {
 // home = { latitude, longitude, label }
 export function updateHomeLocation(uid, home) {
   return updateDoc(doc(firestore, 'employees', uid), { home });
+}
+
+// A user edits their own basic details (name, employee id, phone). Only the
+// provided fields are written. Used to fill in profiles that were created
+// without an Employee ID (e.g. accounts made outside the sign-up form).
+export function updateProfileDetails(uid, fields) {
+  return updateDoc(doc(firestore, 'employees', uid), fields);
+}
+
+// --- Admin: shift roster ---------------------------------------------------
+
+// Live list of all EMPLOYEE accounts (the people the admin rosters). Calls cb
+// with [{ uid, ...profile }].
+export function subscribeEmployees(cb, onError) {
+  if (!firestore) {
+    cb([]);
+    return () => {};
+  }
+  const q = query(collection(firestore, 'employees'), where('role', '==', 'employee'));
+  return onSnapshot(
+    q,
+    (snap) => cb(snap.docs.map((d) => ({ uid: d.id, ...d.data() }))),
+    onError
+  );
+}
+
+// Admin saves an employee's shift roster. `roster` is:
+//   {
+//     route:       'JNTU Cab',                 // cab location / pickup route
+//     shift:       '1:00 PM – 10:00 PM',       // shift timing (day / night)
+//     workingDays: ['Mon','Tue','Wed','Thu','Fri'],  // may include Sat/Sun
+//   }
+// `workingDays` is the source of truth for which days an employee may book a
+// cab — an employee rostered on Sat/Sun can book weekend rides; others can't.
+export function updateEmployeeRoster(uid, roster) {
+  return updateDoc(doc(firestore, 'employees', uid), { roster });
+}
+
+// Live view of ONE user's own profile document. Used to keep the signed-in
+// employee's `worksWeekends` / `shiftRoster` up to date after the admin edits
+// them — no re-login needed. Returns an unsubscribe function.
+export function subscribeProfile(uid, cb, onError) {
+  if (!firestore) return () => {};
+  return onSnapshot(
+    doc(firestore, 'employees', uid),
+    (snap) => {
+      if (snap.exists()) cb(snap.data());
+    },
+    onError
+  );
 }

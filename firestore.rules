@@ -73,6 +73,15 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // --- App config (admin-editable settings) -------------------------------
+    // e.g. config/timings — the Weekly Schedule pickup/drop time options.
+    // Everyone signed in can READ (employees need it to book); only an admin
+    // can WRITE (edit the timings from Manage Timings).
+    match /config/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
     // --- Feedback & ratings -------------------------------------------------
     // You may submit your own; only an admin can read them.
     match /feedback/{docId} {

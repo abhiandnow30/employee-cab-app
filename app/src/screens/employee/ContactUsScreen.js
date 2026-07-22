@@ -11,7 +11,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 
 // Demo helpline number — replace with the real transport-desk number later.
-const CONTACT_NUMBER = '+91 98765 43210';
+const CONTACT_NUMBER = '+91 9848094029';
 
 export default function ContactUsScreen({ navigation }) {
   function callUs() {
@@ -65,7 +65,7 @@ export default function ContactUsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, justifyContent: 'center' },
+  container: { flex: 1, padding: 20, justifyContent: 'center', width: '100%', maxWidth: 480, alignSelf: 'center' },
   card: { borderRadius: 16 },
   cardContent: { alignItems: 'center', paddingVertical: 12 },
   iconCircle: {

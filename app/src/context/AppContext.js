@@ -8,9 +8,12 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { cabs as initialCabs } from '../data/mockData';
-import { watchAuth, signIn, signUp, signOutUser, friendlyAuthError } from '../services/auth';
+import {
+  watchAuth, signIn, signUp, signOutUser, friendlyAuthError, changePassword as changePasswordSvc,
+} from '../services/auth';
 import {
   getOrCreateProfile, setPendingProfile, ADMIN_SIGNUP_CODE, updateHomeLocation,
+  updateProfileDetails, subscribeProfile,
 } from '../services/profile';
 import {
   createBooking,
@@ -18,12 +21,16 @@ import {
   assignCabToBooking,
   assignCabToBookings,
   setBookingStatus,
+  markBookingNoShow,
+  requestCancelBooking,
+  resolveCancelRequest,
   subscribeMyBookings,
   subscribeAllBookings,
   subscribeCabBookings,
 } from '../services/bookings';
 import { addFeedbackDoc, addRatingDoc } from '../services/feedback';
 import { subscribeCabs, addCab, updateCab, removeCab, seedDefaultCabs } from '../services/cabs';
+import { subscribeTimings, saveTimings as saveTimingsSvc, DEFAULT_TIMINGS } from '../services/settings';
 import { firestore } from '../services/firebase';
 
 const AppContext = createContext(null);
@@ -34,6 +41,7 @@ export function AppProvider({ children }) {
   const [authReady, setAuthReady] = useState(false); // false until first auth check
   const [bookings, setBookings] = useState([]); // filled live from Firestore
   const [fleetCabs, setFleetCabs] = useState([]); // live fleet from Firestore
+  const [timings, setTimings] = useState(DEFAULT_TIMINGS); // Weekly Schedule pickup/drop options
   // Use the managed fleet once it has cabs; until then fall back to the starter
   // list so the app still works before the admin seeds/adds cabs.
   const cabs = fleetCabs.length ? fleetCabs : initialCabs;
@@ -53,6 +61,18 @@ export function AppProvider({ children }) {
     });
     return unsub;
   }, []);
+
+  // Keep the signed-in user's profile live: if the admin edits this employee's
+  // shift roster / working days, their app reflects it without a re-login.
+  useEffect(() => {
+    if (!firebaseUser || !firestore) return;
+    return subscribeProfile(
+      firebaseUser.uid,
+      (p) => setProfile((prev) => ({ ...(prev || {}), ...p })),
+      (e) => console.warn('[profile] subscription error:', e.message)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseUser?.uid]);
 
   // Signed in once we have both the Firebase user and their profile.
   const currentUser =
@@ -96,13 +116,23 @@ export function AppProvider({ children }) {
     if ((role === 'employee' || role === 'admin') && !(form.empId || '').trim()) {
       return { ok: false, message: 'Please enter your Employee ID.' };
     }
+    if (role === 'employee' && !(form.address || '').trim()) {
+      return { ok: false, message: 'Please enter your address.' };
+    }
 
     // Build the profile that getOrCreateProfile() will save for this new user.
     // A driver starts with NO cab — the admin assigns one afterward (cabId: null).
+    // Employees also store their home address (used by the admin for pickup).
     const profileData =
       role === 'driver'
         ? { role, name, phone: (form.phone || '').trim(), cabId: null, empId: '' }
-        : { role, name, empId: (form.empId || '').trim(), phone: (form.phone || '').trim() };
+        : {
+            role,
+            name,
+            empId: (form.empId || '').trim(),
+            phone: (form.phone || '').trim(),
+            ...(role === 'employee' ? { address: (form.address || '').trim() } : {}),
+          };
 
     try {
       setPendingProfile(profileData); // picked up when the new user's auth fires
@@ -116,6 +146,16 @@ export function AppProvider({ children }) {
 
   async function logout() {
     await signOutUser();
+  }
+
+  // Change the signed-in user's password. Returns { ok, message }.
+  async function changePassword(currentPassword, newPassword) {
+    try {
+      await changePasswordSvc(currentPassword, newPassword);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
   }
 
   // --- Bookings (live from Firestore) -------------------------------------
@@ -155,6 +195,16 @@ export function AppProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.uid]);
 
+  // --- Timings config (admin-editable pickup/drop options, live) ----------
+  // Global config, so we subscribe once Firebase is configured. Falls back to
+  // DEFAULT_TIMINGS until the admin saves anything.
+  useEffect(() => {
+    if (!firestore) return;
+    return subscribeTimings(setTimings, (e) =>
+      console.warn('[timings] subscription error:', e.message)
+    );
+  }, []);
+
   // The fields every new booking needs; `data` fills in the rest.
   function newBookingPayload(data) {
     return {
@@ -187,14 +237,42 @@ export function AppProvider({ children }) {
     return assignCabToBookings(bookingIds, cabId);
   }
 
-  // Employee cancels a booking → "Cancelled" (kept for history).
+  // Employee cancels a booking → "Cancelled" (kept for history). Used internally
+  // by the weekly-roster editor to drop/replace roster entries directly.
   async function cancelBooking(bookingId) {
     return setBookingStatus(bookingId, 'Cancelled');
+  }
+
+  // Employee raises a cancellation request (subject to the 4-hour cutoff, which
+  // the Trip Cancel screen enforces). The ride stays active until the admin acts.
+  async function requestCancel(bookingId, reason) {
+    return requestCancelBooking(bookingId, reason);
+  }
+
+  // Admin accepts a cancellation request → the ride is Cancelled.
+  async function approveCancel(bookingId) {
+    return resolveCancelRequest(bookingId, true);
+  }
+
+  // Admin declines a cancellation request → the ride stays on.
+  async function rejectCancel(bookingId) {
+    return resolveCancelRequest(bookingId, false);
+  }
+
+  // Pending cancellation requests (admin view).
+  function pendingCancelRequests() {
+    return bookings.filter((b) => b.cancelStatus === 'Requested');
   }
 
   // Driver advances a trip's status (On the way → Arrived → Completed).
   async function updateBookingStatus(bookingId, status) {
     return setBookingStatus(bookingId, status);
+  }
+
+  // Driver flags a no-show: reached the pickup but the employee wasn't there.
+  // Shows up flagged on the admin's Bookings screen.
+  async function markNoShow(bookingId) {
+    return markBookingNoShow(bookingId);
   }
 
   // Employee feedback → Firestore.
@@ -243,6 +321,26 @@ export function AppProvider({ children }) {
     setProfile((p) => ({ ...(p || {}), home }));
   }
 
+  // User edits their own basic details (name, employee id, phone). Persists to
+  // Firestore and updates the local profile so the change shows immediately.
+  async function saveProfileDetails(fields) {
+    if (!currentUser) return;
+    if (firestore) await updateProfileDetails(currentUser.uid, fields);
+    setProfile((p) => ({ ...(p || {}), ...fields }));
+  }
+
+  // Admin saves the edited Weekly Schedule timings. `pickupTimes` / `dropTimes`
+  // are arrays of "hh:mm AM/PM" strings (no "NA"). The live subscription above
+  // then pushes the new lists to every screen. Returns { ok, message }.
+  async function saveTimings(next) {
+    try {
+      await saveTimingsSvc(next);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: e.message };
+    }
+  }
+
   // Helpers used by screens.
   function getCabById(cabId) {
     return cabs.find((c) => c.id === cabId) || null;
@@ -260,19 +358,29 @@ export function AppProvider({ children }) {
     login,
     signup,
     logout,
+    changePassword,
     bookings,
     cabs,
+    pickupTimes: timings.pickupTimes,
+    dropTimes: timings.dropTimes,
+    saveTimings,
     addBooking,
     addBookings,
     assignCab,
     assignCabToGroup,
     cancelBooking,
+    requestCancel,
+    approveCancel,
+    rejectCancel,
+    pendingCancelRequests,
     updateBookingStatus,
+    markNoShow,
     createCab,
     editCab,
     deleteCab,
     loadDefaultCabs,
     saveHomeLocation,
+    saveProfileDetails,
     getCabById,
     myBookings,
     myActiveBookings,

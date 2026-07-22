@@ -82,3 +82,33 @@ export async function assignCabToBookings(bookingIds, cabId) {
 export async function setBookingStatus(bookingId, status) {
   return updateDoc(doc(firestore, COL, bookingId), { status });
 }
+
+// Driver flags that the employee wasn't at the pickup. Records the time so the
+// admin can see when it happened.
+export async function markBookingNoShow(bookingId) {
+  return updateDoc(doc(firestore, COL, bookingId), {
+    status: 'No show',
+    noShowAt: serverTimestamp(),
+  });
+}
+
+// Employee raises a cancellation request. The ride stays active (status
+// unchanged) until the admin approves — we only mark the request.
+export async function requestCancelBooking(bookingId, reason = '') {
+  return updateDoc(doc(firestore, COL, bookingId), {
+    cancelStatus: 'Requested',
+    cancelReason: reason,
+    cancelRequestedAt: serverTimestamp(),
+    cancelResolvedAt: null,
+  });
+}
+
+// Admin approves or rejects a pending cancellation request.
+//   approve → the booking is Cancelled and the request marked Approved
+//   reject  → the request is marked Rejected; the booking stays active
+export async function resolveCancelRequest(bookingId, approve) {
+  const fields = approve
+    ? { status: 'Cancelled', cancelStatus: 'Approved', cancelResolvedAt: serverTimestamp() }
+    : { cancelStatus: 'Rejected', cancelResolvedAt: serverTimestamp() };
+  return updateDoc(doc(firestore, COL, bookingId), fields);
+}

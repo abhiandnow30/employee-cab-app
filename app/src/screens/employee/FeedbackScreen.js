@@ -4,9 +4,10 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
-import { StyleSheet, View, ScrollView } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Text, TextInput, Button, HelperText } from 'react-native-paper';
 import Dropdown from '../../components/Dropdown';
+import ScreenContainer from '../../components/ScreenContainer';
 import { useApp } from '../../context/AppContext';
 
 const CATEGORIES = ['Driver', 'Cab condition', 'Timing / delay', 'App issue', 'Other'];
@@ -29,7 +30,7 @@ export default function FeedbackScreen({ navigation }) {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
+    <ScreenContainer scroll style={styles.content}>
       <View style={styles.titleRow}>
         <Text variant="titleLarge" style={styles.pageTitle}>
           Feedback
@@ -81,12 +82,12 @@ export default function FeedbackScreen({ navigation }) {
           Submit
         </Button>
       </View>
-    </ScrollView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 16, paddingBottom: 32 },
+  content: { paddingBottom: 16 },
   titleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

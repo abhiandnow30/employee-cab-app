@@ -79,6 +79,27 @@ export const DROP_TIMES = [NONE, '04:00 AM', '05:00 AM', '06:00 AM'];
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+// --- Shift roster (admin-assigned) -----------------------------------------
+// The cab routes / pickup locations employees are grouped under.
+export const CAB_ROUTES = [
+  'Madhapur',
+  'JNTU Cab',
+  'LB Nagar Cab',
+  'Kapra Cab',
+  'Shaikpet Cab',
+  'ECIL Cab',
+  'Berumguda Cab',
+];
+
+// The shift timings an employee can be rostered on.
+export const SHIFT_TIMINGS = [
+  '1:00 PM – 10:00 PM', // day shift
+  '9:00 PM – 6:00 AM',  // night shift
+];
+
+// A new employee's default working days until the admin rosters them.
+export const DEFAULT_WORKING_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+
 // --- Ad-hoc request form options ---
 export const OFFICE_LOCATIONS = ['Vamsiram building'];
 
@@ -114,5 +135,27 @@ export const SOURCE = { ROSTER: 'roster', ADHOC: 'adhoc' };
 export const STATUS = {
   BOOKED: 'Booked',
   ASSIGNED: 'Cab assigned',
+  ON_THE_WAY: 'On the way',
+  ARRIVED: 'Arrived',
+  COMPLETED: 'Completed',
+  NO_SHOW: 'No show', // driver reached the pickup but the employee wasn't there
   CANCELLED: 'Cancelled',
+};
+
+// Employees must book a ride at least this many hours before it starts.
+export const BOOKING_LEAD_HOURS = 9;
+
+// Employees must raise a cancellation request at least this many hours before
+// the ride; the admin then approves or rejects it.
+export const CANCEL_CUTOFF_HOURS = 4;
+
+// The state of a cancellation request on a booking (separate from `status`, so
+// the ride stays active until the admin approves).
+//   Requested → employee asked to cancel, waiting on the transport desk
+//   Approved  → admin accepted; the booking's status becomes "Cancelled"
+//   Rejected  → admin declined; the ride stays on
+export const CANCEL_STATUS = {
+  REQUESTED: 'Requested',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
 };

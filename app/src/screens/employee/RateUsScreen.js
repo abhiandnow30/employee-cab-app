@@ -47,7 +47,8 @@ export default function RateUsScreen({ navigation }) {
   }
 
   return (
-    <View style={styles.content}>
+    <View style={styles.screen}>
+      <View style={styles.content}>
       <Text variant="titleLarge" style={styles.title}>
         How was your experience?
       </Text>
@@ -89,12 +90,14 @@ export default function RateUsScreen({ navigation }) {
           Submit rating
         </Button>
       </View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { flex: 1, padding: 20 },
+  screen: { flex: 1, alignItems: 'center', padding: 20 },
+  content: { width: '100%', maxWidth: 480 },
   title: { textAlign: 'center', marginTop: 12, marginBottom: 20 },
   starRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 24 },
   comment: { marginBottom: 4 },

@@ -57,6 +57,7 @@ export default function MyRidesScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
+      <View style={styles.centerCol}>
       <Button
         icon="home"
         mode="contained-tonal"
@@ -90,12 +91,14 @@ export default function MyRidesScreen({ navigation }) {
         style={styles.fab}
         onPress={() => navigation.navigate('BookCab')}
       />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
   homeBtn: { margin: 12, marginBottom: 0, alignSelf: 'flex-start' },
   listContent: { padding: 12, paddingBottom: 90 },
   card: { marginBottom: 12 },

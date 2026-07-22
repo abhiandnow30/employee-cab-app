@@ -59,6 +59,14 @@ export default function ManageCabsScreen() {
       setError('Cab number is required.');
       return;
     }
+    if (!form.driverName.trim()) {
+      setError('Driver name is required.');
+      return;
+    }
+    if (form.driverPhone.length !== 10) {
+      setError('Driver phone must be a 10-digit number.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -109,6 +117,7 @@ export default function ManageCabsScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.centerCol}>
       <View style={styles.topBar}>
         <Button mode="contained" icon="plus" onPress={openAdd}>
           Add cab
@@ -149,18 +158,19 @@ export default function ManageCabsScreen() {
               style={styles.input}
             />
             <TextInput
-              label="Driver name (optional)"
+              label="Driver name"
               value={form.driverName}
               onChangeText={(t) => setForm((f) => ({ ...f, driverName: t }))}
               mode="outlined"
               style={styles.input}
             />
             <TextInput
-              label="Driver phone (optional)"
+              label="Driver phone"
               value={form.driverPhone}
-              onChangeText={(t) => setForm((f) => ({ ...f, driverPhone: t.replace(/[^0-9]/g, '') }))}
+              onChangeText={(t) => setForm((f) => ({ ...f, driverPhone: t.replace(/[^0-9]/g, '').slice(0, 10) }))}
               mode="outlined"
               keyboardType="phone-pad"
+              maxLength={10}
               style={styles.input}
             />
             {error ? <Text style={styles.dialogError}>{error}</Text> : null}
@@ -173,12 +183,14 @@ export default function ManageCabsScreen() {
           </Dialog.Actions>
         </Dialog>
       </Portal>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
   topBar: { padding: 12 },
   list: { padding: 12, paddingTop: 0 },
   card: { marginBottom: 10 },
