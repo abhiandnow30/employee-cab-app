@@ -9,13 +9,11 @@ import { StyleSheet, View, Linking } from 'react-native';
 import { Text, Card, Button } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../../theme';
-
-// Demo helpline number — replace with the real transport-desk number later.
-const CONTACT_NUMBER = '+91 9848094029';
+import { SUPPORT_HELPLINE } from '../../branding';
 
 export default function ContactUsScreen({ navigation }) {
   function callUs() {
-    const tel = 'tel:' + CONTACT_NUMBER.replace(/\s/g, '');
+    const tel = 'tel:' + SUPPORT_HELPLINE.replace(/\s/g, '');
     Linking.openURL(tel).catch(() => {});
   }
 
@@ -44,7 +42,7 @@ export default function ContactUsScreen({ navigation }) {
           </Button>
 
           <Text variant="titleMedium" style={styles.number} onPress={callUs}>
-            {CONTACT_NUMBER}
+            {SUPPORT_HELPLINE}
           </Text>
           <Text variant="bodySmall" style={styles.hours}>
             Available 24×7

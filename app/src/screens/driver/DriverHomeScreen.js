@@ -11,6 +11,15 @@ import { Text, Card, Chip, Button, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { statusColors, colors } from '../../theme';
+import { SUPPORT_HELPLINE } from '../../branding';
+import { tripPickupPoint, tripPlaceLabels } from '../../services/directions';
+import { openDirections, callNumber } from '../../utils/externalLinks';
+
+// Open maps directions to where the driver collects this employee. Platform
+// details (Google/Apple Maps app vs. web tab) live in utils/externalLinks.
+function navigateToPickup(booking) {
+  openDirections(tripPickupPoint(booking));
+}
 
 // What the driver can do next, per current status.
 const NEXT_ACTION = {
@@ -20,14 +29,28 @@ const NEXT_ACTION = {
 };
 
 export default function DriverHomeScreen({ navigation }) {
-  const { currentUser, bookings, updateBookingStatus, markNoShow, getCabById } = useApp();
+  const {
+    currentUser,
+    bookings,
+    updateBookingStatus,
+    markNoShow,
+    getCabById,
+    sharingLocation,
+    stopSharingLocation,
+  } = useApp();
 
   const cab = currentUser?.cabId ? getCabById(currentUser.cabId) : null;
-  // Trips for this cab that aren't cancelled.
-  const trips = bookings.filter((b) => b.status !== 'Cancelled');
+  // Trips for THIS driver's cab that aren't cancelled. The context subscription
+  // (subscribeCabBookings) already scopes `bookings` to this cab, but we filter
+  // by assignedCabId explicitly too so a driver can never see another cab's
+  // trips even if that ever changes.
+  const trips = bookings.filter(
+    (b) => b.status !== 'Cancelled' && b.assignedCabId === currentUser?.cabId
+  );
 
   function renderTrip({ item }) {
     const action = NEXT_ACTION[item.status];
+    const places = tripPlaceLabels(item); // real pickup/drop addresses
     return (
       <Card style={styles.card} mode="elevated">
         <Card.Content>
@@ -48,8 +71,38 @@ export default function DriverHomeScreen({ navigation }) {
             {item.date} · {item.shift}
           </Text>
           <Text variant="bodyMedium" style={styles.detail}>
-            Pickup: {item.pickup}
+            Pickup: {places.pickup}
           </Text>
+          <Text variant="bodyMedium" style={styles.detail}>
+            Drop: {places.drop}
+          </Text>
+          {/* Privacy: drivers never see the rider's personal mobile — they
+              reach the rider through the central transport-desk helpline. */}
+          <Text variant="bodyMedium" style={styles.detail}>
+            Helpline: {SUPPORT_HELPLINE}
+          </Text>
+
+          {/* Contact actions: navigate to the pickup + call the helpline. */}
+          <View style={styles.contactRow}>
+            <Button
+              mode="contained-tonal"
+              icon="navigation-variant"
+              compact
+              style={styles.contactBtn}
+              onPress={() => navigateToPickup(item)}
+            >
+              Navigate
+            </Button>
+            <Button
+              mode="contained-tonal"
+              icon="phone"
+              compact
+              style={styles.contactBtn}
+              onPress={() => callNumber(SUPPORT_HELPLINE)}
+            >
+              Call helpline
+            </Button>
+          </View>
 
           {action && (
             <>
@@ -94,23 +147,34 @@ export default function DriverHomeScreen({ navigation }) {
       </View>
 
       <Button
-        icon="crosshairs-gps"
+        icon={sharingLocation ? 'access-point-check' : 'crosshairs-gps'}
         mode="contained"
         style={styles.shareBtn}
         contentStyle={styles.shareBtnContent}
         onPress={() => navigation.navigate('DriverShareLocation')}
       >
-        Share Live Location
+        {sharingLocation ? 'Location Sharing — On' : 'Share Live Location'}
       </Button>
 
-      <Button
-        icon="play-circle-outline"
-        mode="outlined"
-        style={styles.simBtn}
-        onPress={() => navigation.navigate('DriverSim')}
-      >
-        Simulate movement (demo)
-      </Button>
+      {/* Live status so the driver never forgets sharing is off (or on). */}
+      {sharingLocation ? (
+        <View style={styles.sharingBanner}>
+          <View style={styles.liveDot} />
+          <Text variant="bodyMedium" style={styles.sharingText}>
+            Sharing your live location
+          </Text>
+          <Button compact mode="text" textColor={colors.danger} onPress={stopSharingLocation}>
+            Stop
+          </Button>
+        </View>
+      ) : (
+        <View style={styles.sharingOffRow}>
+          <MaterialCommunityIcons name="map-marker-off-outline" size={16} color={colors.muted} />
+          <Text variant="bodySmall" style={styles.sharingOffText}>
+            Location off — employees can't see your cab
+          </Text>
+        </View>
+      )}
 
       <Text variant="titleMedium" style={styles.sectionTitle}>
         My Trips
@@ -141,7 +205,21 @@ const styles = StyleSheet.create({
   sub: { color: colors.muted, marginTop: 2 },
   shareBtn: { borderRadius: 10, marginBottom: 10 },
   shareBtnContent: { paddingVertical: 8 },
-  simBtn: { borderRadius: 10, marginBottom: 20 },
+  sharingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#E7F4E8',
+    borderRadius: 10,
+    paddingLeft: 12,
+    paddingRight: 4,
+    paddingVertical: 4,
+    marginBottom: 20,
+  },
+  liveDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.success },
+  sharingText: { color: colors.success, fontWeight: '600', flex: 1 },
+  sharingOffRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 20, paddingLeft: 2 },
+  sharingOffText: { color: colors.muted },
   sectionTitle: { marginBottom: 10 },
   listContent: { paddingBottom: 24 },
   card: { marginBottom: 12 },
@@ -153,6 +231,8 @@ const styles = StyleSheet.create({
   },
   chipText: { color: 'white', fontSize: 12 },
   detail: { opacity: 0.8, marginTop: 2 },
+  contactRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  contactBtn: { flex: 1, borderRadius: 8 },
   divider: { marginVertical: 12 },
   noShowBtn: { marginTop: 8, borderColor: colors.danger },
   empty: { alignItems: 'center', marginTop: 40 },

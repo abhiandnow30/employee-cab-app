@@ -96,8 +96,10 @@ export function updateHomeLocation(uid, home) {
 // A user edits their own basic details (name, employee id, phone). Only the
 // provided fields are written. Used to fill in profiles that were created
 // without an Employee ID (e.g. accounts made outside the sign-up form).
+// setDoc(merge) creates the document if it doesn't exist yet, so this never
+// fails with "no document to update" for a profile that was never written.
 export function updateProfileDetails(uid, fields) {
-  return updateDoc(doc(firestore, 'employees', uid), fields);
+  return setDoc(doc(firestore, 'employees', uid), fields, { merge: true });
 }
 
 // --- Admin: shift roster ---------------------------------------------------

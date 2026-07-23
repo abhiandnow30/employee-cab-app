@@ -1,70 +1,46 @@
 // ---------------------------------------------------------------------------
 // DRIVER — SHARE LIVE LOCATION
-// Streams this phone's real GPS (expo-location) to the driver's assigned cab,
-// so employees tracking that cab see it move in real time.
+// Streams this device's location (phone GPS, or browser location on web) to the
+// driver's assigned cab, so employees tracking that cab see it move in real time.
+//
+// The actual GPS watcher lives in AppContext (startSharingLocation /
+// stopSharingLocation) so sharing KEEPS RUNNING when the driver leaves this
+// screen — the dashboard shows a live "Sharing" indicator based on that state.
+// This screen is just the control panel for it.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, View, Platform } from 'react-native';
 import { Text, Card, Button } from 'react-native-paper';
-import * as Location from 'expo-location';
-import { updateCabLocation } from '../../services/tracking';
 import { useApp } from '../../context/AppContext';
 import { colors } from '../../theme';
 import ScreenContainer from '../../components/ScreenContainer';
 
 export default function DriverShareLocationScreen({ navigation }) {
-  const { currentUser, getCabById } = useApp();
+  const {
+    currentUser,
+    getCabById,
+    sharingLocation,
+    sharingCoords,
+    sharingError,
+    startSharingLocation,
+    stopSharingLocation,
+  } = useApp();
   const cabId = currentUser?.cabId;
   const cab = cabId ? getCabById(cabId) : null;
 
-  const [status, setStatus] = useState('idle'); // idle | requesting | sharing | denied | error
-  const [coords, setCoords] = useState(null);
-  const [error, setError] = useState('');
-  const watcherRef = useRef(null);
+  const [busy, setBusy] = useState(false); // requesting permission / starting
+  const [denied, setDenied] = useState(false);
 
-  async function startSharing() {
-    setError('');
-    if (!cabId) {
-      setError('No cab is linked to your account.');
-      return;
-    }
-    setStatus('requesting');
-
-    const { status: perm } = await Location.requestForegroundPermissionsAsync();
-    if (perm !== 'granted') {
-      setStatus('denied');
-      return;
-    }
-
-    try {
-      watcherRef.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, distanceInterval: 5, timeInterval: 3000 },
-        (loc) => {
-          const { latitude, longitude } = loc.coords;
-          setCoords({ latitude, longitude });
-          updateCabLocation(cabId, { latitude, longitude }, Date.now());
-        }
-      );
-      setStatus('sharing');
-    } catch (e) {
-      setError(e.message || 'Could not start location updates.');
-      setStatus('error');
-    }
+  async function handleStart() {
+    setBusy(true);
+    setDenied(false);
+    const res = await startSharingLocation();
+    if (res?.denied) setDenied(true);
+    setBusy(false);
   }
 
-  function stopSharing() {
-    if (watcherRef.current) {
-      watcherRef.current.remove();
-      watcherRef.current = null;
-    }
-    setStatus('idle');
-  }
-
-  // Stop the GPS watcher if the driver navigates away.
-  useEffect(() => stopSharing, []);
-
-  const sharing = status === 'sharing';
+  const sharing = sharingLocation;
 
   return (
     <ScreenContainer scroll>
@@ -73,30 +49,35 @@ export default function DriverShareLocationScreen({ navigation }) {
           <Text variant="titleMedium">Share live location</Text>
           <Text variant="bodyMedium" style={styles.detail}>
             {cab ? `Broadcasting for cab ${cab.cabNumber}.` : 'No cab linked.'} Employees
-            assigned to your cab will see you move in real time.
+            assigned to your cab will see you move in real time. Sharing keeps
+            running while you use the rest of the app.
           </Text>
 
           <Text variant="bodyLarge" style={styles.status}>
-            {status === 'idle' && 'Not sharing'}
-            {status === 'requesting' && 'Requesting permission…'}
-            {status === 'sharing' && '🟢 Sharing live location'}
-            {status === 'denied' && '⛔ Location permission denied'}
-            {status === 'error' && '⚠️ Error'}
+            {sharing
+              ? '🟢 Sharing live location'
+              : busy
+                ? 'Requesting permission…'
+                : denied
+                  ? '⛔ Location permission denied'
+                  : sharingError
+                    ? '⚠️ Error'
+                    : 'Not sharing'}
           </Text>
 
-          {coords && (
+          {sharingCoords && (
             <Text variant="bodySmall" style={styles.coords}>
-              {coords.latitude.toFixed(5)}, {coords.longitude.toFixed(5)}
+              {sharingCoords.latitude.toFixed(5)}, {sharingCoords.longitude.toFixed(5)}
             </Text>
           )}
-          {status === 'denied' && (
+          {denied && (
             <Text variant="bodySmall" style={styles.help}>
               Enable location access for the app in your device settings, then try again.
             </Text>
           )}
-          {!!error && (
+          {!!sharingError && !denied && (
             <Text variant="bodySmall" style={styles.help}>
-              {error}
+              {sharingError}
             </Text>
           )}
 
@@ -104,8 +85,8 @@ export default function DriverShareLocationScreen({ navigation }) {
             <Button
               mode="contained"
               icon="crosshairs-gps"
-              onPress={startSharing}
-              disabled={sharing || status === 'requesting'}
+              onPress={handleStart}
+              disabled={sharing || busy}
               style={styles.btn}
             >
               Start sharing
@@ -113,7 +94,7 @@ export default function DriverShareLocationScreen({ navigation }) {
             <Button
               mode="outlined"
               icon="stop"
-              onPress={stopSharing}
+              onPress={stopSharingLocation}
               disabled={!sharing}
               style={styles.btn}
             >

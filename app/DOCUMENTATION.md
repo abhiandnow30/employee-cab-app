@@ -171,9 +171,8 @@ menu on phones, a permanent sidebar on wide screens.
 ### Driver
 | Screen | File | Purpose |
 |---|---|---|
-| My Trips | [DriverHomeScreen.js](src/screens/driver/DriverHomeScreen.js) | Assigned trips; advance status; **flag a no-show** when the employee isn't at pickup |
-| Share Location | [DriverShareLocationScreen.js](src/screens/driver/DriverShareLocationScreen.js) | Stream phone GPS to the cab's live location |
-| Simulate (demo) | [DriverSimScreen.js](src/screens/driver/DriverSimScreen.js) | Fake a moving cab for testing, no phone needed |
+| My Trips | [DriverHomeScreen.js](src/screens/driver/DriverHomeScreen.js) | Assigned trips (with real pickup/drop address, Navigate & Call); advance status; **flag a no-show** when the employee isn't at pickup; live "sharing location" indicator |
+| Share Location | [DriverShareLocationScreen.js](src/screens/driver/DriverShareLocationScreen.js) | Stream phone GPS to the cab's live location (sharing runs app-wide via AppContext) |
 
 ---
 

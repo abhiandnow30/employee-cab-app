@@ -46,25 +46,34 @@ export default function ProfileScreen() {
     }
     setSavingDetails(true);
     setDetailsMsg('');
-    try {
-      await saveProfileDetails({
-        name: details.name.trim() || u.email,
-        empId: details.empId.trim(),
-        phone: details.phone.trim(),
-      });
+    // The details already apply to the UI optimistically inside saveProfileDetails,
+    // so don't let a slow/offline Firestore write hang the button — cap the wait.
+    const TIMEOUT = 8000;
+    const save = saveProfileDetails({
+      name: details.name.trim() || u.email,
+      empId: details.empId.trim(),
+      phone: details.phone.trim(),
+    });
+    const timed = new Promise((resolve) => setTimeout(() => resolve({ ok: true, pending: true }), TIMEOUT));
+    const res = await Promise.race([save, timed]);
+    setSavingDetails(false);
+    setEditing(false);
+    if (res?.ok && res.pending) {
+      setDetailsMsg('Saved on this device — syncing when your connection is back.');
+    } else if (res?.ok) {
       setDetailsMsg('Saved ✓');
-      setEditing(false);
-    } catch (e) {
-      setDetailsMsg(e.message);
-    } finally {
-      setSavingDetails(false);
+    } else {
+      setDetailsMsg(res?.message || 'Could not save. Check your connection and try again.');
     }
   }
 
   const [home, setHome] = useState(u.home || null); // { latitude, longitude }
   // Structured street address, saved alongside the map pin in `home`.
   const [addr, setAddr] = useState({
-    line1: u.home?.line1 || '',
+    // Fall back to the free-text address entered at sign-up (stored on
+    // profile.address) so a new employee sees what they typed before they've
+    // dropped a home pin. Once they save a pin, home.line1 takes over.
+    line1: u.home?.line1 || u.address || '',
     area: u.home?.area || '',
     city: u.home?.city || '',
     pincode: u.home?.pincode || '',
@@ -255,7 +264,7 @@ export default function ProfileScreen() {
               style={styles.input}
             />
             {detailsMsg ? (
-              <HelperText type={detailsMsg === 'Saved ✓' ? 'info' : 'error'} visible={true}>
+              <HelperText type={detailsMsg.startsWith('Saved') ? 'info' : 'error'} visible={true}>
                 {detailsMsg}
               </HelperText>
             ) : null}

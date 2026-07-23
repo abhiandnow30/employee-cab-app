@@ -14,12 +14,20 @@ import {
   onAuthStateChanged,
   updatePassword,
   reauthenticateWithCredential,
+  sendPasswordResetEmail,
   EmailAuthProvider,
 } from 'firebase/auth';
 import { auth } from './firebase';
 
 export function signIn(email, password) {
   return signInWithEmailAndPassword(auth, email.trim(), password);
+}
+
+// Send a password-reset email. Firebase mails a secure link the user follows to
+// set a new password — we never see or handle the password ourselves.
+export function sendPasswordReset(email) {
+  if (!auth) throw new Error('Backend not configured.');
+  return sendPasswordResetEmail(auth, email.trim());
 }
 
 // Create a brand-new account (used by Sign Up). Firebase stores the password

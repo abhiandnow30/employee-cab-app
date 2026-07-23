@@ -14,6 +14,7 @@ import { StyleSheet, View, FlatList, Pressable } from 'react-native';
 import { Text, Card, Button, Divider, Snackbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Dropdown from '../../components/Dropdown';
+import { useApp } from '../../context/AppContext';
 import { subscribeEmployees, updateEmployeeRoster } from '../../services/profile';
 import {
   CAB_ROUTES, SHIFT_TIMINGS, WEEKDAYS, DEFAULT_WORKING_DAYS,
@@ -58,7 +59,7 @@ function DayPill({ day, isWeekend, selected, onPress }) {
   );
 }
 
-function EmployeeRosterCard({ emp, onSave }) {
+function EmployeeRosterCard({ emp, onSave, routeOptions }) {
   const [draft, setDraft] = useState(() => rosterOf(emp));
   const [saving, setSaving] = useState(false);
   const address = addressOf(emp);
@@ -116,7 +117,7 @@ function EmployeeRosterCard({ emp, onSave }) {
           <Text variant="labelLarge" style={styles.fieldLabel}>Route</Text>
           <Dropdown
             value={draft.route}
-            options={CAB_ROUTES}
+            options={routeOptions}
             onSelect={(route) => setDraft((d) => ({ ...d, route }))}
             placeholder="Choose route"
           />
@@ -160,6 +161,10 @@ function EmployeeRosterCard({ emp, onSave }) {
 }
 
 export default function ShiftRosterScreen() {
+  const { routes } = useApp();
+  // Routes are admin-editable in Manage Timings (live from Firestore); fall back
+  // to the built-in list if the config hasn't loaded yet.
+  const routeOptions = routes && routes.length ? routes : CAB_ROUTES;
   const [employees, setEmployees] = useState([]);
   const [error, setError] = useState('');
   const [savedFor, setSavedFor] = useState('');
@@ -192,7 +197,7 @@ export default function ShiftRosterScreen() {
           data={employees}
           keyExtractor={(item) => item.uid}
           renderItem={({ item }) => (
-            <EmployeeRosterCard emp={item} onSave={handleSave} />
+            <EmployeeRosterCard emp={item} onSave={handleSave} routeOptions={routeOptions} />
           )}
           contentContainerStyle={styles.list}
           ListEmptyComponent={

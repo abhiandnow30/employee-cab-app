@@ -11,11 +11,20 @@ import { useApp } from '../../context/AppContext';
 import { statusColors } from '../../theme';
 
 export default function MyRidesScreen({ navigation }) {
-  const { myBookings, getCabById } = useApp();
+  const { myBookings, getCabById, currentUser } = useApp();
   const rides = myBookings();
+  // The employee's home pickup route, set by the admin in Shift Roster
+  // (employees/<uid>.roster.route, e.g. "ECIL Cab"). Shown in brackets after a
+  // "Home" pickup so the employee sees which route their cab comes on.
+  const homeRoute = currentUser?.roster?.route;
 
   function renderRide({ item }) {
     const cab = item.assignedCabId ? getCabById(item.assignedCabId) : null;
+    // Only annotate a Home pickup, and only when a route has been assigned.
+    // Show the route name without a trailing "Cab" (e.g. "ECIL Cab" -> "ECIL").
+    const routeLabel = homeRoute ? homeRoute.replace(/\s*cab$/i, '').trim() : '';
+    const pickupSuffix =
+      item.pickup === 'Home' && routeLabel ? ` (${routeLabel})` : '';
 
     return (
       <Card style={styles.card} mode="elevated">
@@ -35,7 +44,7 @@ export default function MyRidesScreen({ navigation }) {
             {item.date} · {item.shift}
           </Text>
           <Text variant="bodyMedium" style={styles.detail}>
-            Pickup: {item.pickup}
+            Pickup: {item.pickup}{pickupSuffix}
           </Text>
 
           {cab && (

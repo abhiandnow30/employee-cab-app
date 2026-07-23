@@ -198,13 +198,19 @@ export default function SelfRosterScreen({ navigation }) {
     }
 
     setSaving(true);
-    try {
+    // Fire the writes. Firestore queues them locally and syncs when online, so
+    // don't let a slow/offline backend hang the button — cap the wait. On
+    // timeout the request is queued and will sync once the connection is back.
+    const writes = (async () => {
       await Promise.all(toCancel.map((id) => cancelBooking(id)));
       if (toCreate.length) await addBookings(toCreate);
+      return { done: true };
+    })();
+    const timed = new Promise((resolve) => setTimeout(() => resolve({ pending: true }), 8000));
+    try {
+      const res = await Promise.race([writes, timed]);
       setSelections({});
-      setSnack('Request raised ✓');
-      // Let the success message show briefly, then return to the home page
-      // (the rides appear under "My ORS").
+      setSnack(res.pending ? 'Request queued — will sync when you’re back online.' : 'Request raised ✓');
       setTimeout(() => navigation.navigate('EmployeeHome'), 900);
     } catch (e) {
       setError(e.message || 'Could not raise the request. Please try again.');

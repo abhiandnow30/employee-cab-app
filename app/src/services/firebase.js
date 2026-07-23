@@ -18,7 +18,7 @@
 import { initializeApp } from 'firebase/app';
 import { getDatabase } from 'firebase/database';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyAVOqkSyw71WtL3u91M-5QKGIQbDl83TKM',
@@ -43,7 +43,15 @@ if (isFirebaseConfigured) {
   const app = initializeApp(firebaseConfig);
   database = getDatabase(app); // Realtime DB → live cab location
   authInstance = getAuth(app); // Authentication → login
-  firestoreInstance = getFirestore(app); // Firestore → employees, bookings, etc.
+  // Firestore → employees, bookings, etc. Force long-polling instead of the
+  // streaming WebChannel: some corporate proxies / security extensions rewrite
+  // the streaming response with a wildcard CORS header, which the browser then
+  // blocks (credentials + '*' is illegal), leaving Firestore stuck offline.
+  // Long-polling avoids that channel and connects reliably behind such networks.
+  firestoreInstance = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+    useFetchStreams: false,
+  });
 } else {
   console.warn(
     '[firebase] Not configured yet — fill in src/services/firebase.js to enable live tracking.'

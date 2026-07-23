@@ -16,7 +16,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { theme, colors } from './src/theme';
 import { AppProvider, useApp } from './src/context/AppContext';
-import AppDrawer from './src/components/AppDrawer';
+import AppDrawer, { DRAWER_ITEMS, ADMIN_DRAWER_ITEMS } from './src/components/AppDrawer';
 import { companyLogo } from './src/branding';
 
 import LoginScreen from './src/screens/LoginScreen';
@@ -38,9 +38,11 @@ import ManageDriversScreen from './src/screens/admin/ManageDriversScreen';
 import ManageCabsScreen from './src/screens/admin/ManageCabsScreen';
 import ShiftRosterScreen from './src/screens/admin/ShiftRosterScreen';
 import ManageTimingsScreen from './src/screens/admin/ManageTimingsScreen';
+import CancelledRidesScreen from './src/screens/admin/CancelledRidesScreen';
+import TrackCabsScreen from './src/screens/admin/TrackCabsScreen';
+import FeedbackInboxScreen from './src/screens/admin/FeedbackInboxScreen';
 import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
 import DriverShareLocationScreen from './src/screens/driver/DriverShareLocationScreen';
-import DriverSimScreen from './src/screens/driver/DriverSimScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -80,10 +82,12 @@ const linking = {
       ManageCabs: 'cabs',
       ShiftRoster: 'shift-roster',
       ManageTimings: 'manage-timings',
+      CancelledRides: 'cancelled-rides',
+      TrackCabs: 'track-cabs',
+      FeedbackInbox: 'feedback-inbox',
       // Driver
       DriverHome: 'driver',
       DriverShareLocation: 'driver/share',
-      DriverSim: 'driver/simulate',
     },
   },
 };
@@ -96,9 +100,13 @@ function AppHeader({ navigation, route, options, back }) {
   const { width } = useWindowDimensions();
 
   const isEmployee = currentUser?.role === 'employee';
-  // On wide screens the employee sidebar is permanent (rendered in RootNavigator),
-  // so the header's ☰ menu button isn't needed there.
-  const hasPermanentSidebar = isEmployee && width >= WIDE_BREAKPOINT;
+  const isAdmin = currentUser?.role === 'admin';
+  // Employees and admins get a navigation drawer. On wide screens it's a
+  // permanent left sidebar (rendered in RootNavigator), so the header's ☰ menu
+  // button isn't needed there.
+  const hasDrawer = isEmployee || isAdmin;
+  const drawerItems = isAdmin ? ADMIN_DRAWER_ITEMS : DRAWER_ITEMS;
+  const hasPermanentSidebar = hasDrawer && width >= WIDE_BREAKPOINT;
   // Which screen "home" means for this role.
   const homeRoute =
     currentUser?.role === 'admin'
@@ -119,8 +127,8 @@ function AppHeader({ navigation, route, options, back }) {
   return (
     <>
       <Appbar.Header style={styles.appbar} dark>
-        {isEmployee && !hasPermanentSidebar ? (
-          // Employees get the ☰ menu on the left (opens the drawer).
+        {hasDrawer && !hasPermanentSidebar ? (
+          // Employees & admins get the ☰ menu on the left (opens the drawer).
           <Appbar.Action icon="menu" color="#FFFFFF" onPress={() => setDrawerOpen(true)} />
         ) : !hasPermanentSidebar && back ? (
           <Appbar.BackAction color="#FFFFFF" onPress={goBack} />
@@ -158,7 +166,9 @@ function AppHeader({ navigation, route, options, back }) {
         visible={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         user={currentUser}
+        items={drawerItems}
         onChangePassword={changePassword}
+        onLogout={isAdmin ? logout : undefined}
         activeScreen={route.name}
         onNavigate={(item) => {
           setDrawerOpen(false);
@@ -171,13 +181,16 @@ function AppHeader({ navigation, route, options, back }) {
 
 // Chooses which set of screens to show. Reads the current user from context.
 function RootNavigator() {
-  const { currentUser, authReady, changePassword } = useApp();
+  const { currentUser, authReady, changePassword, logout } = useApp();
   const { width } = useWindowDimensions();
   const navRef = useNavigationContainerRef();
   const [activeRoute, setActiveRoute] = useState(null);
 
-  // Employees on a wide screen get a permanent left sidebar.
-  const showSidebar = currentUser?.role === 'employee' && width >= WIDE_BREAKPOINT;
+  // Employees and admins on a wide screen get a permanent left sidebar.
+  const isAdmin = currentUser?.role === 'admin';
+  const showSidebar =
+    (currentUser?.role === 'employee' || isAdmin) && width >= WIDE_BREAKPOINT;
+  const sidebarItems = isAdmin ? ADMIN_DRAWER_ITEMS : DRAWER_ITEMS;
 
   // While Firebase checks for an existing session, show a spinner instead of
   // briefly flashing the login screen.
@@ -201,7 +214,9 @@ function RootNavigator() {
           <AppDrawer
             permanent
             user={currentUser}
+            items={sidebarItems}
             onChangePassword={changePassword}
+            onLogout={isAdmin ? logout : undefined}
             activeScreen={activeRoute}
             onNavigate={(item) => navRef.navigate(item.screen, item.params)}
           />
@@ -301,11 +316,6 @@ function RootNavigator() {
               options={{ title: 'Share Location' }}
             />
             <Stack.Screen
-              name="DriverSim"
-              component={DriverSimScreen}
-              options={{ title: 'Simulate (demo)' }}
-            />
-            <Stack.Screen
               name="Profile"
               component={ProfileScreen}
               options={{ title: 'Profile' }}
@@ -343,6 +353,21 @@ function RootNavigator() {
               name="ManageTimings"
               component={ManageTimingsScreen}
               options={{ title: 'Manage Timings' }}
+            />
+            <Stack.Screen
+              name="CancelledRides"
+              component={CancelledRidesScreen}
+              options={{ title: 'Cancelled Rides' }}
+            />
+            <Stack.Screen
+              name="TrackCabs"
+              component={TrackCabsScreen}
+              options={{ title: 'Track Cabs' }}
+            />
+            <Stack.Screen
+              name="FeedbackInbox"
+              component={FeedbackInboxScreen}
+              options={{ title: 'Feedback & Ratings' }}
             />
           </>
           )}

@@ -12,17 +12,19 @@ import { COMPANY_NAME, companyLogo } from '../branding';
 import { colors } from '../theme';
 
 export default function LoginScreen({ navigation }) {
-  const { login } = useApp();
+  const { login, resetPassword } = useApp();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState(''); // success/neutral message (e.g. reset sent)
   const [loading, setLoading] = useState(false);
   const passwordRef = useRef(null); // lets Enter on the email field jump here
 
   async function handleLogin() {
     setError('');
+    setInfo('');
     if (!email || !password) {
       setError('Please enter both email and password.');
       return;
@@ -36,6 +38,24 @@ export default function LoginScreen({ navigation }) {
     }
     // Success: the auth listener loads the profile and App.js switches to the
     // right home screen automatically — no further navigation needed here.
+  }
+
+  // Emails a password-reset link to the address typed in the Email field.
+  async function handleForgot() {
+    setError('');
+    setInfo('');
+    if (!email.trim()) {
+      setError('Enter your email above, then tap “Forgot password?”.');
+      return;
+    }
+    setLoading(true);
+    const res = await resetPassword(email);
+    setLoading(false);
+    if (res.ok) {
+      setInfo(`Password-reset link sent to ${email.trim()}. Check your inbox.`);
+    } else {
+      setError(res.message);
+    }
   }
 
   return (
@@ -102,6 +122,11 @@ export default function LoginScreen({ navigation }) {
                 {error}
               </HelperText>
             ) : null}
+            {info ? (
+              <HelperText type="info" visible={true} style={styles.error}>
+                {info}
+              </HelperText>
+            ) : null}
 
             <Button
               mode="contained"
@@ -111,6 +136,16 @@ export default function LoginScreen({ navigation }) {
               disabled={loading}
             >
               Sign In
+            </Button>
+
+            <Button
+              mode="text"
+              onPress={handleForgot}
+              style={styles.link}
+              compact
+              disabled={loading}
+            >
+              Forgot password?
             </Button>
 
             <Button

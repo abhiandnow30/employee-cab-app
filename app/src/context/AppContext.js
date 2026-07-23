@@ -6,10 +6,12 @@
 // the employee and the admin in real time).
 // ---------------------------------------------------------------------------
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import * as Location from 'expo-location';
 import { cabs as initialCabs } from '../data/mockData';
 import {
-  watchAuth, signIn, signUp, signOutUser, friendlyAuthError, changePassword as changePasswordSvc,
+  watchAuth, signIn, signUp, signOutUser, friendlyAuthError,
+  changePassword as changePasswordSvc, sendPasswordReset,
 } from '../services/auth';
 import {
   getOrCreateProfile, setPendingProfile, ADMIN_SIGNUP_CODE, updateHomeLocation,
@@ -29,6 +31,7 @@ import {
   subscribeCabBookings,
 } from '../services/bookings';
 import { addFeedbackDoc, addRatingDoc } from '../services/feedback';
+import { updateCabLocation } from '../services/tracking';
 import { subscribeCabs, addCab, updateCab, removeCab, seedDefaultCabs } from '../services/cabs';
 import { subscribeTimings, saveTimings as saveTimingsSvc, DEFAULT_TIMINGS } from '../services/settings';
 import { firestore } from '../services/firebase';
@@ -148,6 +151,18 @@ export function AppProvider({ children }) {
     await signOutUser();
   }
 
+  // Send a password-reset email to the given address. Returns { ok, message }.
+  async function resetPassword(email) {
+    const addr = (email || '').trim();
+    if (!addr) return { ok: false, message: 'Enter your email first.' };
+    try {
+      await sendPasswordReset(addr);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
   // Change the signed-in user's password. Returns { ok, message }.
   async function changePassword(currentPassword, newPassword) {
     try {
@@ -205,11 +220,81 @@ export function AppProvider({ children }) {
     );
   }, []);
 
+  // --- Live location sharing (driver) -------------------------------------
+  // Lifted here (out of the Share Location screen) so it KEEPS RUNNING while the
+  // driver navigates the app — the dashboard can then show a truthful "Sharing"
+  // indicator. Uses the phone's GPS on native and the browser's location on web.
+  // NOTE: this is foreground sharing (while the app is open). True background
+  // sharing (phone locked) needs expo-task-manager + a custom dev build.
+  const [sharingLocation, setSharingLocation] = useState(false);
+  const [sharingCoords, setSharingCoords] = useState(null);
+  const [sharingError, setSharingError] = useState('');
+  const locationWatcher = useRef(null);
+
+  function stopSharingLocation() {
+    if (locationWatcher.current) {
+      locationWatcher.current.remove();
+      locationWatcher.current = null;
+    }
+    setSharingLocation(false);
+    setSharingCoords(null);
+  }
+
+  // Start streaming this device's location to the driver's cab. Returns
+  // { ok, denied?, message? } so the caller can show the right feedback.
+  async function startSharingLocation() {
+    setSharingError('');
+    const cabId = currentUser?.cabId;
+    if (!cabId) {
+      const message = 'No cab is linked to your account.';
+      setSharingError(message);
+      return { ok: false, message };
+    }
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setSharingError('Location permission denied.');
+      return { ok: false, denied: true };
+    }
+    try {
+      if (locationWatcher.current) locationWatcher.current.remove();
+      locationWatcher.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.High, distanceInterval: 5, timeInterval: 3000 },
+        (loc) => {
+          const { latitude, longitude } = loc.coords;
+          setSharingCoords({ latitude, longitude });
+          updateCabLocation(cabId, { latitude, longitude }, Date.now());
+        }
+      );
+      setSharingLocation(true);
+      return { ok: true };
+    } catch (e) {
+      const message = e.message || 'Could not start location updates.';
+      setSharingError(message);
+      return { ok: false, message };
+    }
+  }
+
+  // Stop sharing automatically if the user logs out or is no longer a driver
+  // with a cab — never keep broadcasting for someone who shouldn't be.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'driver' || !currentUser.cabId) {
+      stopSharingLocation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid, currentUser?.role, currentUser?.cabId]);
+
   // The fields every new booking needs; `data` fills in the rest.
+  // We copy the employee's home address onto the booking ("denormalize") so the
+  // driver can navigate to the pickup: Firestore rules let a driver read the
+  // booking, but NOT the employee's profile. We deliberately DO NOT copy the
+  // employee's personal phone here — drivers get a central helpline instead, so
+  // a rider's private mobile is never exposed in driver-readable data.
   function newBookingPayload(data) {
     return {
       employeeId: currentUser.uid,
       employeeName: currentUser.name,
+      employeeHome: currentUser.home || null, // { latitude, longitude, displayName, ... }
+      employeeAddress: currentUser.address || null, // typed at sign-up
       status: 'Booked',
       assignedCabId: null,
       ...data,
@@ -321,12 +406,20 @@ export function AppProvider({ children }) {
     setProfile((p) => ({ ...(p || {}), home }));
   }
 
-  // User edits their own basic details (name, employee id, phone). Persists to
-  // Firestore and updates the local profile so the change shows immediately.
+  // User edits their own basic details (name, employee id, phone). Updates the
+  // local profile immediately (optimistic) so the UI never waits on the network,
+  // then persists to Firestore. Returns { ok, message } — the caller shows an
+  // error only if the background write actually fails.
   async function saveProfileDetails(fields) {
-    if (!currentUser) return;
-    if (firestore) await updateProfileDetails(currentUser.uid, fields);
-    setProfile((p) => ({ ...(p || {}), ...fields }));
+    if (!currentUser) return { ok: false, message: 'Not signed in.' };
+    setProfile((p) => ({ ...(p || {}), ...fields })); // optimistic
+    if (!firestore) return { ok: true };
+    try {
+      await updateProfileDetails(currentUser.uid, fields);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: e.message };
+    }
   }
 
   // Admin saves the edited Weekly Schedule timings. `pickupTimes` / `dropTimes`
@@ -359,10 +452,12 @@ export function AppProvider({ children }) {
     signup,
     logout,
     changePassword,
+    resetPassword,
     bookings,
     cabs,
     pickupTimes: timings.pickupTimes,
     dropTimes: timings.dropTimes,
+    routes: timings.routes,
     saveTimings,
     addBooking,
     addBookings,
@@ -386,6 +481,12 @@ export function AppProvider({ children }) {
     myActiveBookings,
     addFeedback,
     addRating,
+    // Live location sharing (driver)
+    sharingLocation,
+    sharingCoords,
+    sharingError,
+    startSharingLocation,
+    stopSharingLocation,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

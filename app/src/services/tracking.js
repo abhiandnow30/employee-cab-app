@@ -2,8 +2,7 @@
 // TRACKING SERVICE
 // The bridge between the app and the Realtime Database for LIVE cab location.
 //
-//   • A driver (or the simulator) calls updateCabLocation() to push where the
-//     cab is right now.
+//   • A driver calls updateCabLocation() to push where the cab is right now.
 //   • The employee's Track screen calls subscribeCabLocation() to receive every
 //     new position the instant it's written — that's the "real-time" part.
 //

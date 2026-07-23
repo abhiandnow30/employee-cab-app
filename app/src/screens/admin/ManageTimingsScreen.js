@@ -31,16 +31,35 @@ function normalizeTime(input) {
   return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ap}`;
 }
 
-// One editable list (Pickup or Drop): chips you can remove + an add field.
-function TimingEditor({ title, subtitle, icon, times, onAdd, onRemove }) {
+// A plain-text normaliser for lists that aren't times (e.g. routes): just trim.
+function normalizeText(input) {
+  const v = (input || '').trim();
+  return v || null;
+}
+
+// One editable list (Pickup, Drop, or Routes): chips you can remove + an add
+// field. `normalize` validates/canonicalises each entry (times vs plain text);
+// `label`/`placeholder`/`invalidMsg` tailor the add field to the list type.
+function TimingEditor({
+  title,
+  subtitle,
+  icon,
+  times,
+  onAdd,
+  onRemove,
+  normalize = normalizeTime,
+  label = 'Add time (hh:mm AM/PM)',
+  placeholder = 'e.g. 09:00 PM',
+  invalidMsg = 'Enter a valid time like 09:00 PM.',
+}) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
 
   function handleAdd() {
     setError('');
-    const value = normalizeTime(draft);
+    const value = normalize(draft);
     if (!value) {
-      setError('Enter a valid time like 09:00 PM.');
+      setError(invalidMsg);
       return;
     }
     if (times.includes(value)) {
@@ -82,8 +101,8 @@ function TimingEditor({ title, subtitle, icon, times, onAdd, onRemove }) {
           <TextInput
             mode="outlined"
             dense
-            label="Add time (hh:mm AM/PM)"
-            placeholder="e.g. 09:00 PM"
+            label={label}
+            placeholder={placeholder}
             value={draft}
             onChangeText={setDraft}
             onSubmitEditing={handleAdd}
@@ -100,11 +119,12 @@ function TimingEditor({ title, subtitle, icon, times, onAdd, onRemove }) {
 }
 
 export default function ManageTimingsScreen() {
-  const { pickupTimes, dropTimes, saveTimings } = useApp();
+  const { pickupTimes, dropTimes, routes, saveTimings } = useApp();
 
   // Local drafts, seeded from the live config. Editing doesn't persist until Save.
   const [pickup, setPickup] = useState(pickupTimes);
   const [drop, setDrop] = useState(dropTimes);
+  const [routeList, setRouteList] = useState(routes || []);
   const [saving, setSaving] = useState(false);
   const [snack, setSnack] = useState('');
   const [error, setError] = useState('');
@@ -112,8 +132,9 @@ export default function ManageTimingsScreen() {
   const dirty = useMemo(
     () =>
       JSON.stringify(pickup) !== JSON.stringify(pickupTimes) ||
-      JSON.stringify(drop) !== JSON.stringify(dropTimes),
-    [pickup, drop, pickupTimes, dropTimes]
+      JSON.stringify(drop) !== JSON.stringify(dropTimes) ||
+      JSON.stringify(routeList) !== JSON.stringify(routes || []),
+    [pickup, drop, routeList, pickupTimes, dropTimes, routes]
   );
 
   async function handleSave() {
@@ -122,16 +143,25 @@ export default function ManageTimingsScreen() {
       setError('Both Pickup and Drop need at least one time.');
       return;
     }
+    if (routeList.length === 0) {
+      setError('Add at least one cab route.');
+      return;
+    }
     setSaving(true);
-    const res = await saveTimings({ pickupTimes: pickup, dropTimes: drop });
+    const res = await saveTimings({
+      pickupTimes: pickup,
+      dropTimes: drop,
+      routes: routeList,
+    });
     setSaving(false);
-    if (res?.ok) setSnack('Timings saved ✓');
-    else setError(res?.message || 'Could not save timings.');
+    if (res?.ok) setSnack('Saved ✓');
+    else setError(res?.message || 'Could not save.');
   }
 
   function resetDrafts() {
     setPickup(pickupTimes);
     setDrop(dropTimes);
+    setRouteList(routes || []);
     setError('');
   }
 
@@ -140,8 +170,9 @@ export default function ManageTimingsScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.centerCol}>
           <Text variant="bodySmall" style={styles.hint}>
-            These are the Pickup and Drop times employees choose from on the Weekly
-            Schedule. Changes apply to everyone as soon as you Save.
+            The Pickup and Drop times employees choose from on the Weekly Schedule,
+            plus the Cab routes used in Shift Roster. Changes apply to everyone as
+            soon as you Save.
           </Text>
 
           <TimingEditor
@@ -160,6 +191,19 @@ export default function ManageTimingsScreen() {
             times={drop}
             onAdd={(t) => setDrop((list) => [...list, t])}
             onRemove={(t) => setDrop((list) => list.filter((x) => x !== t))}
+          />
+
+          <TimingEditor
+            title="Cab routes"
+            subtitle="Pickup routes used in Shift Roster"
+            icon="map-marker-path"
+            times={routeList}
+            onAdd={(r) => setRouteList((list) => [...list, r])}
+            onRemove={(r) => setRouteList((list) => list.filter((x) => x !== r))}
+            normalize={normalizeText}
+            label="Add route"
+            placeholder="e.g. HITEC City Cab"
+            invalidMsg="Enter a route name."
           />
 
           {error ? <HelperText type="error" visible>{error}</HelperText> : null}

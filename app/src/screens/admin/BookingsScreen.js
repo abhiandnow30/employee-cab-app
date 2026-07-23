@@ -53,7 +53,17 @@ export default function BookingsScreen({ navigation }) {
   // Employee details for a booking (from the live profile map).
   const empOf = (b) => empByUid[b.employeeId] || {};
   const routeOf = (b) => empOf(b).roster?.route || NO_ROUTE;
-  const addressOf = (b) => empOf(b).pickupAddress || '';
+  // The employee's home address: from sign-up (`address`) or their Profile map
+  // pin (`home` — a readable displayName or the structured parts). This is what
+  // the desk uses to group riders by location before assigning a shared cab.
+  const addressOf = (b) => {
+    const emp = empOf(b);
+    if (emp.address) return emp.address;
+    const h = emp.home;
+    if (!h) return '';
+    if (h.displayName) return h.displayName;
+    return [h.line1, h.area, h.city, h.pincode].filter(Boolean).join(', ');
+  };
 
   const pendingCount = bookings.filter(hasPendingCancel).length;
   const noShowCount = bookings.filter(isNoShow).length;
@@ -264,41 +274,6 @@ export default function BookingsScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <View style={styles.centerCol}>
-      <View style={styles.manageRow}>
-        <Button
-          mode="outlined"
-          icon="car-multiple"
-          style={styles.manageBtn}
-          onPress={() => navigation.navigate('ManageCabs')}
-        >
-          Manage Cabs
-        </Button>
-        <Button
-          mode="outlined"
-          icon="account-tie-hat"
-          style={styles.manageBtn}
-          onPress={() => navigation.navigate('ManageDrivers')}
-        >
-          Manage Drivers
-        </Button>
-        <Button
-          mode="outlined"
-          icon="calendar-account"
-          style={styles.manageBtn}
-          onPress={() => navigation.navigate('ShiftRoster')}
-        >
-          Shift Roster
-        </Button>
-        <Button
-          mode="outlined"
-          icon="clock-edit-outline"
-          style={styles.manageBtn}
-          onPress={() => navigation.navigate('ManageTimings')}
-        >
-          Manage Timings
-        </Button>
-      </View>
-
       {noShowCount > 0 && (
         <View style={styles.noShowBanner}>
           <MaterialCommunityIcons name="account-alert" size={18} color={colors.danger} />
@@ -375,8 +350,6 @@ export default function BookingsScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
-  manageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, margin: 12, marginBottom: 4 },
-  manageBtn: { flexGrow: 1, flexBasis: 150 },
   hint: { opacity: 0.7, marginHorizontal: 14, marginBottom: 4 },
   listContent: { padding: 12, paddingBottom: 90 },
   sectionHeader: {

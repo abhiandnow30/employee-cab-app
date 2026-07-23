@@ -30,6 +30,18 @@ export const DRAWER_ITEMS = [
   { label: 'Rate Us', icon: 'star', screen: 'RateUs' },
 ];
 
+// Admin (transport desk) menu — the actions that used to be top buttons.
+export const ADMIN_DRAWER_ITEMS = [
+  { label: 'Dashboard', icon: 'view-dashboard', screen: 'Bookings' },
+  { label: 'Manage Cabs', icon: 'car-multiple', screen: 'ManageCabs' },
+  { label: 'Manage Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
+  { label: 'Shift Roster', icon: 'calendar-account', screen: 'ShiftRoster' },
+  { label: 'Manage Timings', icon: 'clock-edit-outline', screen: 'ManageTimings' },
+  { label: 'Track Cabs', icon: 'map-marker-radius', screen: 'TrackCabs' },
+  { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
+  { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
+];
+
 const EMPTY_PW = { current: '', next: '', confirm: '' };
 
 // The change-password dialog, shown from the user card.
@@ -120,11 +132,15 @@ function ChangePasswordDialog({ visible, onDismiss, onChangePassword }) {
   );
 }
 
-// The signed-in employee card at the bottom: name only, expands on tap.
+// Friendly label for a role.
+const ROLE_LABEL = { admin: 'Admin', driver: 'Driver', employee: 'Employee' };
+
+// The signed-in user card at the bottom: name + role, expands on tap.
 function UserCard({ user, onChangePassword }) {
   const [expanded, setExpanded] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const u = user || {};
+  const roleLabel = ROLE_LABEL[u.role] || 'Employee';
 
   return (
     <View style={styles.userBox}>
@@ -145,12 +161,21 @@ function UserCard({ user, onChangePassword }) {
         </View>
       ) : null}
 
-      {/* Name row — tap to expand/collapse the details above. */}
+      {/* Name + role row — tap to expand/collapse the details above. */}
       <Pressable style={styles.userTop} onPress={() => setExpanded((e) => !e)}>
         <MaterialCommunityIcons name="account-circle" size={32} color="#FFFFFF" />
-        <Text style={styles.userName} numberOfLines={1}>
-          {u.name || 'Employee'}
-        </Text>
+        <View style={styles.userNameCol}>
+          {/* Admins show just "Admin" (no account name / second line);
+              other roles show their name with the role beneath it. */}
+          <Text style={styles.userName} numberOfLines={1}>
+            {u.role === 'admin' ? roleLabel : u.name || roleLabel}
+          </Text>
+          {u.role !== 'admin' ? (
+            <Text style={styles.userRole} numberOfLines={1}>
+              {roleLabel}
+            </Text>
+          ) : null}
+        </View>
         <MaterialCommunityIcons
           name={expanded ? 'chevron-down' : 'chevron-up'}
           size={22}
@@ -168,7 +193,9 @@ function UserCard({ user, onChangePassword }) {
 }
 
 // The brand strip + nav list + user card. Shared by both modes.
-function DrawerBody({ user, onNavigate, onClose, onChangePassword, activeScreen, permanent }) {
+function DrawerBody({
+  user, items = DRAWER_ITEMS, onNavigate, onClose, onChangePassword, onLogout, activeScreen, permanent,
+}) {
   return (
     <View style={styles.body}>
       {/* Company brand: logo + name on a white strip at the very top */}
@@ -186,7 +213,7 @@ function DrawerBody({ user, onNavigate, onClose, onChangePassword, activeScreen,
 
       {/* Menu items (fills the space between brand and the user card) */}
       <ScrollView style={styles.menu}>
-        {DRAWER_ITEMS.map((item) => {
+        {items.map((item) => {
           const active = item.screen === activeScreen;
           return (
             <Pressable
@@ -207,9 +234,21 @@ function DrawerBody({ user, onNavigate, onClose, onChangePassword, activeScreen,
             </Pressable>
           );
         })}
+
+        {/* Logout — shown when a handler is provided (admin sidebar). */}
+        {onLogout ? (
+          <Pressable
+            style={[styles.item, styles.logoutItem]}
+            onPress={onLogout}
+            android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
+          >
+            <MaterialCommunityIcons name="logout" size={20} color="#FFFFFF" style={styles.itemIcon} />
+            <Text style={styles.itemText}>Logout</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
 
-      {/* Signed-in employee — at the bottom */}
+      {/* Signed-in user — at the bottom */}
       <UserCard user={user} onChangePassword={onChangePassword} />
     </View>
   );
@@ -219,8 +258,10 @@ export default function AppDrawer({
   visible,
   onClose,
   user,
+  items,
   onNavigate,
   onChangePassword,
+  onLogout,
   activeScreen,
   permanent = false,
 }) {
@@ -230,8 +271,10 @@ export default function AppDrawer({
       <View style={styles.permanentPanel}>
         <DrawerBody
           user={user}
+          items={items}
           onNavigate={onNavigate}
           onChangePassword={onChangePassword}
+          onLogout={onLogout}
           activeScreen={activeScreen}
           permanent
         />
@@ -247,8 +290,10 @@ export default function AppDrawer({
         <View style={styles.panel}>
           <DrawerBody
             user={user}
+            items={items}
             onNavigate={onNavigate}
             onChangePassword={onChangePassword}
+            onLogout={onLogout}
             onClose={onClose}
             activeScreen={activeScreen}
           />
@@ -305,6 +350,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   itemActive: { backgroundColor: '#1565C0' }, // highlight current screen
+  logoutItem: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.15)',
+  },
   itemIcon: { width: 30 },
   itemText: { color: '#FFFFFF', fontSize: 16 },
   itemTextActive: { fontWeight: 'bold' },
@@ -316,7 +366,9 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(255,255,255,0.2)',
   },
   userTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  userName: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16, flex: 1 },
+  userNameCol: { flex: 1 },
+  userName: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
+  userRole: { color: '#E3F0FF', fontSize: 12, marginTop: 1 },
   userDetails: { marginBottom: 12 },
   userMeta: { color: '#E3F0FF', fontSize: 12, marginBottom: 4 },
   changePw: {
