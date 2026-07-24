@@ -45,15 +45,29 @@ export function isPastDateTime(dateKey, timeStr) {
   return false;
 }
 
-// Hours from now until the ride at `dateKey` + `timeStr` (a float; negative if
-// the ride is already in the past). Returns null if the time can't be parsed.
-export function hoursUntil(dateKey, timeStr) {
+// Build a JS Date from an ISO date key ("YYYY-MM-DD") + "hh:mm AM/PM" time,
+// in the device's local timezone. Returns null if either can't be parsed.
+export function toDateTime(dateKey, timeStr) {
   const mins = timeToMinutes(timeStr);
   if (mins == null) return null;
   const [y, m, d] = String(dateKey).split('-').map((n) => parseInt(n, 10));
   if (!y || !m || !d) return null;
-  const rideAt = new Date(y, m - 1, d, Math.floor(mins / 60), mins % 60, 0, 0);
+  return new Date(y, m - 1, d, Math.floor(mins / 60), mins % 60, 0, 0);
+}
+
+// Hours from now until the ride at `dateKey` + `timeStr` (a float; negative if
+// the ride is already in the past). Returns null if the time can't be parsed.
+export function hoursUntil(dateKey, timeStr) {
+  const rideAt = toDateTime(dateKey, timeStr);
+  if (!rideAt) return null;
   return (rideAt.getTime() - Date.now()) / (1000 * 60 * 60);
+}
+
+// True if a booking's full scheduled date+time is in the past (device-local
+// time). The single source of truth for "assignment is closed".
+export function isBookingPast(booking) {
+  if (!booking) return false;
+  return isPastDateTime(booking.date, booking.shift);
 }
 
 // True if a ride is far enough away to still be cancellable (default: at least

@@ -10,13 +10,16 @@
 
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, SectionList, Pressable } from 'react-native';
-import { Text, Card, Chip, Button, Portal, Dialog, RadioButton } from 'react-native-paper';
+import { Text, Card, Chip, Button, Portal, Dialog, RadioButton, Snackbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeEmployees } from '../../services/profile';
+import { isBookingPast } from '../../utils/datetime';
 import { statusColors, colors } from '../../theme';
+import CalendarFilter, { rangeLabel } from '../../components/CalendarFilter';
 
 const NO_ROUTE = 'No route set';
+const PAST_SECTION = 'Past rides · assignment closed';
 
 export default function BookingsScreen({ navigation }) {
   const { bookings, cabs, getCabById, assignCabToGroup, approveCancel, rejectCancel } = useApp();
@@ -27,6 +30,8 @@ export default function BookingsScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [resolving, setResolving] = useState(null); // booking id being approved/rejected
   const [empByUid, setEmpByUid] = useState({}); // uid → employee profile (for route/address)
+  const [error, setError] = useState(''); // assignment guard / failure message
+  const [dateRange, setDateRange] = useState(null); // { start, end } (YYYY-MM-DD) or null = all dates
 
   // Live employee profiles, so each booking can show its owner's route + pickup
   // address (these live on the profile, not on the booking itself).
@@ -47,8 +52,12 @@ export default function BookingsScreen({ navigation }) {
   const isSelected = (id) => selected.includes(id);
   // A ride awaiting cancellation shouldn't be handed a cab — resolve it first.
   const hasPendingCancel = (b) => b.cancelStatus === 'Requested';
-  const canSelect = (b) => b.status === 'Booked' && !hasPendingCancel(b);
+  const isPast = (b) => isBookingPast(b); // scheduled date/time already passed
+  // Assignable only if still open, not awaiting cancellation, AND not in the past.
+  const canSelect = (b) => b.status === 'Booked' && !hasPendingCancel(b) && !isPast(b);
   const isNoShow = (b) => b.status === 'No show';
+  // A past ride that never got a cab is "Expired" (assignment closed).
+  const isExpired = (b) => isPast(b) && b.status === 'Booked';
 
   // Employee details for a booking (from the live profile map).
   const empOf = (b) => empByUid[b.employeeId] || {};
@@ -68,13 +77,25 @@ export default function BookingsScreen({ navigation }) {
   const pendingCount = bookings.filter(hasPendingCancel).length;
   const noShowCount = bookings.filter(isNoShow).length;
 
-  // --- Group bookings by route so carpool candidates sit together ----------
+  // Apply the chosen date range (null = show every date). Keys are ISO
+  // "YYYY-MM-DD", so string comparison gives correct chronological ordering.
+  const visibleBookings = dateRange
+    ? bookings.filter((b) => b.date >= dateRange.start && b.date <= dateRange.end)
+    : bookings;
+
+  // --- Split upcoming (assignable) from past (read-only) -------------------
+  // Only today's and future rides can be assigned; anything whose scheduled
+  // time has passed drops into a separate, read-only "Past rides" section.
+  const upcoming = visibleBookings.filter((b) => !isPast(b));
+  const past = visibleBookings.filter(isPast);
+
+  // Group the UPCOMING bookings by route so carpool candidates sit together.
   const groups = {};
-  bookings.forEach((b) => {
+  upcoming.forEach((b) => {
     const route = routeOf(b);
     (groups[route] = groups[route] || []).push(b);
   });
-  const sections = Object.keys(groups)
+  const upcomingSections = Object.keys(groups)
     .map((route) => {
       const data = [...groups[route]].sort(
         (a, b) => (isNoShow(a) ? 0 : 1) - (isNoShow(b) ? 0 : 1) // no-shows first
@@ -88,6 +109,21 @@ export default function BookingsScreen({ navigation }) {
       if (b.route === NO_ROUTE) return -1;
       return a.route.localeCompare(b.route);
     });
+
+  // Past rides go last, most-recent first, in one read-only section.
+  const pastSection =
+    past.length > 0
+      ? [
+          {
+            route: PAST_SECTION,
+            isPastSection: true,
+            hasNoShow: false,
+            data: [...past].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))),
+          },
+        ]
+      : [];
+
+  const sections = [...upcomingSections, ...pastSection];
 
   async function resolve(bookingId, approve) {
     setResolving(bookingId);
@@ -117,9 +153,18 @@ export default function BookingsScreen({ navigation }) {
     if (!chosenCab || selected.length === 0) return;
     setSaving(true);
     try {
-      await assignCabToGroup(selected, chosenCab);
+      const res = await assignCabToGroup(selected, chosenCab);
+      if (!res?.ok) {
+        // Guard rejected (e.g. a selected ride is now in the past).
+        setError(res?.message || 'Could not assign the cab. Please try again.');
+        setPickerOpen(false);
+        setSelected([]);
+        return;
+      }
       setSelected([]);
       setPickerOpen(false);
+    } catch (e) {
+      setError(e.message || 'Could not assign the cab. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -127,18 +172,24 @@ export default function BookingsScreen({ navigation }) {
 
   function renderSectionHeader({ section }) {
     const selectableCount = section.data.filter(canSelect).length;
+    const pastHeader = section.isPastSection;
     return (
-      <View style={styles.sectionHeader}>
+      <View style={[styles.sectionHeader, pastHeader && styles.pastSectionHeader]}>
         <View style={styles.sectionTitleWrap}>
-          <MaterialCommunityIcons name="map-marker" size={18} color={colors.primary} />
-          <Text variant="titleSmall" style={styles.sectionTitle}>
+          <MaterialCommunityIcons
+            name={pastHeader ? 'history' : 'map-marker'}
+            size={18}
+            color={pastHeader ? colors.muted : colors.primary}
+          />
+          <Text variant="titleSmall" style={[styles.sectionTitle, pastHeader && styles.pastSectionTitle]}>
             {section.route}
           </Text>
-          <Text variant="bodySmall" style={styles.sectionCount}>
+          <Text variant="bodySmall" style={[styles.sectionCount, pastHeader && styles.pastSectionTitle]}>
             ({section.data.length})
           </Text>
         </View>
-        {selectableCount > 0 && (
+        {/* No "Select all" for past rides — they can't be assigned. */}
+        {!pastHeader && selectableCount > 0 && (
           <Button compact mode="text" onPress={() => selectGroup(section.data)}>
             Select all
           </Button>
@@ -154,6 +205,8 @@ export default function BookingsScreen({ navigation }) {
     const pendingCancel = hasPendingCancel(item);
     const busy = resolving === item.id;
     const address = addressOf(item);
+    const past = isPast(item);
+    const expired = isExpired(item); // past + never assigned
 
     return (
       <Pressable onPress={() => selectable && toggle(item.id)}>
@@ -163,6 +216,7 @@ export default function BookingsScreen({ navigation }) {
             ticked && styles.cardSelected,
             pendingCancel && styles.cardCancel,
             isNoShow(item) && styles.cardNoShow,
+            past && styles.cardPast,
           ]}
           mode="elevated"
         >
@@ -178,13 +232,24 @@ export default function BookingsScreen({ navigation }) {
             <View style={styles.cardBody}>
               <View style={styles.rowBetween}>
                 <Text variant="titleMedium">{item.employeeName}</Text>
-                <Chip
-                  compact
-                  style={{ backgroundColor: statusColors[item.status] || '#9E9E9E' }}
-                  textStyle={styles.chipText}
-                >
-                  {item.status}
-                </Chip>
+                {expired ? (
+                  <Chip
+                    compact
+                    icon="clock-alert-outline"
+                    style={styles.expiredChip}
+                    textStyle={styles.chipText}
+                  >
+                    Expired
+                  </Chip>
+                ) : (
+                  <Chip
+                    compact
+                    style={{ backgroundColor: statusColors[item.status] || '#9E9E9E' }}
+                    textStyle={styles.chipText}
+                  >
+                    {item.status}
+                  </Chip>
+                )}
               </View>
               <Text variant="bodyMedium" style={styles.detail}>
                 {item.direction}
@@ -297,6 +362,16 @@ export default function BookingsScreen({ navigation }) {
         all”) and assign them a shared cab.
       </Text>
 
+      {/* Date filter — pick a day, a range, or a whole month. */}
+      <View style={styles.filterRow}>
+        <CalendarFilter value={dateRange} onChange={setDateRange} />
+        {dateRange ? (
+          <Button compact mode="text" onPress={() => setDateRange(null)}>
+            Clear
+          </Button>
+        ) : null}
+      </View>
+
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
@@ -304,7 +379,11 @@ export default function BookingsScreen({ navigation }) {
         renderSectionHeader={renderSectionHeader}
         stickySectionHeadersEnabled={false}
         contentContainerStyle={styles.listContent}
-        ListEmptyComponent={<Text style={styles.empty}>No bookings yet.</Text>}
+        ListEmptyComponent={
+          <Text style={styles.empty}>
+            {dateRange ? `No bookings for ${rangeLabel(dateRange)}.` : 'No bookings yet.'}
+          </Text>
+        }
       />
 
       {/* Action bar — appears when at least one booking is ticked */}
@@ -342,6 +421,11 @@ export default function BookingsScreen({ navigation }) {
           </Dialog.Actions>
         </Dialog>
       </Portal>
+
+      {/* Guard / error feedback (e.g. a selected ride slipped into the past) */}
+      <Snackbar visible={!!error} onDismiss={() => setError('')} duration={4000}>
+        {error}
+      </Snackbar>
       </View>
     </View>
   );
@@ -351,6 +435,14 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
   hint: { opacity: 0.7, marginHorizontal: 14, marginBottom: 4 },
+  filterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    marginTop: 6,
+    marginBottom: 2,
+  },
   listContent: { padding: 12, paddingBottom: 90 },
   sectionHeader: {
     flexDirection: 'row',
@@ -367,10 +459,14 @@ const styles = StyleSheet.create({
   sectionTitleWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
   sectionTitle: { color: colors.primaryDark, fontWeight: 'bold' },
   sectionCount: { color: colors.primaryDark, opacity: 0.7 },
+  pastSectionHeader: { backgroundColor: '#ECEFF1' },
+  pastSectionTitle: { color: colors.muted },
   card: { marginBottom: 12 },
   cardSelected: { borderWidth: 2, borderColor: colors.primary },
   cardCancel: { borderWidth: 1, borderColor: '#F5B5B0' },
   cardNoShow: { borderLeftWidth: 5, borderLeftColor: colors.danger },
+  cardPast: { opacity: 0.6 },
+  expiredChip: { backgroundColor: '#757575' },
   noShowBanner: {
     flexDirection: 'row',
     alignItems: 'center',

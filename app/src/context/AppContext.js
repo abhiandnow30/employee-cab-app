@@ -15,8 +15,12 @@ import {
 } from '../services/auth';
 import {
   getOrCreateProfile, setPendingProfile, ADMIN_SIGNUP_CODE, updateHomeLocation,
-  updateProfileDetails, subscribeProfile,
+  updateProfileDetails, subscribeProfile, adminUpdateEmployee,
+  adminCreateEmployeeAccount, adminDeleteEmployee,
 } from '../services/profile';
+import {
+  createAddressChangeRequest, subscribeMyAddressRequests,
+} from '../services/addressRequests';
 import {
   createBooking,
   createBookings,
@@ -35,6 +39,7 @@ import { updateCabLocation } from '../services/tracking';
 import { subscribeCabs, addCab, updateCab, removeCab, seedDefaultCabs } from '../services/cabs';
 import { subscribeTimings, saveTimings as saveTimingsSvc, DEFAULT_TIMINGS } from '../services/settings';
 import { firestore } from '../services/firebase';
+import { toDateTime, isBookingPast } from '../utils/datetime';
 
 const AppContext = createContext(null);
 
@@ -45,6 +50,7 @@ export function AppProvider({ children }) {
   const [bookings, setBookings] = useState([]); // filled live from Firestore
   const [fleetCabs, setFleetCabs] = useState([]); // live fleet from Firestore
   const [timings, setTimings] = useState(DEFAULT_TIMINGS); // Weekly Schedule pickup/drop options
+  const [myAddressRequests, setMyAddressRequests] = useState([]); // employee's own address-change requests (live)
   // Use the managed fleet once it has cabs; until then fall back to the starter
   // list so the app still works before the admin seeds/adds cabs.
   const cabs = fleetCabs.length ? fleetCabs : initialCabs;
@@ -210,6 +216,22 @@ export function AppProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.uid]);
 
+  // --- Address change requests (employee's own, live) ---------------------
+  // So the employee can see whether each request is Pending / Approved /
+  // Rejected (and the reason, if rejected) without a re-login.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'employee' || !firestore) {
+      setMyAddressRequests([]);
+      return;
+    }
+    return subscribeMyAddressRequests(
+      currentUser.uid,
+      setMyAddressRequests,
+      (e) => console.warn('[addressRequests] subscription error:', e.message)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid, currentUser?.role]);
+
   // --- Timings config (admin-editable pickup/drop options, live) ----------
   // Global config, so we subscribe once Firebase is configured. Falls back to
   // DEFAULT_TIMINGS until the admin saves anything.
@@ -290,6 +312,10 @@ export function AppProvider({ children }) {
   // employee's personal phone here — drivers get a central helpline instead, so
   // a rider's private mobile is never exposed in driver-readable data.
   function newBookingPayload(data) {
+    // Absolute departure instant, so the backend (Firestore rules) can compare
+    // it to server time and block assigning a cab to a ride that has passed —
+    // the stored `date`/`shift` strings can't be compared in security rules.
+    const departAt = toDateTime(data.date, data.shift); // Date → Firestore Timestamp
     return {
       employeeId: currentUser.uid,
       employeeName: currentUser.name,
@@ -297,6 +323,7 @@ export function AppProvider({ children }) {
       employeeAddress: currentUser.address || null, // typed at sign-up
       status: 'Booked',
       assignedCabId: null,
+      departAt: departAt || null,
       ...data,
     };
   }
@@ -313,13 +340,31 @@ export function AppProvider({ children }) {
   }
 
   // Admin assigns a cab → booking moves to "Cab assigned".
+  // Guard: a cab can't be assigned to a ride whose date/time has passed. This
+  // runs even if the UI is bypassed, since every assign goes through here.
   async function assignCab(bookingId, cabId) {
-    return assignCabToBooking(bookingId, cabId);
+    const b = bookings.find((x) => x.id === bookingId);
+    if (isBookingPast(b)) {
+      return { ok: false, message: 'This ride is in the past — assignment is closed.' };
+    }
+    await assignCabToBooking(bookingId, cabId);
+    return { ok: true };
   }
 
-  // Admin assigns one cab to several bookings (carpool grouping).
+  // Admin assigns one cab to several bookings (carpool grouping). Rejects the
+  // whole batch if ANY selected ride is already in the past.
   async function assignCabToGroup(bookingIds, cabId) {
-    return assignCabToBookings(bookingIds, cabId);
+    const pastCount = bookingIds
+      .map((id) => bookings.find((x) => x.id === id))
+      .filter(isBookingPast).length;
+    if (pastCount > 0) {
+      return {
+        ok: false,
+        message: `${pastCount} selected ride${pastCount > 1 ? 's are' : ' is'} in the past — assignment is closed.`,
+      };
+    }
+    await assignCabToBookings(bookingIds, cabId);
+    return { ok: true };
   }
 
   // Employee cancels a booking → "Cancelled" (kept for history). Used internally
@@ -422,6 +467,95 @@ export function AppProvider({ children }) {
     }
   }
 
+  // A readable home address for the signed-in user: prefer the admin-managed
+  // `address` string, then a saved map pin's readable name / structured parts.
+  function homeAddressOf(u) {
+    if (!u) return '';
+    if (u.address) return u.address;
+    const h = u.home;
+    if (!h) return '';
+    if (h.displayName) return h.displayName;
+    return [h.line1, h.area, h.city, h.pincode].filter(Boolean).join(', ');
+  }
+
+  // Employee raises an address-change request (they can't edit the address
+  // directly — the admin approves it). Returns { ok, message }.
+  async function requestAddressChange({ requestedAddress, landmark, reason }) {
+    if (!currentUser) return { ok: false, message: 'Not signed in.' };
+    const requested = (requestedAddress || '').trim();
+    if (!requested) return { ok: false, message: 'Please enter your new address.' };
+    if (!(reason || '').trim()) {
+      return { ok: false, message: 'Please give a reason for the change.' };
+    }
+    try {
+      await createAddressChangeRequest({
+        employeeId: currentUser.uid,
+        employeeName: currentUser.name,
+        currentAddress: homeAddressOf(currentUser),
+        requestedAddress: requested,
+        landmark: (landmark || '').trim(),
+        reason: reason.trim(),
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: e.message };
+    }
+  }
+
+  // Admin edits another employee's profile (Employee Management screen).
+  // Returns { ok, message }.
+  async function adminSaveEmployee(uid, fields) {
+    if (!uid) return { ok: false, message: 'Missing employee.' };
+    try {
+      await adminUpdateEmployee(uid, fields);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: e.message };
+    }
+  }
+
+  // Admin creates a brand-new employee (login account + profile) without losing
+  // their own session. Returns { ok, message }.
+  async function adminCreateEmployee(form) {
+    const email = (form.email || '').trim();
+    const password = form.password || '';
+    if (!email) return { ok: false, message: 'Email is required.' };
+    if (password.length < 6) {
+      return { ok: false, message: 'Temporary password must be at least 6 characters.' };
+    }
+    if (!(form.empId || '').trim()) {
+      return { ok: false, message: 'Employee ID is required.' };
+    }
+    try {
+      await adminCreateEmployeeAccount({
+        email,
+        password,
+        profile: {
+          empId: (form.empId || '').trim(),
+          name: (form.name || '').trim() || email,
+          phone: (form.phone || '').trim(),
+          department: (form.department || '').trim(),
+          address: (form.address || '').trim(),
+        },
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  // Admin removes an employee's profile (they left the organisation).
+  // Returns { ok, message }.
+  async function adminRemoveEmployee(uid) {
+    if (!uid) return { ok: false, message: 'Missing employee.' };
+    try {
+      await adminDeleteEmployee(uid);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: e.message };
+    }
+  }
+
   // Admin saves the edited Weekly Schedule timings. `pickupTimes` / `dropTimes`
   // are arrays of "hh:mm AM/PM" strings (no "NA"). The live subscription above
   // then pushes the new lists to every screen. Returns { ok, message }.
@@ -476,6 +610,12 @@ export function AppProvider({ children }) {
     loadDefaultCabs,
     saveHomeLocation,
     saveProfileDetails,
+    homeAddressOf,
+    myAddressRequests,
+    requestAddressChange,
+    adminSaveEmployee,
+    adminCreateEmployee,
+    adminRemoveEmployee,
     getCabById,
     myBookings,
     myActiveBookings,

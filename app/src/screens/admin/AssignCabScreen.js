@@ -7,8 +7,11 @@
 
 import React, { useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
-import { Text, Card, RadioButton, Button } from 'react-native-paper';
+import { Text, Card, RadioButton, Button, Snackbar } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
+import { isBookingPast } from '../../utils/datetime';
+import { colors } from '../../theme';
 
 export default function AssignCabScreen({ route, navigation }) {
   const { bookingId } = route.params;
@@ -16,6 +19,7 @@ export default function AssignCabScreen({ route, navigation }) {
 
   const booking = bookings.find((b) => b.id === bookingId);
   const [selectedCabId, setSelectedCabId] = useState(null);
+  const [error, setError] = useState('');
 
   // Safety: if the booking somehow isn't found, don't crash.
   if (!booking) {
@@ -26,9 +30,16 @@ export default function AssignCabScreen({ route, navigation }) {
     );
   }
 
-  function handleAssign() {
+  // A cab can't be assigned once the ride's scheduled time has passed.
+  const past = isBookingPast(booking);
+
+  async function handleAssign() {
     if (!selectedCabId) return;
-    assignCab(booking.id, selectedCabId);
+    const res = await assignCab(booking.id, selectedCabId);
+    if (!res?.ok) {
+      setError(res?.message || 'Could not assign the cab.');
+      return; // stay on screen; do not navigate back
+    }
     navigation.goBack(); // back to the bookings list, now showing "Cab assigned"
   }
 
@@ -47,6 +58,16 @@ export default function AssignCabScreen({ route, navigation }) {
           </Text>
         </Card.Content>
       </Card>
+
+      {/* Past ride → assignment closed. */}
+      {past && (
+        <View style={styles.expiredBanner}>
+          <MaterialCommunityIcons name="clock-alert-outline" size={18} color={colors.danger} />
+          <Text variant="bodySmall" style={styles.expiredText}>
+            This ride's scheduled time has passed — assignment is closed.
+          </Text>
+        </View>
+      )}
 
       <Text variant="labelLarge" style={styles.pickLabel}>
         Choose a cab
@@ -82,12 +103,16 @@ export default function AssignCabScreen({ route, navigation }) {
       <Button
         mode="contained"
         onPress={handleAssign}
-        disabled={!selectedCabId}
+        disabled={!selectedCabId || past}
         style={styles.assignBtn}
       >
-        Assign cab
+        {past ? 'Assignment closed' : 'Assign cab'}
       </Button>
       </View>
+
+      <Snackbar visible={!!error} onDismiss={() => setError('')} duration={4000}>
+        {error}
+      </Snackbar>
     </View>
   );
 }
@@ -98,6 +123,16 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   summary: { marginBottom: 12 },
   detail: { opacity: 0.8, marginTop: 2 },
+  expiredBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FDECEA',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+  },
+  expiredText: { color: colors.danger, flex: 1, fontWeight: '600' },
   pickLabel: { marginBottom: 8, marginLeft: 4 },
   listContent: { paddingBottom: 12 },
   cabCard: { marginBottom: 10 },

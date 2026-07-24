@@ -10,9 +10,12 @@
 // ---------------------------------------------------------------------------
 
 import {
-  doc, getDoc, setDoc, updateDoc, collection, query, where, onSnapshot,
+  doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, onSnapshot,
+  serverTimestamp,
 } from 'firebase/firestore';
-import { firestore } from './firebase';
+import { initializeApp, getApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { firestore, firebaseConfig } from './firebase';
 
 // Secret code required to sign up as an Admin. NOTE: this lives in the app, so
 // it's a deterrent, not strong security — real admin control should be granted
@@ -54,9 +57,11 @@ export async function getOrCreateProfile(user) {
     }
     // First time we've seen this user → create their profile document from
     // whatever they entered at sign-up. The admin sets their route / shift /
-    // working days afterwards in the Shift Roster screen.
+    // working days afterwards in the Shift Roster screen. We stamp createdAt
+    // server-side but keep it off the returned object (it's a write-only
+    // sentinel — no screen reads it).
     const data = { ...fallback, email };
-    await setDoc(ref, data);
+    await setDoc(ref, { ...data, createdAt: serverTimestamp() });
     pendingProfile = null;
     return data;
   } catch (e) {
@@ -100,6 +105,64 @@ export function updateHomeLocation(uid, home) {
 // fails with "no document to update" for a profile that was never written.
 export function updateProfileDetails(uid, fields) {
   return setDoc(doc(firestore, 'employees', uid), fields, { merge: true });
+}
+
+// Admin edits an employee's profile (Employee Management screen). Only the admin
+// may write another user's profile — enforced by the Firestore security rules.
+// Stamps `updatedAt` so the record shows when it was last touched. Uses
+// setDoc(merge) so it also works for profiles that predate this field set.
+export function adminUpdateEmployee(uid, fields) {
+  return setDoc(
+    doc(firestore, 'employees', uid),
+    { ...fields, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
+// Admin removes an employee's profile (e.g. they left the organisation). This
+// deletes the Firestore profile document only — the Firebase Auth login can
+// only be removed with the Admin SDK (server-side), so disable/delete that in
+// the Firebase console if you also want to revoke their sign-in. Enforced
+// admin-only by the security rules.
+export function adminDeleteEmployee(uid) {
+  return deleteDoc(doc(firestore, 'employees', uid));
+}
+
+// Admin creates a brand-new employee LOGIN + profile in one step.
+//
+// Firebase's client SDK signs a newly-created user into the CURRENT app, which
+// would kick the admin out. To avoid that we create the account on a throwaway
+// SECONDARY Firebase app, then sign that secondary app out — the admin's
+// primary session is never touched. The profile document is written through the
+// primary (admin) connection, so the security rules authorise it as an admin.
+const PROVISIONER_APP = 'employee-provisioner';
+export async function adminCreateEmployeeAccount({ email, password, profile }) {
+  if (!firestore) throw new Error('Backend not configured.');
+  const cleanEmail = (email || '').trim().toLowerCase();
+
+  let secondary;
+  try {
+    secondary = getApp(PROVISIONER_APP);
+  } catch {
+    secondary = initializeApp(firebaseConfig, PROVISIONER_APP);
+  }
+  const secondaryAuth = getAuth(secondary);
+
+  try {
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, password);
+    const uid = cred.user.uid;
+    await setDoc(doc(firestore, 'employees', uid), {
+      ...profile,
+      email: cleanEmail,
+      role: 'employee',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return uid;
+  } finally {
+    // Always drop the secondary session, even if the profile write failed.
+    await signOut(secondaryAuth).catch(() => {});
+  }
 }
 
 // --- Admin: shift roster ---------------------------------------------------

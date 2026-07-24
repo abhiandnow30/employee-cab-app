@@ -39,8 +39,11 @@ import ManageCabsScreen from './src/screens/admin/ManageCabsScreen';
 import ShiftRosterScreen from './src/screens/admin/ShiftRosterScreen';
 import ManageTimingsScreen from './src/screens/admin/ManageTimingsScreen';
 import CancelledRidesScreen from './src/screens/admin/CancelledRidesScreen';
+import NoShowsScreen from './src/screens/admin/NoShowsScreen';
 import TrackCabsScreen from './src/screens/admin/TrackCabsScreen';
 import FeedbackInboxScreen from './src/screens/admin/FeedbackInboxScreen';
+import EmployeeManagementScreen from './src/screens/admin/EmployeeManagementScreen';
+import AddressChangeRequestsScreen from './src/screens/admin/AddressChangeRequestsScreen';
 import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
 import DriverShareLocationScreen from './src/screens/driver/DriverShareLocationScreen';
 
@@ -83,8 +86,11 @@ const linking = {
       ShiftRoster: 'shift-roster',
       ManageTimings: 'manage-timings',
       CancelledRides: 'cancelled-rides',
+      NoShows: 'no-shows',
       TrackCabs: 'track-cabs',
       FeedbackInbox: 'feedback-inbox',
+      EmployeeManagement: 'employees',
+      AddressRequests: 'address-requests',
       // Driver
       DriverHome: 'driver',
       DriverShareLocation: 'driver/share',
@@ -360,6 +366,11 @@ function RootNavigator() {
               options={{ title: 'Cancelled Rides' }}
             />
             <Stack.Screen
+              name="NoShows"
+              component={NoShowsScreen}
+              options={{ title: 'No-Shows' }}
+            />
+            <Stack.Screen
               name="TrackCabs"
               component={TrackCabsScreen}
               options={{ title: 'Track Cabs' }}
@@ -368,6 +379,16 @@ function RootNavigator() {
               name="FeedbackInbox"
               component={FeedbackInboxScreen}
               options={{ title: 'Feedback & Ratings' }}
+            />
+            <Stack.Screen
+              name="EmployeeManagement"
+              component={EmployeeManagementScreen}
+              options={{ title: 'Employee Management' }}
+            />
+            <Stack.Screen
+              name="AddressRequests"
+              component={AddressChangeRequestsScreen}
+              options={{ title: 'Address Change Requests' }}
             />
           </>
           )}

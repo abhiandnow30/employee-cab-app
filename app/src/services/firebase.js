@@ -20,7 +20,10 @@ import { getDatabase } from 'firebase/database';
 import { getAuth } from 'firebase/auth';
 import { initializeFirestore } from 'firebase/firestore';
 
-const firebaseConfig = {
+// Exported so we can spin up a SECONDARY Firebase app when the admin creates an
+// employee login — that keeps the admin signed in on the primary app while the
+// new account is provisioned on the secondary one.
+export const firebaseConfig = {
   apiKey: 'AIzaSyAVOqkSyw71WtL3u91M-5QKGIQbDl83TKM',
   authDomain: 'cab-app-eec4c.firebaseapp.com',
   databaseURL: 'https://cab-app-eec4c-default-rtdb.asia-southeast1.firebasedatabase.app',

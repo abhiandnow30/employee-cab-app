@@ -33,12 +33,15 @@ export const DRAWER_ITEMS = [
 // Admin (transport desk) menu — the actions that used to be top buttons.
 export const ADMIN_DRAWER_ITEMS = [
   { label: 'Dashboard', icon: 'view-dashboard', screen: 'Bookings' },
+  { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
+  { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
   { label: 'Manage Cabs', icon: 'car-multiple', screen: 'ManageCabs' },
   { label: 'Manage Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
   { label: 'Shift Roster', icon: 'calendar-account', screen: 'ShiftRoster' },
   { label: 'Manage Timings', icon: 'clock-edit-outline', screen: 'ManageTimings' },
   { label: 'Track Cabs', icon: 'map-marker-radius', screen: 'TrackCabs' },
   { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
+  { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
   { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
 ];
 
