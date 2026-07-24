@@ -36,18 +36,58 @@ service cloud.firestore {
     }
 
     // --- Profiles -----------------------------------------------------------
-    // You may read your OWN profile; an admin may read any (Manage Drivers).
-    // You may write your OWN profile; an admin may write any (assign a cab).
+    // Profile data is ADMIN-OWNED. An employee may only READ their own profile;
+    // they may not edit it (name, employeeId, phone, address, pickupLocation,
+    // department, shift, role, ...). Home-address changes go through the
+    // addressChangeRequests flow below, which an admin approves.
+    //
+    //   read   → the owner, or an admin.
+    //   create → the owner at sign-up (self-registration), or an admin. This is
+    //            the ONLY self-write an employee/driver gets.
+    //   update → admin ONLY (so employees can't bypass the UI to change fields).
+    //   delete → admin ONLY (remove an employee who left the organisation).
     match /employees/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow write: if signedIn() && (request.auth.uid == uid || isAdmin());
-      // Stricter (production) — block self-promotion to admin:
-      //   allow write: if isAdmin()
-      //     || (request.auth.uid == uid && request.resource.data.role != 'admin');
+      allow create: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // --- Address change requests -------------------------------------------
+    // Employees can't edit their address directly — they raise a request here.
+    //   create → an employee, only for THEMSELVES, and only as "Pending".
+    //   read   → the owner (to see status), or an admin (to review all).
+    //   update → admin ONLY (approve / reject). The approval also writes the new
+    //            address onto the employee profile, allowed by the admin rule above.
+    //   delete → never (keep the history).
+    match /addressChangeRequests/{reqId} {
+      allow read: if signedIn()
+        && (resource.data.employeeId == request.auth.uid || isAdmin());
+      allow create: if signedIn()
+        && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.status == 'Pending';
+      allow update: if isAdmin();
+      allow delete: if false;
     }
 
     // --- Bookings -----------------------------------------------------------
     match /bookings/{bookingId} {
+      // True when this update is transitioning the booking INTO "Cab assigned"
+      // (i.e. the admin is assigning a cab), as opposed to any other update.
+      function becomingAssigned() {
+        return request.resource.data.status == 'Cab assigned'
+          && resource.data.status != 'Cab assigned';
+      }
+      // A cab may only be assigned while the ride is still in the future.
+      // `departAt` is an absolute Timestamp stored at booking time. Legacy
+      // bookings without it (null) are not blocked here — the app-layer guard
+      // in AppContext covers those. Non-assignment updates are never blocked.
+      function assignNotExpired() {
+        return !becomingAssigned()
+          || resource.data.get('departAt', null) == null
+          || resource.data.get('departAt', null) > request.time;
+      }
+
       // Read: the owner, the admin, or the driver of the assigned cab.
       allow read: if signedIn() && (
         resource.data.employeeId == request.auth.uid ||
@@ -57,12 +97,13 @@ service cloud.firestore {
       // Create: an employee may only create bookings for themselves.
       allow create: if signedIn()
         && request.resource.data.employeeId == request.auth.uid;
-      // Update: owner (cancel), admin (assign cab), or the cab's driver (status).
+      // Update: owner (cancel), admin (assign cab), or the cab's driver (status)
+      // — but a cab can NOT be assigned to a ride whose time has already passed.
       allow update: if signedIn() && (
         resource.data.employeeId == request.auth.uid ||
         isAdmin() ||
         isDriverForCab(resource.data.assignedCabId)
-      );
+      ) && assignNotExpired();
       allow delete: if false; // keep history — never hard-delete
     }
 
