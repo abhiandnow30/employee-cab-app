@@ -153,6 +153,20 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
 
   async function submit() {
     setError('');
+    // Validate up front so the admin gets a clear message instead of a raw
+    // Firebase error after a round-trip.
+    if (!form.email.trim()) {
+      setError('Email is required.');
+      return;
+    }
+    if ((form.password || '').length < 6) {
+      setError('Temporary password must be at least 6 characters.');
+      return;
+    }
+    if (!form.empId.trim()) {
+      setError('Employee ID is required.');
+      return;
+    }
     setBusy(true);
     const res = await onCreate(form);
     setBusy(false);
@@ -191,6 +205,9 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
               autoCapitalize="none"
               style={styles.input}
             />
+            <HelperText type="info" visible style={styles.pwHint}>
+              At least 6 characters. The employee can change it after signing in.
+            </HelperText>
             <TextInput
               label="Employee ID"
               value={form.empId}
@@ -376,6 +393,7 @@ const styles = StyleSheet.create({
   deleteBtn: { margin: 0 },
   divider: { marginVertical: 10 },
   input: { marginBottom: 10 },
+  pwHint: { marginTop: -8, marginBottom: 2 },
   saveBtn: { marginTop: 2 },
   error: { color: colors.danger, paddingHorizontal: 12 },
   empty: { alignItems: 'center', marginTop: 50 },
