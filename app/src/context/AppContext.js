@@ -105,9 +105,18 @@ export function AppProvider({ children }) {
   // empId?, phone?, cabId?, adminCode? }. On success the auth listener loads the
   // new profile and the app unlocks automatically.
   async function signup(form) {
-    const role = form.role || 'employee';
+    const role = form.role || 'driver';
     const name = (form.name || '').trim();
     const email = (form.email || '').trim();
+
+    // Employees are provisioned by the admin (Employees screen), never by
+    // self-signup. Reject it here too, so a deep-linked /signup can't create one.
+    if (role === 'employee') {
+      return {
+        ok: false,
+        message: 'Employee accounts are created by your transport admin. Ask them to add you.',
+      };
+    }
 
     // --- Validation ---
     if (!name || !email || !form.password) {

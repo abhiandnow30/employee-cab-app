@@ -148,13 +148,14 @@ export default function LoginScreen({ navigation }) {
               Forgot password?
             </Button>
 
+            {/* Employees are added by the admin; only drivers/admins self-register. */}
             <Button
               mode="text"
               onPress={() => navigation.navigate('SignUp')}
               style={styles.link}
               compact
             >
-              New here? Create an account
+              Driver or admin? Create an account
             </Button>
           </Card.Content>
         </Card>

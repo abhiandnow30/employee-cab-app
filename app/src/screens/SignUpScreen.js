@@ -17,7 +17,9 @@ import { colors } from '../theme';
 export default function SignUpScreen({ navigation }) {
   const { signup } = useApp();
 
-  const [role, setRole] = useState('employee');
+  // Employees are provisioned by the admin (Employees screen), so self-signup is
+  // for Drivers and Admins only. Default to Driver.
+  const [role, setRole] = useState('driver');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [empId, setEmpId] = useState('');
@@ -71,7 +73,7 @@ export default function SignUpScreen({ navigation }) {
           Create account
         </Text>
         <Text variant="bodyMedium" style={styles.subtitle}>
-          Sign up to get started
+          For drivers and admins. Employees are added by the transport admin.
         </Text>
 
         {/* Role */}
@@ -81,7 +83,6 @@ export default function SignUpScreen({ navigation }) {
           density="small"
           style={styles.role}
           buttons={[
-            { value: 'employee', label: 'Employee' },
             { value: 'driver', label: 'Driver' },
             { value: 'admin', label: 'Admin' },
           ]}
