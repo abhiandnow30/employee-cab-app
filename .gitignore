@@ -31,3 +31,4 @@ Thumbs.db
 # Editors
 .vscode/
 .idea/
+.gstack/

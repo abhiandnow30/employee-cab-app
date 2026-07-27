@@ -138,12 +138,10 @@ function TripCard({ item, onCancel, onContact, getCabById }) {
   const cab = item.assignedCabId ? getCabById(item.assignedCabId) : null;
   const showReason = item.cancelReason && (item._state === 'PENDING' || item._state === 'CANCELLED');
 
-  // Countdown chip.
+  // Countdown chip (only where it adds info; "closed" is already shown by the badge).
   let countdown = null;
   if (item._state === 'AVAILABLE') {
     countdown = { color: PAL.success, bg: '#E7F4E8', icon: 'timer-outline', text: `You can cancel for another ${fmtDur(item._remaining)}` };
-  } else if (item._state === 'CLOSED') {
-    countdown = { color: PAL.error, bg: '#FDECEC', icon: 'timer-off-outline', text: 'Cancellation window closed' };
   } else if (item._state === 'PENDING') {
     countdown = { color: PAL.primary, bg: '#E3ECFB', icon: 'progress-clock', text: 'Waiting for admin approval' };
   }

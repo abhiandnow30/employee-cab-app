@@ -95,7 +95,6 @@ export default function EmployeeHomeScreen({ navigation }) {
 
   const rides = myBookings();
   const rosterRides = rides.filter((r) => r.source === SOURCE.ROSTER);
-  const adhocRides = rides.filter((r) => r.source === SOURCE.ADHOC);
 
   const openRides = () => navigation.navigate('MyRides');
 
@@ -117,11 +116,6 @@ export default function EmployeeHomeScreen({ navigation }) {
             onPress={() => navigation.navigate('SelfRoster')}
           />
           <Tile
-            icon="clipboard-check-outline"
-            label="BOOK A RIDE"
-            onPress={() => navigation.navigate('BookCab')}
-          />
-          <Tile
             icon="message-draw"
             label="FEEDBACK"
             onPress={() => navigation.navigate('Feedback')}
@@ -132,12 +126,6 @@ export default function EmployeeHomeScreen({ navigation }) {
           title="My Scheduled Rides"
           rides={rosterRides}
           emptyText="No scheduled rides yet."
-          onOpen={openRides}
-        />
-        <RideSection
-          title="My One-time Rides"
-          rides={adhocRides}
-          emptyText="No one-time rides yet."
           onOpen={openRides}
         />
       </View>
