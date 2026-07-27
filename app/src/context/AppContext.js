@@ -236,11 +236,19 @@ export function AppProvider({ children }) {
   // Global config, so we subscribe once Firebase is configured. Falls back to
   // DEFAULT_TIMINGS until the admin saves anything.
   useEffect(() => {
-    if (!firestore) return;
+    // Firestore rules require sign-in to read config/timings, so only subscribe
+    // once a user is authenticated. Logged out, fall back to DEFAULT_TIMINGS
+    // (avoids a guaranteed "Missing or insufficient permissions" on the login
+    // screen).
+    if (!firestore || !currentUser) {
+      setTimings(DEFAULT_TIMINGS);
+      return;
+    }
     return subscribeTimings(setTimings, (e) =>
       console.warn('[timings] subscription error:', e.message)
     );
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid]);
 
   // --- Live location sharing (driver) -------------------------------------
   // Lifted here (out of the Share Location screen) so it KEEPS RUNNING while the
