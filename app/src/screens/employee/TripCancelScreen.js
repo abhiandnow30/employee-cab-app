@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from 'react';
-import { StyleSheet, View, FlatList, Pressable } from 'react-native';
+import { StyleSheet, View, FlatList, Pressable, Linking } from 'react-native';
 import {
   Text, Card, Chip, Button, Portal, Dialog, Menu, TextInput,
 } from 'react-native-paper';
@@ -19,6 +19,7 @@ import { useApp } from '../../context/AppContext';
 import CalendarFilter from '../../components/CalendarFilter';
 import { CANCEL_STATUS, CANCEL_CUTOFF_HOURS } from '../../data/mockData';
 import { canRequestCancel, hoursUntil, isBookingPast, todayKey } from '../../utils/datetime';
+import { SUPPORT_HELPLINE } from '../../branding';
 
 // --- Palette (per the redesign spec) ---------------------------------------
 const PAL = {
@@ -230,6 +231,10 @@ function TripCard({ item, onCancel, onContact, getCabById }) {
 export default function TripCancelScreen({ navigation }) {
   const { myBookings, requestCancel, getCabById } = useApp();
 
+  const callDesk = () => {
+    Linking.openURL('tel:' + SUPPORT_HELPLINE.replace(/\s/g, '')).catch(() => {});
+  };
+
   // Filters
   const [dateRange, setDateRange] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all'); // all | AVAILABLE | PENDING | CLOSED | COMPLETED | CANCELLED
@@ -353,7 +358,7 @@ export default function TripCancelScreen({ navigation }) {
                 item={b}
                 getCabById={getCabById}
                 onCancel={openCancel}
-                onContact={() => navigation.navigate('ContactUs')}
+                onContact={callDesk}
               />
             ))
           : null}
@@ -374,7 +379,7 @@ export default function TripCancelScreen({ navigation }) {
               item={item}
               getCabById={getCabById}
               onCancel={openCancel}
-              onContact={() => navigation.navigate('ContactUs')}
+              onContact={callDesk}
             />
           )}
           ListEmptyComponent={

@@ -149,11 +149,6 @@ export default function LoginScreen({ navigation }) {
             </Button>
           </Card.Content>
         </Card>
-
-        {/* Demo helper — remove once real login exists. */}
-        <Text variant="bodySmall" style={styles.hint}>
-          Demo (password: cab12345) · employee@demo.com · admin@demo.com · driver@demo.com
-        </Text>
       </View>
     </KeyboardAvoidingView>
   );

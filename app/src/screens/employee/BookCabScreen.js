@@ -21,9 +21,8 @@ import {
   REQUEST_TYPES,
   SHIFT_TIMES,
   SOURCE,
-  BOOKING_LEAD_HOURS,
 } from '../../data/mockData';
-import { bookableTimesForDate, canBook, isPastDateTime, timeToMinutes } from '../../utils/datetime';
+import { futureTimesForDate, isPastDateTime, timeToMinutes } from '../../utils/datetime';
 
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -101,11 +100,9 @@ export default function BookCabScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [snack, setSnack] = useState('');
 
-  // Rides must be booked at least BOOKING_LEAD_HOURS ahead, so only show shift
-  // times that are still far enough away for the chosen date.
-  const shiftOptions = date
-    ? bookableTimesForDate(date, SHIFT_TIMES, BOOKING_LEAD_HOURS)
-    : SHIFT_TIMES;
+  // One-time rides have NO advance-booking limit (for emergencies / extended
+  // shifts) — show every shift time, dropping only ones already past today.
+  const shiftOptions = date ? futureTimesForDate(date, SHIFT_TIMES) : SHIFT_TIMES;
 
   const formValid = !!(officeLocation && reason && requestType && date && shift);
 
@@ -116,11 +113,10 @@ export default function BookCabScreen({ navigation }) {
     return attempted ? 'error' : undefined;
   }
 
-  // Changing the date may make the chosen shift invalid (past, or now inside the
-  // lead-time window).
+  // Changing the date may make the chosen shift invalid (already in the past).
   function handleDateChange(newDate) {
     setDate(newDate);
-    if (shift && !canBook(newDate, shift, BOOKING_LEAD_HOURS)) setShift('');
+    if (shift && isPastDateTime(newDate, shift)) setShift('');
   }
 
   async function handleRaise() {
@@ -132,12 +128,6 @@ export default function BookCabScreen({ navigation }) {
     }
     if (isPastDateTime(date, shift)) {
       setError('That date/time has already passed. Please pick a future time.');
-      return;
-    }
-    if (!canBook(date, shift, BOOKING_LEAD_HOURS)) {
-      setError(
-        `Rides must be booked at least ${BOOKING_LEAD_HOURS} hours in advance. Please pick a later time.`
-      );
       return;
     }
 
@@ -280,7 +270,8 @@ export default function BookCabScreen({ navigation }) {
               groupOrder={TIME_GROUP_ORDER}
             />
             <Text style={styles.helper}>
-              Rides must be booked at least {BOOKING_LEAD_HOURS} hours in advance.
+              One-time rides can be booked for any upcoming time — for emergencies
+              or extended shifts.
               {date && shiftOptions.length === 0
                 ? ' No times left for this date — pick a later date.'
                 : ''}

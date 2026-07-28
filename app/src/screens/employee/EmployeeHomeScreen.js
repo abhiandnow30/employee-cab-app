@@ -116,6 +116,11 @@ export default function EmployeeHomeScreen({ navigation }) {
             onPress={() => navigation.navigate('SelfRoster')}
           />
           <Tile
+            icon="car-clock"
+            label="ONE-TIME RIDE"
+            onPress={() => navigation.navigate('BookCab')}
+          />
+          <Tile
             icon="message-draw"
             label="FEEDBACK"
             onPress={() => navigation.navigate('Feedback')}

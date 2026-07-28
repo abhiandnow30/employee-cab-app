@@ -6,9 +6,12 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
-import { StyleSheet, View, Image, useWindowDimensions } from 'react-native';
+import { StyleSheet, View, Image, Linking, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { PaperProvider, Appbar, ActivityIndicator } from 'react-native-paper';
+import {
+  PaperProvider, Appbar, ActivityIndicator,
+  Portal, Dialog, TextInput, Button, HelperText, Snackbar,
+} from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
@@ -17,7 +20,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { theme, colors } from './src/theme';
 import { AppProvider, useApp } from './src/context/AppContext';
 import AppDrawer, { DRAWER_ITEMS, ADMIN_DRAWER_ITEMS } from './src/components/AppDrawer';
-import { companyLogo } from './src/branding';
+import { companyLogo, SUPPORT_HELPLINE } from './src/branding';
 
 import LoginScreen from './src/screens/LoginScreen';
 import SignUpScreen from './src/screens/SignUpScreen';
@@ -30,7 +33,6 @@ import RosterHistoryScreen from './src/screens/employee/RosterHistoryScreen';
 import TripCancelScreen from './src/screens/employee/TripCancelScreen';
 import TrackCabScreen from './src/screens/employee/TrackCabScreen';
 import RateUsScreen from './src/screens/employee/RateUsScreen';
-import ContactUsScreen from './src/screens/employee/ContactUsScreen';
 import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
 import AssignCabScreen from './src/screens/admin/AssignCabScreen';
@@ -44,6 +46,7 @@ import TrackCabsScreen from './src/screens/admin/TrackCabsScreen';
 import FeedbackInboxScreen from './src/screens/admin/FeedbackInboxScreen';
 import EmployeeManagementScreen from './src/screens/admin/EmployeeManagementScreen';
 import AddressChangeRequestsScreen from './src/screens/admin/AddressChangeRequestsScreen';
+import MessagesScreen from './src/screens/admin/MessagesScreen';
 import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
 import DriverShareLocationScreen from './src/screens/driver/DriverShareLocationScreen';
 
@@ -76,7 +79,6 @@ const linking = {
       TripCancel: 'trip-cancel',
       TrackCab: 'track',
       RateUs: 'rate-us',
-      ContactUs: 'contact-us',
       Profile: 'profile',
       // Admin
       Bookings: 'bookings',
@@ -91,6 +93,7 @@ const linking = {
       FeedbackInbox: 'feedback-inbox',
       EmployeeManagement: 'employees',
       AddressRequests: 'address-requests',
+      Messages: 'messages',
       // Driver
       DriverHome: 'driver',
       DriverShareLocation: 'driver/share',
@@ -101,9 +104,43 @@ const linking = {
 // A custom header that shows the screen title and a Log out action on the right.
 // We use Paper's Appbar so the header matches the app's look.
 function AppHeader({ navigation, route, options, back }) {
-  const { logout, currentUser, changePassword } = useApp();
+  const { logout, currentUser, changePassword, sendMessage } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { width } = useWindowDimensions();
+
+  // Message-the-transport-desk popup (employees).
+  const [msgOpen, setMsgOpen] = useState(false);
+  const [msgText, setMsgText] = useState('');
+  const [msgBusy, setMsgBusy] = useState(false);
+  const [msgErr, setMsgErr] = useState('');
+  const [msgSent, setMsgSent] = useState(false);
+
+  // Tapping the phone icon calls the transport desk directly.
+  const callDesk = () => {
+    Linking.openURL('tel:' + SUPPORT_HELPLINE.replace(/\s/g, '')).catch(() => {});
+  };
+  const openMsg = () => {
+    setMsgErr('');
+    setMsgText('');
+    setMsgOpen(true);
+  };
+  async function submitMsg() {
+    setMsgErr('');
+    if (!msgText.trim()) {
+      setMsgErr('Please type your message.');
+      return;
+    }
+    setMsgBusy(true);
+    const res = await sendMessage(msgText);
+    setMsgBusy(false);
+    if (res?.ok) {
+      setMsgText('');
+      setMsgOpen(false);
+      setMsgSent(true);
+    } else {
+      setMsgErr(res?.message || 'Could not send. Try again.');
+    }
+  }
 
   const isEmployee = currentUser?.role === 'employee';
   const isAdmin = currentUser?.role === 'admin';
@@ -154,13 +191,12 @@ function AppHeader({ navigation, route, options, back }) {
           // Tapping the brand title returns to the role's home screen.
           onPress={currentUser ? () => navigation.navigate(homeRoute) : undefined}
         />
-        {/* Contact us — employees only. */}
+        {/* Message + call the transport desk — employees only. */}
         {isEmployee ? (
-          <Appbar.Action
-            icon="phone"
-            color="#FFFFFF"
-            onPress={() => navigation.navigate('ContactUs')}
-          />
+          <>
+            <Appbar.Action icon="message-text" color="#FFFFFF" onPress={openMsg} />
+            <Appbar.Action icon="phone" color="#FFFFFF" onPress={callDesk} />
+          </>
         ) : null}
         {/* Log out — shown for every role (employee, admin, driver). */}
         {currentUser ? (
@@ -181,6 +217,34 @@ function AppHeader({ navigation, route, options, back }) {
           navigation.navigate(item.screen, item.params);
         }}
       />
+
+      {/* Message the transport desk (popup) */}
+      <Portal>
+        <Dialog visible={msgOpen} onDismiss={() => !msgBusy && setMsgOpen(false)} style={styles.msgDialog}>
+          <Dialog.Title>Message transport desk</Dialog.Title>
+          <Dialog.Content>
+            <TextInput
+              label="Your message"
+              value={msgText}
+              onChangeText={setMsgText}
+              mode="outlined"
+              multiline
+              numberOfLines={4}
+              placeholder="e.g. Please change my pickup time for tomorrow."
+            />
+            {msgErr ? <HelperText type="error" visible>{msgErr}</HelperText> : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setMsgOpen(false)} disabled={msgBusy}>Cancel</Button>
+            <Button mode="contained" icon="send" onPress={submitMsg} loading={msgBusy} disabled={msgBusy}>
+              Send
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+      <Snackbar visible={msgSent} onDismiss={() => setMsgSent(false)} duration={2500}>
+        Message sent to the transport desk.
+      </Snackbar>
     </>
   );
 }
@@ -298,11 +362,6 @@ function RootNavigator() {
               options={{ title: 'Rate Us' }}
             />
             <Stack.Screen
-              name="ContactUs"
-              component={ContactUsScreen}
-              options={{ title: 'Contact Us' }}
-            />
-            <Stack.Screen
               name="Profile"
               component={ProfileScreen}
               options={{ title: 'Profile' }}
@@ -390,6 +449,11 @@ function RootNavigator() {
               component={AddressChangeRequestsScreen}
               options={{ title: 'Address Change Requests' }}
             />
+            <Stack.Screen
+              name="Messages"
+              component={MessagesScreen}
+              options={{ title: 'Messages' }}
+            />
           </>
           )}
           </Stack.Navigator>
@@ -436,6 +500,7 @@ const styles = StyleSheet.create({
   headerLogo: { width: 30, height: 30 },
   appbarContent: { alignItems: 'center' },
   appbarTitle: { fontWeight: 'bold', letterSpacing: 0.3, textAlign: 'center' },
+  msgDialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
   splash: {
     flex: 1,
     alignItems: 'center',

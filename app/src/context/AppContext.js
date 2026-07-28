@@ -21,6 +21,7 @@ import {
 import {
   createAddressChangeRequest, subscribeMyAddressRequests,
 } from '../services/addressRequests';
+import { createMessage } from '../services/messages';
 import {
   createBooking,
   createBookings,
@@ -519,6 +520,23 @@ export function AppProvider({ children }) {
     }
   }
 
+  // Employee texts the transport desk (Contact Us). Returns { ok, message }.
+  async function sendMessage(text) {
+    if (!currentUser) return { ok: false, message: 'Not signed in.' };
+    const msg = (text || '').trim();
+    if (!msg) return { ok: false, message: 'Please type a message.' };
+    try {
+      await createMessage({
+        employeeId: currentUser.uid,
+        employeeName: currentUser.name,
+        message: msg,
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: e.message };
+    }
+  }
+
   // Admin edits another employee's profile (Employee Management screen).
   // Returns { ok, message }.
   async function adminSaveEmployee(uid, fields) {
@@ -630,6 +648,7 @@ export function AppProvider({ children }) {
     homeAddressOf,
     myAddressRequests,
     requestAddressChange,
+    sendMessage,
     adminSaveEmployee,
     adminCreateEmployee,
     adminRemoveEmployee,

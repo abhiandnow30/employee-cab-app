@@ -35,6 +35,7 @@ export const ADMIN_DRAWER_ITEMS = [
   { label: 'Dashboard', icon: 'view-dashboard', screen: 'Bookings' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
   { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
+  { label: 'Messages', icon: 'email-outline', screen: 'Messages' },
   { label: 'Manage Cabs', icon: 'car-multiple', screen: 'ManageCabs' },
   { label: 'Manage Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
   { label: 'Shift Roster', icon: 'calendar-account', screen: 'ShiftRoster' },
