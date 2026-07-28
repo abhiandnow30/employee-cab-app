@@ -16,6 +16,17 @@ export function isPastDateKey(dateKey) {
   return dateKey < todayKey();
 }
 
+// Move an ISO key by whole days: shiftDateKey('2026-07-28', -7) → '2026-07-21'.
+// (Used to bound how far back the admin's live booking list reaches.)
+export function shiftDateKey(dateKey, days) {
+  const [y, m, d] = String(dateKey).split('-').map((n) => parseInt(n, 10));
+  const date = new Date(y || 1970, (m || 1) - 1, d || 1);
+  date.setDate(date.getDate() + days);
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${mm}-${dd}`;
+}
+
 // "07:00 AM" / "05:00 PM" → minutes since midnight (null if not a time).
 export function timeToMinutes(str) {
   const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(String(str).trim());

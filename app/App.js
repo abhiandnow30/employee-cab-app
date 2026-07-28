@@ -9,7 +9,7 @@ import React, { useState } from 'react';
 import { StyleSheet, View, Image, Linking, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
-  PaperProvider, Appbar, ActivityIndicator,
+  PaperProvider, Appbar, ActivityIndicator, Text,
   Portal, Dialog, TextInput, Button, HelperText, Snackbar,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -19,7 +19,10 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { theme, colors } from './src/theme';
 import { AppProvider, useApp } from './src/context/AppContext';
-import AppDrawer, { DRAWER_ITEMS, ADMIN_DRAWER_ITEMS } from './src/components/AppDrawer';
+import AppDrawer, {
+  DRAWER_ITEMS, ADMIN_DRAWER_ITEMS, DRIVER_DRAWER_ITEMS,
+} from './src/components/AppDrawer';
+import ErrorBoundary from './src/components/ErrorBoundary';
 import { companyLogo, SUPPORT_HELPLINE } from './src/branding';
 
 import LoginScreen from './src/screens/LoginScreen';
@@ -144,11 +147,17 @@ function AppHeader({ navigation, route, options, back }) {
 
   const isEmployee = currentUser?.role === 'employee';
   const isAdmin = currentUser?.role === 'admin';
-  // Employees and admins get a navigation drawer. On wide screens it's a
+  const isDriver = currentUser?.role === 'driver';
+  // Every signed-in role gets a navigation drawer. On wide screens it's a
   // permanent left sidebar (rendered in RootNavigator), so the header's ☰ menu
-  // button isn't needed there.
-  const hasDrawer = isEmployee || isAdmin;
-  const drawerItems = isAdmin ? ADMIN_DRAWER_ITEMS : DRAWER_ITEMS;
+  // button isn't needed there. (Drivers had no drawer at all, which left their
+  // Profile screen unreachable.)
+  const hasDrawer = isEmployee || isAdmin || isDriver;
+  const drawerItems = isAdmin
+    ? ADMIN_DRAWER_ITEMS
+    : isDriver
+    ? DRIVER_DRAWER_ITEMS
+    : DRAWER_ITEMS;
   const hasPermanentSidebar = hasDrawer && width >= WIDE_BREAKPOINT;
   // Which screen "home" means for this role.
   const homeRoute =
@@ -250,17 +259,69 @@ function AppHeader({ navigation, route, options, back }) {
 }
 
 // Chooses which set of screens to show. Reads the current user from context.
+// Signed in, but this account has no profile in Firestore — it was never
+// provisioned, or an admin removed it. Previously the app quietly minted a fresh
+// employee profile here, which handed a removed employee a working account
+// again. Now the session stops with an explanation.
+function UnprovisionedScreen() {
+  const { logout, currentUser } = useApp();
+  return (
+    <View style={styles.splash}>
+      <View style={styles.lockedCard}>
+        <MaterialCommunityIcons name="account-lock-outline" size={56} color={colors.muted} />
+        <Text variant="headlineSmall" style={styles.lockedTitle}>
+          Account not set up
+        </Text>
+        <Text variant="bodyMedium" style={styles.lockedBody}>
+          This login isn't linked to an employee record{currentUser?.email ? '' : ''}, so
+          there's nothing to show yet. Ask the transport desk to add you, then sign
+          in again.
+        </Text>
+        <Text variant="bodySmall" style={styles.lockedHelp}>
+          Transport desk: {SUPPORT_HELPLINE}
+        </Text>
+        <Button mode="contained" icon="logout" onPress={logout} style={styles.lockedBtn}>
+          Sign out
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+// A dismissible banner for live-subscription failures. Without it a permissions
+// error or a dropped connection just renders an empty list, which reads as
+// "you have no rides".
+function DataErrorBanner() {
+  const { dataError, dismissDataError } = useApp();
+  if (!dataError) return null;
+  return (
+    <View style={styles.dataError}>
+      <MaterialCommunityIcons name="cloud-alert" size={18} color="#B26A00" />
+      <Text variant="bodySmall" style={styles.dataErrorText}>
+        {dataError}
+      </Text>
+      <Button compact mode="text" onPress={dismissDataError} textColor="#B26A00">
+        Dismiss
+      </Button>
+    </View>
+  );
+}
+
 function RootNavigator() {
-  const { currentUser, authReady, changePassword, logout } = useApp();
+  const { currentUser, authReady, profileMissing, changePassword, logout } = useApp();
   const { width } = useWindowDimensions();
   const navRef = useNavigationContainerRef();
   const [activeRoute, setActiveRoute] = useState(null);
 
-  // Employees and admins on a wide screen get a permanent left sidebar.
+  // On a wide screen every signed-in role gets a permanent left sidebar.
   const isAdmin = currentUser?.role === 'admin';
-  const showSidebar =
-    (currentUser?.role === 'employee' || isAdmin) && width >= WIDE_BREAKPOINT;
-  const sidebarItems = isAdmin ? ADMIN_DRAWER_ITEMS : DRAWER_ITEMS;
+  const isDriver = currentUser?.role === 'driver';
+  const showSidebar = !!currentUser && width >= WIDE_BREAKPOINT;
+  const sidebarItems = isAdmin
+    ? ADMIN_DRAWER_ITEMS
+    : isDriver
+    ? DRIVER_DRAWER_ITEMS
+    : DRAWER_ITEMS;
 
   // While Firebase checks for an existing session, show a spinner instead of
   // briefly flashing the login screen.
@@ -271,6 +332,9 @@ function RootNavigator() {
       </View>
     );
   }
+
+  // Authenticated but not provisioned → locked out, with a way to sign out.
+  if (profileMissing) return <UnprovisionedScreen />;
 
   return (
     <NavigationContainer
@@ -292,6 +356,7 @@ function RootNavigator() {
           />
         ) : null}
         <View style={styles.appContent}>
+          <DataErrorBanner />
           <Stack.Navigator
             screenOptions={{
               // Use our Paper-based header everywhere EXCEPT login (set below).
@@ -474,10 +539,15 @@ export default function App() {
           icon: (props) => <MaterialCommunityIcons {...props} />,
         }}
       >
-        <AppProvider>
-          <StatusBar style="light" />
-          <RootNavigator />
-        </AppProvider>
+        {/* Inside Paper (so the fallback screen is themed) but around everything
+            else: any render error shows a recoverable message instead of a
+            blank white screen. */}
+        <ErrorBoundary>
+          <AppProvider>
+            <StatusBar style="light" />
+            <RootNavigator />
+          </AppProvider>
+        </ErrorBoundary>
       </PaperProvider>
     </SafeAreaProvider>
   );
@@ -506,5 +576,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.background,
+    padding: 24,
   },
+  lockedCard: {
+    alignItems: 'center',
+    maxWidth: 420,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 28,
+  },
+  lockedTitle: { fontWeight: 'bold', marginTop: 12, color: colors.text, textAlign: 'center' },
+  lockedBody: { marginTop: 10, textAlign: 'center', color: colors.muted, lineHeight: 20 },
+  lockedHelp: { marginTop: 12, color: colors.muted },
+  lockedBtn: { marginTop: 20 },
+  dataError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFF6E5',
+    paddingLeft: 12,
+    paddingRight: 4,
+    paddingVertical: 4,
+  },
+  dataErrorText: { color: '#B26A00', flex: 1 },
 });

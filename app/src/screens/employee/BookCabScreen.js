@@ -136,25 +136,28 @@ export default function BookCabScreen({ navigation }) {
     const pickup = requestType === 'Pick' ? 'Home' : officeLocation;
 
     setSaving(true);
-    try {
-      await addBooking({
-        source: SOURCE.ADHOC,
-        officeLocation,
-        reason,
-        requestType,
-        direction,
-        date,
-        shift,
-        pickup,
-        comment: comment.trim(),
-      });
-      setSnack('Request raised ✓');
-      setTimeout(() => navigation.navigate('EmployeeHome'), 900);
-    } catch (e) {
-      setError(e.message || 'Could not raise the request. Please try again.');
-    } finally {
-      setSaving(false);
+    // addBooking checks for a ride the employee already has that day (and for a
+    // backend rejection) and reports it as { ok, message } — so a request that
+    // didn't go through can never look like it did.
+    const res = await addBooking({
+      source: SOURCE.ADHOC,
+      officeLocation,
+      reason,
+      requestType,
+      direction,
+      date,
+      shift,
+      pickup,
+      comment: comment.trim(),
+    });
+    setSaving(false);
+
+    if (!res?.ok) {
+      setError(res?.message || 'Could not raise the request. Please try again.');
+      return;
     }
+    setSnack('Request raised ✓');
+    setTimeout(() => navigation.navigate('EmployeeHome'), 900);
   }
 
   return (

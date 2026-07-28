@@ -147,6 +147,24 @@ export default function LoginScreen({ navigation }) {
             >
               Forgot password?
             </Button>
+
+            {/* Drivers register themselves; employees are added by the transport
+                desk. Without this link the sign-up screen was only reachable by
+                typing its URL, so on a phone a driver could never create an
+                account at all. */}
+            <View style={styles.signupRow}>
+              <Text variant="bodySmall" style={styles.signupHint}>
+                Driver without an account?
+              </Text>
+              <Button
+                mode="text"
+                compact
+                onPress={() => navigation.navigate('SignUp')}
+                disabled={loading}
+              >
+                Sign up
+              </Button>
+            </View>
           </Card.Content>
         </Card>
       </View>
@@ -179,6 +197,13 @@ const styles = StyleSheet.create({
   error: { marginTop: -2, marginBottom: 2 },
   button: { marginTop: 6, paddingVertical: 2, borderRadius: 8 },
   link: { marginTop: 4 },
+  signupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  signupHint: { color: colors.muted },
   hint: {
     maxWidth: 380,
     textAlign: 'center',

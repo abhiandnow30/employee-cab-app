@@ -1,71 +1,21 @@
 // ---------------------------------------------------------------------------
-// MOCK DATA
-// This is fake data that stands in for a real backend + database.
-// Later, when we build the backend, we replace these with real API calls.
-// Keeping all fake data in ONE file makes that swap easy.
+// SHARED CONSTANTS + STARTER FLEET
+// The option lists, status names and policy numbers the whole app reads from.
+// (The real data lives in Firestore; this file holds the fixed choices and the
+// starter fleet the admin can seed from.)
 // ---------------------------------------------------------------------------
 
-// The people who can log in.
-// Two roles: "employee" books cabs; "admin" assigns cabs to bookings.
-// (Passwords are plain text ONLY because this is a fake front-end demo.
-//  Real login with hashed passwords comes with the backend.)
-export const employees = [
-  {
-    id: 'u1',
-    empId: '1399', // employee id shown on the home page
-    name: 'Abhilasha K',
-    email: 'employee@demo.com',
-    password: '1234',
-    role: 'employee',
-    phone: '9000000001',
-  },
-  {
-    id: 'u2',
-    empId: '900000001',
-    name: 'Transport Desk',
-    email: 'admin@demo.com',
-    password: '1234',
-    role: 'admin',
-    phone: '9000000002',
-  },
-];
+// How many riders a cab seats when nothing else is set. The admin can give each
+// cab its own capacity in Manage Cabs; this is only the fallback for cabs that
+// were created before capacity existed.
+export const DEFAULT_CAB_CAPACITY = 6;
 
-// The company's cabs + their drivers.
+// The company's starter cabs (seeded on request from Manage Cabs).
 export const cabs = [
-  { id: 'c1', cabNumber: 'TS 09 AB 1234', driverName: 'Ramesh', driverPhone: '9111111111' },
-  { id: 'c2', cabNumber: 'TS 09 CD 5678', driverName: 'Suresh', driverPhone: '9222222222' },
-  { id: 'c3', cabNumber: 'TS 09 EF 9012', driverName: 'Mahesh', driverPhone: '9333333333' },
+  { id: 'c1', cabNumber: 'TS 09 AB 1234', driverName: 'Ramesh', driverPhone: '9111111111', capacity: 6 },
+  { id: 'c2', cabNumber: 'TS 09 CD 5678', driverName: 'Suresh', driverPhone: '9222222222', capacity: 6 },
+  { id: 'c3', cabNumber: 'TS 09 EF 9012', driverName: 'Mahesh', driverPhone: '9333333333', capacity: 6 },
 ];
-
-// A couple of bookings that already exist, so the admin screen isn't empty
-// the very first time you open it.
-export const initialBookings = [
-  {
-    id: 'b1',
-    employeeId: 'u1',
-    employeeName: 'Roopa Y',
-    date: '2026-07-15',
-    shift: 'Morning (9:00 AM)',
-    direction: 'Home → Office',
-    pickup: 'Gachibowli',
-    status: 'Booked', // Booked → Cab assigned  (more statuses come later)
-    assignedCabId: null,
-    source: 'roster',
-  },
-];
-
-// This is a NIGHT-SHIFT cab service: cabs run 9:00 PM → 6:00 AM only.
-// The choices shown in the booking forms all fall inside that window.
-export const SHIFT_OPTIONS = [
-  'Night (09:00 PM)',
-  'Late Night (12:00 AM)',
-  'Early Morning (06:00 AM)',
-];
-
-export const DIRECTION_OPTIONS = ['Home → Office', 'Office → Home'];
-
-// A single fixed OTP for the demo. Later, the backend sends a real code by SMS.
-export const TEST_OTP = '123456';
 
 // Times shown in the Weekly Schedule table (night-shift service: 9 PM → 6 AM).
 // "Pickup" = cab picks you up from home to office → start of the night shift

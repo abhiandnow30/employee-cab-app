@@ -13,12 +13,9 @@ import { StyleSheet, View, ScrollView } from 'react-native';
 import { Text, Card, Chip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { subscribeCabLocation } from '../../services/tracking';
+import { subscribeDriverLocation, isLiveFix } from '../../services/tracking';
 import FleetMap from '../../components/FleetMap';
 import { colors } from '../../theme';
-
-// A fix older than this (ms) is treated as stale → "No signal".
-const LIVE_WINDOW_MS = 60 * 1000;
 
 function timeAgo(updatedAt, now) {
   if (!updatedAt) return null;
@@ -34,12 +31,21 @@ export default function TrackCabsScreen() {
   const [locs, setLocs] = useState({}); // cabId -> { latitude, longitude, updatedAt }
   const [now, setNow] = useState(() => new Date().getTime());
 
-  // Subscribe to every cab's live location. Re-subscribe if the fleet changes.
-  const cabIdsKey = cabs.map((c) => c.id).join(',');
+  // Subscribe to the live location of every cab that has a driver LINKED to it.
+  // Positions are published per driver (the database rules only let a driver
+  // write their own), so a cab with no linked driver simply has no feed — the
+  // list below shows it as "No driver linked".
+  const cabIdsKey = cabs.map((c) => `${c.id}:${c.driverUid || ''}`).join(',');
   useEffect(() => {
-    const unsubs = cabs.map((c) =>
-      subscribeCabLocation(c.id, (loc) => setLocs((prev) => ({ ...prev, [c.id]: loc })))
-    );
+    const unsubs = cabs
+      .filter((c) => c.driverUid)
+      .map((c) =>
+        subscribeDriverLocation(
+          c.driverUid,
+          (loc) => setLocs((prev) => ({ ...prev, [c.id]: loc })),
+          (e) => console.warn('[tracking] subscription error:', e?.message)
+        )
+      );
     return () => unsubs.forEach((u) => u && u());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cabIdsKey]);
@@ -67,9 +73,7 @@ export default function TrackCabsScreen() {
     sub: cab.driverName || '',
   }));
 
-  const liveCount = located.filter(
-    ({ loc }) => loc.updatedAt && now - loc.updatedAt < LIVE_WINDOW_MS
-  ).length;
+  const liveCount = located.filter(({ loc }) => isLiveFix(loc, now)).length;
 
   return (
     <View style={styles.container}>
@@ -90,8 +94,9 @@ export default function TrackCabsScreen() {
       <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
         {cabs.map((c) => {
           const loc = locs[c.id];
-          const isLive = loc?.updatedAt && now - loc.updatedAt < LIVE_WINDOW_MS;
+          const isLive = isLiveFix(loc, now);
           const ago = timeAgo(loc?.updatedAt, now);
+          const noDriver = !c.driverUid;
           return (
             <Card key={c.id} style={styles.card} mode="outlined">
               <Card.Content style={styles.cardContent}>
@@ -103,11 +108,17 @@ export default function TrackCabsScreen() {
                 </View>
                 <Chip
                   compact
-                  icon={isLive ? 'circle' : 'circle-outline'}
+                  icon={isLive ? 'circle' : noDriver ? 'account-off-outline' : 'circle-outline'}
                   style={{ backgroundColor: isLive ? '#E8F5E9' : '#F1F3F5' }}
                   textStyle={{ color: isLive ? '#2E7D32' : colors.muted, fontSize: 12 }}
                 >
-                  {isLive ? 'LIVE' : loc ? `Idle · ${ago}` : 'No signal'}
+                  {isLive
+                    ? 'LIVE'
+                    : noDriver
+                    ? 'No driver linked'
+                    : loc
+                    ? `Idle · ${ago}`
+                    : 'No signal'}
                 </Chip>
               </Card.Content>
             </Card>

@@ -19,6 +19,7 @@ import {
   serverTimestamp, writeBatch,
 } from 'firebase/firestore';
 import { firestore } from './firebase';
+import { syncEmployeeAddress } from './bookings';
 
 export const REQUEST_STATUS = {
   PENDING: 'Pending',
@@ -78,8 +79,16 @@ export function subscribeMyAddressRequests(employeeId, cb, onError) {
   return onSnapshot(q, (snap) => cb(toList(snap)), onError);
 }
 
-// Admin approves: write the new address onto the employee's profile AND mark the
-// request approved — in a single atomic batch so the two never drift apart.
+// Admin approves: write the new address onto the employee's profile, push it
+// onto their upcoming rides, AND mark the request approved — all in a single
+// atomic batch so the three never drift apart.
+//
+// The ride update matters: every booking carries a COPY of the rider's address
+// (a driver may read the booking but not the profile), so without this the
+// driver would keep navigating to the old house for rides that were already in
+// the system when the move was approved.
+//
+// Returns { syncedRides } — how many upcoming rides were corrected.
 export async function approveAddressRequest(request, adminName) {
   if (!firestore) throw new Error('Backend not configured.');
   const batch = writeBatch(firestore);
@@ -93,7 +102,13 @@ export async function approveAddressRequest(request, adminName) {
     reviewedAt: serverTimestamp(),
     rejectionReason: '',
   });
-  return batch.commit();
+  const syncedRides = await syncEmployeeAddress(
+    request.employeeId,
+    request.requestedAddress,
+    batch
+  );
+  await batch.commit();
+  return { syncedRides };
 }
 
 // Admin rejects: the address stays unchanged; store an optional reason.

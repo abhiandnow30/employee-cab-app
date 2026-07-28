@@ -17,6 +17,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { timeToMinutes } from '../../utils/datetime';
+import useSyncedDraft from '../../utils/useSyncedDraft';
 import { colors } from '../../theme';
 
 // "9:00 pm" / "09:00 PM" → canonical "09:00 PM" (2-digit hour). null if invalid.
@@ -121,21 +122,21 @@ function TimingEditor({
 export default function ManageTimingsScreen() {
   const { pickupTimes, dropTimes, routes, saveTimings } = useApp();
 
-  // Local drafts, seeded from the live config. Editing doesn't persist until Save.
-  const [pickup, setPickup] = useState(pickupTimes);
-  const [drop, setDrop] = useState(dropTimes);
-  const [routeList, setRouteList] = useState(routes || []);
+  // Local drafts over the LIVE config. useSyncedDraft re-seeds them if the
+  // config arrives (or another admin changes it) while this form is untouched.
+  // A plain useState initialiser captured whatever was loaded at mount — usually
+  // the built-in defaults, since the subscription hadn't answered yet — then
+  // counted itself as "edited", so pressing Save quietly replaced the real
+  // timings with the defaults.
+  const liveRoutes = useMemo(() => routes || [], [routes]);
+  const [pickup, setPickup, pickupState] = useSyncedDraft(pickupTimes);
+  const [drop, setDrop, dropState] = useSyncedDraft(dropTimes);
+  const [routeList, setRouteList, routeState] = useSyncedDraft(liveRoutes);
   const [saving, setSaving] = useState(false);
   const [snack, setSnack] = useState('');
   const [error, setError] = useState('');
 
-  const dirty = useMemo(
-    () =>
-      JSON.stringify(pickup) !== JSON.stringify(pickupTimes) ||
-      JSON.stringify(drop) !== JSON.stringify(dropTimes) ||
-      JSON.stringify(routeList) !== JSON.stringify(routes || []),
-    [pickup, drop, routeList, pickupTimes, dropTimes, routes]
-  );
+  const dirty = pickupState.dirty || dropState.dirty || routeState.dirty;
 
   async function handleSave() {
     setError('');
@@ -159,9 +160,9 @@ export default function ManageTimingsScreen() {
   }
 
   function resetDrafts() {
-    setPickup(pickupTimes);
-    setDrop(dropTimes);
-    setRouteList(routes || []);
+    pickupState.reset();
+    dropState.reset();
+    routeState.reset();
     setError('');
   }
 

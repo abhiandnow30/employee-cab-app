@@ -12,7 +12,7 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList, Pressable, Linking } from 'react-native';
 import {
-  Text, Card, Chip, Button, Portal, Dialog, Menu, TextInput,
+  Text, Card, Chip, Button, Portal, Dialog, Menu, TextInput, Snackbar,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
@@ -244,8 +244,10 @@ export default function TripCancelScreen({ navigation }) {
   const [toCancel, setToCancel] = useState(null);
   const [reason, setReason] = useState('Personal');
   const [reasonOpen, setReasonOpen] = useState(false);
+  const [sent, setSent] = useState(false); // confirmation toast
   const [customReason, setCustomReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const [cancelError, setCancelError] = useState('');
 
   const anyFilter = !!dateRange || statusFilter !== 'all';
 
@@ -279,18 +281,25 @@ export default function TripCancelScreen({ navigation }) {
   function openCancel(b) {
     setReason('Personal');
     setCustomReason('');
+    setCancelError('');
     setToCancel(b);
   }
 
+  // The request has to actually land. Previously a rejected write (cutoff passed,
+  // permissions, offline) closed nothing and said nothing, so the employee was
+  // left believing their cancellation had been sent.
   async function confirmCancel() {
     if (!toCancel) return;
     const finalReason = reason === 'Other' ? customReason.trim() : reason;
+    setCancelError('');
     setBusy(true);
-    try {
-      await requestCancel(toCancel.id, finalReason);
+    const res = await requestCancel(toCancel.id, finalReason);
+    setBusy(false);
+    if (res?.ok) {
       setToCancel(null);
-    } finally {
-      setBusy(false);
+      setSent(true);
+    } else {
+      setCancelError(res?.message || 'Could not send your request. Please try again.');
     }
   }
 
@@ -442,6 +451,11 @@ export default function TripCancelScreen({ navigation }) {
                 style={styles.customReason}
               />
             ) : null}
+            {cancelError ? (
+              <Text variant="bodySmall" style={styles.cancelError}>
+                {cancelError}
+              </Text>
+            ) : null}
           </Dialog.Content>
           <Dialog.Actions>
             <Button onPress={() => setToCancel(null)} disabled={busy}>Cancel</Button>
@@ -457,6 +471,10 @@ export default function TripCancelScreen({ navigation }) {
           </Dialog.Actions>
         </Dialog>
       </Portal>
+
+      <Snackbar visible={sent} onDismiss={() => setSent(false)} duration={2500}>
+        Cancellation request sent to the transport desk.
+      </Snackbar>
     </View>
   );
 }
@@ -545,4 +563,5 @@ const styles = StyleSheet.create({
   },
   reasonValue: { color: PAL.text, fontSize: 15 },
   customReason: { marginTop: 10 },
+  cancelError: { color: PAL.error, marginTop: 10 },
 });

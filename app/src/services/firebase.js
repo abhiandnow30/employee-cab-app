@@ -15,6 +15,7 @@
 // we'll tighten in Stage 4.
 // ---------------------------------------------------------------------------
 
+import { Platform } from 'react-native';
 import { initializeApp } from 'firebase/app';
 import { getDatabase } from 'firebase/database';
 import { getAuth } from 'firebase/auth';
@@ -46,15 +47,21 @@ if (isFirebaseConfigured) {
   const app = initializeApp(firebaseConfig);
   database = getDatabase(app); // Realtime DB → live cab location
   authInstance = getAuth(app); // Authentication → login
-  // Firestore → employees, bookings, etc. Force long-polling instead of the
-  // streaming WebChannel: some corporate proxies / security extensions rewrite
-  // the streaming response with a wildcard CORS header, which the browser then
-  // blocks (credentials + '*' is illegal), leaving Firestore stuck offline.
-  // Long-polling avoids that channel and connects reliably behind such networks.
-  firestoreInstance = initializeFirestore(app, {
-    experimentalForceLongPolling: true,
-    useFetchStreams: false,
-  });
+  // Firestore → employees, bookings, etc.
+  //
+  // On WEB we force long-polling instead of the streaming WebChannel: some
+  // corporate proxies / security extensions rewrite the streaming response with
+  // a wildcard CORS header, which the browser then blocks (credentials + '*' is
+  // illegal), leaving Firestore stuck offline. Long-polling avoids that channel
+  // and connects reliably behind such networks.
+  //
+  // On the PHONE there is no browser CORS layer and no proxy rewriting, so we
+  // leave the default streaming transport in place — forcing long-polling there
+  // just costs battery and adds latency to every live update.
+  firestoreInstance = initializeFirestore(
+    app,
+    Platform.OS === 'web' ? { experimentalForceLongPolling: true, useFetchStreams: false } : {}
+  );
 } else {
   console.warn(
     '[firebase] Not configured yet — fill in src/services/firebase.js to enable live tracking.'

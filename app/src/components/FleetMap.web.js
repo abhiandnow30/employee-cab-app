@@ -7,33 +7,11 @@
 // Props: cabs = [{ id, latitude, longitude, label, sub }]
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
-
-const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-
-function loadLeaflet() {
-  return new Promise((resolve) => {
-    if (window.L) return resolve(window.L);
-    if (!document.getElementById('leaflet-css')) {
-      const link = document.createElement('link');
-      link.id = 'leaflet-css';
-      link.rel = 'stylesheet';
-      link.href = LEAFLET_CSS;
-      document.head.appendChild(link);
-    }
-    let script = document.getElementById('leaflet-js');
-    if (!script) {
-      script = document.createElement('script');
-      script.id = 'leaflet-js';
-      script.src = LEAFLET_JS;
-      document.head.appendChild(script);
-    }
-    script.addEventListener('load', () => resolve(window.L));
-    if (window.L) resolve(window.L);
-  });
-}
+import { Text } from 'react-native-paper';
+import { loadLeaflet, addTileLayer, DEFAULT_CENTER } from './leaflet';
+import { colors } from '../theme';
 
 // A blue pin with a car glyph + the cab label underneath.
 function cabIcon(L, label) {
@@ -58,20 +36,25 @@ export default function FleetMap({ cabs = [] }) {
   const mapRef = useRef(null);
   const markersRef = useRef({}); // cabId -> Leaflet marker
   const prevCountRef = useRef(0);
+  const [loadError, setLoadError] = useState('');
 
   // Create the map once.
   useEffect(() => {
     let cancelled = false;
-    loadLeaflet().then((L) => {
-      if (cancelled || !containerRef.current || mapRef.current) return;
-      const map = L.map(containerRef.current).setView([17.44, 78.3489], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
-        maxZoom: 19,
-      }).addTo(map);
-      mapRef.current = map;
-      setTimeout(() => map.invalidateSize(), 200);
-    });
+    loadLeaflet()
+      .then((L) => {
+        if (cancelled || !containerRef.current || mapRef.current) return;
+        const map = L.map(containerRef.current).setView(
+          [DEFAULT_CENTER.latitude, DEFAULT_CENTER.longitude],
+          12
+        );
+        addTileLayer(L, map);
+        mapRef.current = map;
+        setTimeout(() => map.invalidateSize(), 200);
+      })
+      .catch((e) => {
+        if (!cancelled) setLoadError(e.message);
+      });
     return () => {
       cancelled = true;
       if (mapRef.current) {
@@ -121,9 +104,22 @@ export default function FleetMap({ cabs = [] }) {
     prevCountRef.current = ids.length;
   }, [cabs]);
 
+  // The map library itself couldn't load — say so instead of showing an empty box.
+  if (loadError) {
+    return (
+      <View style={[styles.map, styles.fallback]}>
+        <Text variant="bodyMedium" style={styles.fallbackText}>
+          {loadError}
+        </Text>
+      </View>
+    );
+  }
+
   return <View ref={containerRef} style={styles.map} />;
 }
 
 const styles = StyleSheet.create({
   map: { flex: 1, minHeight: 360, borderRadius: 8, overflow: 'hidden' },
+  fallback: { backgroundColor: '#E8EEF5', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  fallbackText: { color: colors.muted, textAlign: 'center' },
 });

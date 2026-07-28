@@ -12,15 +12,16 @@
 // these fields change (address also changes via approved address requests).
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import {
   Text, Card, Button, Divider, TextInput, Snackbar, HelperText,
-  IconButton, Portal, Dialog,
+  IconButton, Portal, Dialog, SegmentedButtons,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeEmployees } from '../../services/profile';
+import useSyncedDraft from '../../utils/useSyncedDraft';
 import { colors } from '../../theme';
 
 function draftOf(emp, homeAddressOf) {
@@ -37,10 +38,16 @@ function draftOf(emp, homeAddressOf) {
 // matter which admin creates the employee.
 const DEFAULT_EMPLOYEE_PHONE = '9848094029';
 
-const EMPTY_NEW = { email: '', password: '', empId: '', name: '', phone: '', address: '' };
+const EMPTY_NEW = {
+  role: 'employee', email: '', password: '', empId: '', name: '', phone: '', address: '',
+};
 
 function EmployeeCard({ emp, onSave, onDelete, homeAddressOf }) {
-  const [draft, setDraft] = useState(() => draftOf(emp, homeAddressOf));
+  // Draft over the LIVE profile, so a change made elsewhere (an approved address
+  // request, another admin) is picked up while this card is untouched. Seeding
+  // once at mount meant a Save could overwrite newer data with a stale copy.
+  const live = useMemo(() => draftOf(emp, homeAddressOf), [emp, homeAddressOf]);
+  const [draft, setDraft, draftState] = useSyncedDraft(live);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const setField = (key) => (t) => setDraft((d) => ({ ...d, [key]: t }));
@@ -126,23 +133,26 @@ function EmployeeCard({ emp, onSave, onDelete, homeAddressOf }) {
           icon="content-save"
           onPress={handleSave}
           loading={saving}
-          disabled={saving}
+          disabled={saving || !draftState.dirty}
           style={styles.saveBtn}
         >
-          Save
+          {draftState.dirty ? 'Save' : 'Saved'}
         </Button>
       </Card.Content>
     </Card>
   );
 }
 
-// The "Add Employee" dialog — creates a login account + profile. New employees
-// default to the admin's own mobile number (editable per employee).
+// The "Add person" dialog — creates a login account + profile for an EMPLOYEE or
+// a DRIVER. Drivers previously had no provisioning route at all: this dialog
+// always created employees, and the self-signup screen was only reachable by
+// typing a URL, so on a phone a driver account couldn't be created.
 function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) {
   const [form, setForm] = useState(() => ({ ...EMPTY_NEW, phone: defaultPhone }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const setField = (key) => (t) => setForm((f) => ({ ...f, [key]: t }));
+  const isDriver = form.role === 'driver';
 
   function close() {
     setForm({ ...EMPTY_NEW, phone: defaultPhone });
@@ -163,7 +173,7 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
       setError('Temporary password must be at least 6 characters.');
       return;
     }
-    if (!form.empId.trim()) {
+    if (!isDriver && !form.empId.trim()) {
       setError('Employee ID is required.');
       return;
     }
@@ -173,21 +183,37 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
     if (res?.ok) {
       close();
     } else {
-      setError(res?.message || 'Could not create the employee.');
+      setError(res?.message || 'Could not create the account.');
     }
   }
 
   return (
     <Portal>
       <Dialog visible={visible} onDismiss={close} style={styles.dialog}>
-        <Dialog.Title>Add Employee</Dialog.Title>
+        <Dialog.Title>Add {isDriver ? 'Driver' : 'Employee'}</Dialog.Title>
         <Dialog.ScrollArea>
           <View style={styles.dialogBody}>
             <Text variant="bodySmall" style={styles.dialogHint}>
               Creates a login account and profile. Share the email and temporary
-              password with the employee; they can change the password after
-              signing in.
+              password with them; they can change the password after signing in.
             </Text>
+
+            <SegmentedButtons
+              value={form.role}
+              onValueChange={(role) => setForm((f) => ({ ...f, role }))}
+              density="small"
+              style={styles.roleRow}
+              buttons={[
+                { value: 'employee', label: 'Employee', icon: 'account' },
+                { value: 'driver', label: 'Driver', icon: 'account-tie-hat' },
+              ]}
+            />
+            {isDriver ? (
+              <HelperText type="info" visible style={styles.pwHint}>
+                Link the driver to a cab afterwards in Manage Drivers — that's what
+                turns on their live location.
+              </HelperText>
+            ) : null}
             <TextInput
               label="Email (login)"
               value={form.email}
@@ -206,16 +232,19 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
               style={styles.input}
             />
             <HelperText type="info" visible style={styles.pwHint}>
-              At least 6 characters. The employee can change it after signing in.
+              At least 6 characters. They can change it after signing in.
             </HelperText>
-            <TextInput
-              label="Employee ID"
-              value={form.empId}
-              onChangeText={setField('empId')}
-              mode="outlined"
-              placeholder="e.g. 1399"
-              style={styles.input}
-            />
+            {/* Drivers have no employee id or home address on file. */}
+            {!isDriver ? (
+              <TextInput
+                label="Employee ID"
+                value={form.empId}
+                onChangeText={setField('empId')}
+                mode="outlined"
+                placeholder="e.g. 1399"
+                style={styles.input}
+              />
+            ) : null}
             <TextInput
               label="Name"
               value={form.name}
@@ -232,15 +261,17 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
               maxLength={10}
               style={styles.input}
             />
-            <TextInput
-              label="Home Address"
-              value={form.address}
-              onChangeText={setField('address')}
-              mode="outlined"
-              multiline
-              placeholder="Flat / House, Street, Area, City, Pincode"
-              style={styles.input}
-            />
+            {!isDriver ? (
+              <TextInput
+                label="Home Address"
+                value={form.address}
+                onChangeText={setField('address')}
+                mode="outlined"
+                multiline
+                placeholder="Flat / House, Street, Area, City, Pincode"
+                style={styles.input}
+              />
+            ) : null}
             {error ? <HelperText type="error" visible>{error}</HelperText> : null}
           </View>
         </Dialog.ScrollArea>
@@ -282,7 +313,10 @@ export default function EmployeeManagementScreen() {
   async function handleCreate(form) {
     setError('');
     const res = await adminCreateEmployee(form);
-    if (res?.ok) setSnack(`Employee ${form.name || form.email} created.`);
+    if (res?.ok) {
+      const who = form.role === 'driver' ? 'Driver' : 'Employee';
+      setSnack(`${who} ${form.name || form.email} created.`);
+    }
     return res;
   }
 
@@ -306,7 +340,7 @@ export default function EmployeeManagementScreen() {
             profile — they can't edit it.
           </Text>
           <Button mode="contained" icon="account-plus" onPress={() => setAddOpen(true)}>
-            Add Employee
+            Add Employee / Driver
           </Button>
         </View>
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -345,9 +379,10 @@ export default function EmployeeManagementScreen() {
           <Dialog.Title>Remove employee?</Dialog.Title>
           <Dialog.Content>
             <Text variant="bodyMedium">
-              This removes {deleteFor?.name || deleteFor?.email}'s profile from the
-              app. Their login account stays in Firebase Auth — delete it in the
-              Firebase console if you also want to revoke sign-in.
+              This removes {deleteFor?.name || deleteFor?.email}'s profile and
+              unlinks any cab they hold. Their login still exists in Firebase Auth,
+              but signing in will show "account not set up" — delete the login in
+              the Firebase console to revoke it completely.
             </Text>
           </Dialog.Content>
           <Dialog.Actions>
@@ -401,4 +436,5 @@ const styles = StyleSheet.create({
   dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
   dialogBody: { paddingVertical: 8 },
   dialogHint: { opacity: 0.7, marginBottom: 12 },
+  roleRow: { marginBottom: 12 },
 });

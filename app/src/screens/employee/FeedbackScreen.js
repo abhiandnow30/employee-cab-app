@@ -18,15 +18,21 @@ export default function FeedbackScreen({ navigation }) {
   const [category, setCategory] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  function handleSubmit() {
+  // Wait for the write before leaving the screen: this used to navigate away
+  // whether or not the feedback actually reached Firestore.
+  async function handleSubmit() {
     setError('');
     if (!category || !message.trim()) {
       setError('Please choose a category and write your feedback.');
       return;
     }
-    addFeedback({ category, message: message.trim() });
-    navigation.navigate('EmployeeHome');
+    setBusy(true);
+    const res = await addFeedback({ category, message: message.trim() });
+    setBusy(false);
+    if (res?.ok) navigation.navigate('EmployeeHome');
+    else setError(res?.message || 'Could not send your feedback. Please try again.');
   }
 
   return (
@@ -75,10 +81,21 @@ export default function FeedbackScreen({ navigation }) {
       ) : null}
 
       <View style={styles.buttonRow}>
-        <Button mode="outlined" onPress={() => navigation.goBack()} style={styles.btn}>
+        <Button
+          mode="outlined"
+          onPress={() => navigation.goBack()}
+          style={styles.btn}
+          disabled={busy}
+        >
           Back
         </Button>
-        <Button mode="contained" onPress={handleSubmit} style={styles.btn}>
+        <Button
+          mode="contained"
+          onPress={handleSubmit}
+          style={styles.btn}
+          loading={busy}
+          disabled={busy}
+        >
           Submit
         </Button>
       </View>

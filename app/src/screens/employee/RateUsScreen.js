@@ -17,16 +17,22 @@ export default function RateUsScreen({ navigation }) {
   const [stars, setStars] = useState(0);
   const [comment, setComment] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
 
-  function handleSubmit() {
+  // Wait for the write before thanking them: this used to say "Thank you!"
+  // whether or not the rating actually reached Firestore.
+  async function handleSubmit() {
     setError('');
     if (stars === 0) {
       setError('Please tap a star to rate.');
       return;
     }
-    addRating({ stars, comment: comment.trim() });
-    setDone(true);
+    setBusy(true);
+    const res = await addRating({ stars, comment: comment.trim() });
+    setBusy(false);
+    if (res?.ok) setDone(true);
+    else setError(res?.message || 'Could not send your rating. Please try again.');
   }
 
   if (done) {
@@ -83,10 +89,21 @@ export default function RateUsScreen({ navigation }) {
       ) : null}
 
       <View style={styles.buttonRow}>
-        <Button mode="outlined" onPress={() => navigation.goBack()} style={styles.flexBtn}>
+        <Button
+          mode="outlined"
+          onPress={() => navigation.goBack()}
+          style={styles.flexBtn}
+          disabled={busy}
+        >
           Back
         </Button>
-        <Button mode="contained" onPress={handleSubmit} style={styles.flexBtn}>
+        <Button
+          mode="contained"
+          onPress={handleSubmit}
+          style={styles.flexBtn}
+          loading={busy}
+          disabled={busy}
+        >
           Submit rating
         </Button>
       </View>

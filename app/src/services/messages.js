@@ -8,7 +8,7 @@
 // an admin read all of them.
 // ---------------------------------------------------------------------------
 
-import { collection, addDoc, onSnapshot, query, where, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { firestore } from './firebase';
 
 // Employee sends a message/request to the transport desk.
@@ -42,12 +42,6 @@ export function subscribeAllMessages(cb, onError) {
   return onSnapshot(collection(firestore, 'messages'), (snap) => cb(toList(snap)), onError);
 }
 
-// Employee: live list of only MY messages.
-export function subscribeMyMessages(employeeId, cb, onError) {
-  if (!firestore || !employeeId) {
-    cb([]);
-    return () => {};
-  }
-  const q = query(collection(firestore, 'messages'), where('employeeId', '==', employeeId));
-  return onSnapshot(q, (snap) => cb(toList(snap)), onError);
-}
+// (An employee-facing "my messages" list would go here — the security rules
+// already allow it. Nothing reads one today, so there's no unused subscription
+// left in the bundle.)

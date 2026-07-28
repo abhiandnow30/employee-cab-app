@@ -1,18 +1,24 @@
 {
   "expo": {
-    "name": "app",
-    "slug": "app",
+    "name": "Cab Service",
+    "slug": "employee-cab-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "//scheme": "Registers cabservice:// on the phone. App.js declares that as its deep-link prefix, so without this every in-app link was dead on iOS/Android.",
+    "scheme": "cabservice",
     "ios": {
+      "//bundleIdentifier": "Required to build for iOS at all — change the reverse-domain part to your own domain before submitting.",
+      "bundleIdentifier": "com.neutara.cabservice",
       "supportsTablet": true,
       "infoPlist": {
         "LSApplicationQueriesSchemes": ["comgooglemaps", "maps", "tel"]
       }
     },
     "android": {
+      "//package": "Required to build for Android at all.",
+      "package": "com.neutara.cabservice",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

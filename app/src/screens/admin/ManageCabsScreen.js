@@ -7,14 +7,20 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import {
-  Text, Card, Button, IconButton, Portal, Dialog, TextInput,
+  Text, Card, Button, IconButton, Portal, Dialog, TextInput, Snackbar, HelperText,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { subscribeCabs } from '../../services/cabs';
+import { subscribeCabs, cabCapacity } from '../../services/cabs';
+import { DEFAULT_CAB_CAPACITY } from '../../data/mockData';
 import { colors } from '../../theme';
 
-const EMPTY = { cabNumber: '', driverName: '', driverPhone: '' };
+const EMPTY = {
+  cabNumber: '',
+  driverName: '',
+  driverPhone: '',
+  capacity: String(DEFAULT_CAB_CAPACITY),
+};
 
 export default function ManageCabsScreen() {
   const { createCab, editCab, deleteCab, loadDefaultCabs } = useApp();
@@ -26,6 +32,9 @@ export default function ManageCabsScreen() {
   const [editingId, setEditingId] = useState(null); // null = adding new
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [deleteFor, setDeleteFor] = useState(null); // cab pending deletion
+  const [deleting, setDeleting] = useState(false);
+  const [snack, setSnack] = useState('');
 
   useEffect(() => {
     const unsub = subscribeCabs(
@@ -49,7 +58,12 @@ export default function ManageCabsScreen() {
   }
   function openEdit(cab) {
     setEditingId(cab.id);
-    setForm({ cabNumber: cab.cabNumber || '', driverName: cab.driverName || '', driverPhone: cab.driverPhone || '' });
+    setForm({
+      cabNumber: cab.cabNumber || '',
+      driverName: cab.driverName || '',
+      driverPhone: cab.driverPhone || '',
+      capacity: String(cabCapacity(cab)),
+    });
     setError('');
     setDialogOpen(true);
   }
@@ -67,35 +81,47 @@ export default function ManageCabsScreen() {
       setError('Driver phone must be a 10-digit number.');
       return;
     }
+    const seats = Number(form.capacity);
+    if (!Number.isInteger(seats) || seats < 1 || seats > 30) {
+      setError('Seats must be a whole number between 1 and 30.');
+      return;
+    }
     setSaving(true);
     setError('');
-    try {
-      if (editingId) await editCab(editingId, form);
-      else await createCab(form);
-      setDialogOpen(false);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
+    const payload = { ...form, capacity: seats };
+    const res = editingId ? await editCab(editingId, payload) : await createCab(payload);
+    setSaving(false);
+    if (res?.ok) setDialogOpen(false);
+    else setError(res?.message || 'Could not save the cab.');
   }
 
-  async function handleDelete(id) {
+  // Deleting a cab is destructive and used to happen on a single tap. It now
+  // asks first, and the service refuses while the cab still has upcoming rides
+  // (and unlinks its driver when it does go).
+  async function confirmDelete() {
+    const cab = deleteFor;
+    if (!cab) return;
     setError('');
-    try {
-      await deleteCab(id);
-    } catch (e) {
-      setError(e.message);
+    setDeleting(true);
+    const res = await deleteCab(cab.id);
+    setDeleting(false);
+    if (res?.ok) {
+      setDeleteFor(null);
+      setSnack(
+        res.unlinkedDrivers
+          ? `${cab.cabNumber} removed. ${res.unlinkedDrivers} driver link cleared.`
+          : `${cab.cabNumber} removed.`
+      );
+    } else {
+      setError(res?.message || 'Could not remove the cab.');
+      setDeleteFor(null);
     }
   }
 
   async function handleSeed() {
     setError('');
-    try {
-      await loadDefaultCabs();
-    } catch (e) {
-      setError(e.message);
-    }
+    const res = await loadDefaultCabs();
+    if (!res?.ok) setError(res?.message || 'Could not load the starter fleet.');
   }
 
   function renderCab({ item }) {
@@ -107,9 +133,18 @@ export default function ManageCabsScreen() {
             <Text variant="bodySmall" style={styles.detail}>
               {item.driverName || 'No driver name'} · {item.driverPhone || 'No phone'}
             </Text>
+            <Text variant="bodySmall" style={styles.detail}>
+              {cabCapacity(item)} seats
+              {item.driverUid ? ' · driver account linked' : ' · no driver account linked'}
+            </Text>
           </View>
           <IconButton icon="pencil" size={20} onPress={() => openEdit(item)} />
-          <IconButton icon="delete" size={20} iconColor="#C62828" onPress={() => handleDelete(item.id)} />
+          <IconButton
+            icon="delete"
+            size={20}
+            iconColor={colors.danger}
+            onPress={() => setDeleteFor(item)}
+          />
         </Card.Content>
       </Card>
     );
@@ -173,6 +208,18 @@ export default function ManageCabsScreen() {
               maxLength={10}
               style={styles.input}
             />
+            <TextInput
+              label="Seats"
+              value={form.capacity}
+              onChangeText={(t) => setForm((f) => ({ ...f, capacity: t.replace(/[^0-9]/g, '').slice(0, 2) }))}
+              mode="outlined"
+              keyboardType="number-pad"
+              style={styles.input}
+            />
+            <HelperText type="info" visible style={styles.seatHint}>
+              How many riders fit. Carpool assignments are blocked once a cab is
+              full for a given time slot.
+            </HelperText>
             {error ? <Text style={styles.dialogError}>{error}</Text> : null}
           </Dialog.Content>
           <Dialog.Actions>
@@ -182,7 +229,36 @@ export default function ManageCabsScreen() {
             </Button>
           </Dialog.Actions>
         </Dialog>
+
+        <Dialog visible={!!deleteFor} onDismiss={() => setDeleteFor(null)} style={styles.confirm}>
+          <Dialog.Title>Remove {deleteFor?.cabNumber}?</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium">
+              The cab is taken out of the fleet and any driver linked to it is
+              unlinked. Rides already completed keep their record. If the cab still
+              has upcoming rides, re-assign those first.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setDeleteFor(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              buttonColor={colors.danger}
+              onPress={confirmDelete}
+              loading={deleting}
+              disabled={deleting}
+            >
+              Remove
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
       </Portal>
+
+      <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={3000}>
+        {snack}
+      </Snackbar>
       </View>
     </View>
   );
@@ -197,8 +273,10 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
   info: { flex: 1 },
   detail: { opacity: 0.7, marginTop: 2 },
-  error: { color: '#C62828', paddingHorizontal: 14, paddingBottom: 8 },
-  dialogError: { color: '#C62828', marginTop: 8 },
+  error: { color: colors.danger, paddingHorizontal: 14, paddingBottom: 8 },
+  dialogError: { color: colors.danger, marginTop: 8 },
+  seatHint: { marginTop: -6 },
+  confirm: { width: '100%', maxWidth: 440, alignSelf: 'center' },
   input: { marginBottom: 10 },
   empty: { alignItems: 'center', marginTop: 50, gap: 12 },
   emptyText: { color: colors.muted },

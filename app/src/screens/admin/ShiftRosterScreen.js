@@ -9,12 +9,13 @@
 // Weekly Schedule then only lets them book cabs on their rostered days.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList, Pressable } from 'react-native';
 import { Text, Card, Button, Divider, Snackbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Dropdown from '../../components/Dropdown';
 import { useApp } from '../../context/AppContext';
+import useSyncedDraft from '../../utils/useSyncedDraft';
 import { subscribeEmployees, updateEmployeeRoster } from '../../services/profile';
 import {
   CAB_ROUTES, SHIFT_TIMINGS, WEEKDAYS, DEFAULT_WORKING_DAYS,
@@ -60,7 +61,12 @@ function DayPill({ day, isWeekend, selected, onPress }) {
 }
 
 function EmployeeRosterCard({ emp, onSave, routeOptions }) {
-  const [draft, setDraft] = useState(() => rosterOf(emp));
+  // Draft over the LIVE profile: if another admin (or the employee's own
+  // provisioning) changes this roster while the card is untouched, the form
+  // follows. It used to seed once at mount, so a Save could silently overwrite
+  // someone else's newer roster with a stale copy.
+  const live = useMemo(() => rosterOf(emp), [emp]);
+  const [draft, setDraft, draftState] = useSyncedDraft(live);
   const [saving, setSaving] = useState(false);
   const address = addressOf(emp);
 
@@ -150,10 +156,10 @@ function EmployeeRosterCard({ emp, onSave, routeOptions }) {
           mode="contained"
           onPress={handleSave}
           loading={saving}
-          disabled={saving}
+          disabled={saving || !draftState.dirty}
           style={styles.saveBtn}
         >
-          Save roster
+          {draftState.dirty ? 'Save roster' : 'Saved'}
         </Button>
       </Card.Content>
     </Card>

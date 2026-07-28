@@ -150,8 +150,18 @@ export default function AddressChangeRequestsScreen() {
     setError('');
     setBusyId(req.id);
     try {
-      await approveAddressRequest(req, adminName);
-      setSnack(`Approved — ${req.employeeName || 'employee'}'s address updated.`);
+      // Approval also rewrites the address copy carried on the employee's
+      // upcoming rides, so drivers navigate to the new house rather than the old
+      // one. `syncedRides` says how many were corrected.
+      const { syncedRides } = await approveAddressRequest(req, adminName);
+      const who = req.employeeName || 'employee';
+      setSnack(
+        syncedRides
+          ? `Approved — ${who}'s address updated on their profile and ${syncedRides} upcoming ride${
+              syncedRides > 1 ? 's' : ''
+            }.`
+          : `Approved — ${who}'s address updated.`
+      );
     } catch (e) {
       setError(e.message);
     } finally {

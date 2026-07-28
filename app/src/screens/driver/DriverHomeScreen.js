@@ -5,9 +5,9 @@
 // A "Share Live Location" button broadcasts the driver's GPS for the cab.
 // ---------------------------------------------------------------------------
 
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
-import { Text, Card, Chip, Button, Divider } from 'react-native-paper';
+import { Text, Card, Chip, Button, Divider, Snackbar, Portal, Dialog } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { statusColors, colors } from '../../theme';
@@ -38,6 +38,33 @@ export default function DriverHomeScreen({ navigation }) {
     sharingLocation,
     stopSharingLocation,
   } = useApp();
+
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState(null); // the trip whose write is in flight
+  const [noShowFor, setNoShowFor] = useState(null); // trip pending no-show confirmation
+
+  // Both driver actions used to be fire-and-forget: if the write was rejected
+  // the button just did nothing. Now they wait, and say so when they fail.
+  async function advance(booking, nextStatus) {
+    setError('');
+    setBusyId(booking.id);
+    const res = await updateBookingStatus(booking.id, nextStatus);
+    setBusyId(null);
+    if (!res?.ok) setError(res?.message || 'Could not update the trip. Please try again.');
+  }
+
+  // Flagging a no-show ends the trip and is visible to the transport desk, so it
+  // asks first — one mis-tap used to be enough.
+  async function confirmNoShow() {
+    const booking = noShowFor;
+    if (!booking) return;
+    setError('');
+    setBusyId(booking.id);
+    const res = await markNoShow(booking.id);
+    setBusyId(null);
+    setNoShowFor(null);
+    if (!res?.ok) setError(res?.message || 'Could not flag the no-show. Please try again.');
+  }
 
   const cab = currentUser?.cabId ? getCabById(currentUser.cabId) : null;
   // Trips for THIS driver's cab that aren't cancelled. The context subscription
@@ -110,7 +137,9 @@ export default function DriverHomeScreen({ navigation }) {
               <Button
                 mode="contained"
                 icon={action.icon}
-                onPress={() => updateBookingStatus(item.id, action.next)}
+                onPress={() => advance(item, action.next)}
+                loading={busyId === item.id}
+                disabled={busyId === item.id}
               >
                 {action.label}
               </Button>
@@ -122,7 +151,8 @@ export default function DriverHomeScreen({ navigation }) {
                   icon="account-alert"
                   textColor={colors.danger}
                   style={styles.noShowBtn}
-                  onPress={() => markNoShow(item.id)}
+                  onPress={() => setNoShowFor(item)}
+                  disabled={busyId === item.id}
                 >
                   Employee not here (No-show)
                 </Button>
@@ -194,6 +224,36 @@ export default function DriverHomeScreen({ navigation }) {
           </View>
         }
       />
+
+      <Portal>
+        <Dialog visible={!!noShowFor} onDismiss={() => setNoShowFor(null)} style={styles.dialog}>
+          <Dialog.Title>Flag a no-show?</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium">
+              This ends the trip for {noShowFor?.employeeName || 'this rider'} and
+              tells the transport desk they weren't at the pickup.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setNoShowFor(null)} disabled={!!busyId}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              buttonColor={colors.danger}
+              onPress={confirmNoShow}
+              loading={!!busyId}
+              disabled={!!busyId}
+            >
+              Flag no-show
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      <Snackbar visible={!!error} onDismiss={() => setError('')} duration={4000}>
+        {error}
+      </Snackbar>
     </View>
   );
 }
@@ -235,6 +295,7 @@ const styles = StyleSheet.create({
   contactBtn: { flex: 1, borderRadius: 8 },
   divider: { marginVertical: 12 },
   noShowBtn: { marginTop: 8, borderColor: colors.danger },
+  dialog: { width: '100%', maxWidth: 420, alignSelf: 'center' },
   empty: { alignItems: 'center', marginTop: 40 },
   emptyText: { color: colors.muted, marginTop: 8 },
 });

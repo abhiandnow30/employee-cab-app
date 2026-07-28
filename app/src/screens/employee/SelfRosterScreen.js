@@ -14,7 +14,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Dropdown from '../../components/Dropdown';
 import { useApp } from '../../context/AppContext';
 import { colors } from '../../theme';
-import { NONE, WEEKDAYS, SOURCE, BOOKING_LEAD_HOURS } from '../../data/mockData';
+import {
+  NONE, WEEKDAYS, SOURCE, BOOKING_LEAD_HOURS, CANCEL_CUTOFF_HOURS,
+} from '../../data/mockData';
 import {
   isPastDateKey, isPastDateTime, canBook, bookableTimesForDate, todayKey, timeToMinutes,
 } from '../../utils/datetime';
@@ -64,7 +66,9 @@ const DIRECTION = { pickup: 'Home → Office', drop: 'Office → Home' };
 const PICKUP_LOC = { pickup: 'Home', drop: 'Office' };
 
 export default function SelfRosterScreen({ navigation }) {
-  const { addBookings, cancelBooking, myBookings, currentUser, pickupTimes, dropTimes } = useApp();
+  const {
+    saveRosterChanges, dropRideProblem, myBookings, currentUser, pickupTimes, dropTimes,
+  } = useApp();
 
   // The dropdown options: "NA" (no ride this leg) + the admin-configured times.
   const pickupOptions = useMemo(() => [NONE, ...pickupTimes], [pickupTimes]);
@@ -159,6 +163,8 @@ export default function SelfRosterScreen({ navigation }) {
 
     const toCreate = [];
     const toCancel = [];
+    const skipped = []; // times we couldn't book, reported together at the end
+    const blocked = []; // rides that can't be dropped from here (policy)
 
     days.forEach((d) => {
       if (!d.isWorkDay) return; // not rostered to work this day → no booking
@@ -171,52 +177,86 @@ export default function SelfRosterScreen({ navigation }) {
           // (rides must be booked at least BOOKING_LEAD_HOURS ahead). If this
           // would only replace an unchanged existing booking, the check below
           // (ex.shift === value) makes it a no-op anyway.
-          if (isPastDateTime(d.key, value)) return;
-          if (!ex && !canBook(d.key, value, BOOKING_LEAD_HOURS)) {
-            setError(
-              `Rides must be booked at least ${BOOKING_LEAD_HOURS} hours in advance — some times were skipped.`
-            );
+          if (ex && ex.shift === value) return; // unchanged
+          if (isPastDateTime(d.key, value)) {
+            skipped.push(`${d.label} ${d.display} ${value} (already passed)`);
             return;
           }
-          // A time is chosen: create if new, or replace if the time changed.
-          if (!ex) {
-            toCreate.push({ source: SOURCE.ROSTER, date: d.key, shift: value, direction: DIRECTION[leg], pickup: PICKUP_LOC[leg] });
-          } else if (ex.shift !== value) {
-            toCancel.push(ex.id);
-            toCreate.push({ source: SOURCE.ROSTER, date: d.key, shift: value, direction: DIRECTION[leg], pickup: PICKUP_LOC[leg] });
+          if (!canBook(d.key, value, BOOKING_LEAD_HOURS)) {
+            skipped.push(`${d.label} ${d.display} ${value} (less than ${BOOKING_LEAD_HOURS}h away)`);
+            return;
           }
+          // Replacing an existing ride means dropping it, which is subject to
+          // the same cancellation policy as clearing it outright.
+          if (ex) {
+            const problem = dropRideProblem(ex);
+            if (problem) {
+              blocked.push(`${d.label} ${d.display}`);
+              return;
+            }
+            toCancel.push(ex.id);
+          }
+          toCreate.push({
+            source: SOURCE.ROSTER,
+            date: d.key,
+            shift: value,
+            direction: DIRECTION[leg],
+            pickup: PICKUP_LOC[leg],
+          });
         } else if (ex) {
-          // Set back to NA: cancel the existing booking.
+          // Set back to NA: drop the existing booking — but only if the
+          // cancellation policy allows it. A ride that already has a cab, or is
+          // inside the cutoff, has to go through Trip Cancel so the transport
+          // desk can approve it.
+          const problem = dropRideProblem(ex);
+          if (problem) {
+            blocked.push(`${d.label} ${d.display}`);
+            return;
+          }
           toCancel.push(ex.id);
         }
       });
     });
 
+    // A ride that can't be dropped here is a hard stop: saving the rest would
+    // leave the employee thinking they'd cancelled something they hadn't.
+    if (blocked.length) {
+      setError(
+        `${blocked.join(', ')}: a cab is already assigned or the ride is within ` +
+          `${CANCEL_CUTOFF_HOURS} hours. Use Trip Cancel to request a cancellation.`
+      );
+      return;
+    }
+
     if (toCreate.length === 0 && toCancel.length === 0) {
-      setError('No changes to save. Pick or change a Pickup/Drop time.');
+      setError(
+        skipped.length
+          ? `Nothing could be saved — ${skipped.join('; ')}.`
+          : 'No changes to save. Pick or change a Pickup/Drop time.'
+      );
       return;
     }
 
     setSaving(true);
-    // Fire the writes. Firestore queues them locally and syncs when online, so
-    // don't let a slow/offline backend hang the button — cap the wait. On
-    // timeout the request is queued and will sync once the connection is back.
-    const writes = (async () => {
-      await Promise.all(toCancel.map((id) => cancelBooking(id)));
-      if (toCreate.length) await addBookings(toCreate);
-      return { done: true };
-    })();
-    const timed = new Promise((resolve) => setTimeout(() => resolve({ pending: true }), 8000));
-    try {
-      const res = await Promise.race([writes, timed]);
-      setSelections({});
-      setSnack(res.pending ? 'Request queued — will sync when you’re back online.' : 'Request raised ✓');
-      setTimeout(() => navigation.navigate('EmployeeHome'), 900);
-    } catch (e) {
-      setError(e.message || 'Could not raise the request. Please try again.');
-    } finally {
-      setSaving(false);
+    // One atomic batch: a replaced ride can never end up cancelled without its
+    // replacement being created. We also WAIT for the real result — the old code
+    // gave up after 8 seconds and claimed success, so a rejected write looked
+    // like a confirmed booking.
+    const res = await saveRosterChanges({ cancelIds: toCancel, entries: toCreate });
+    setSaving(false);
+
+    if (!res.ok) {
+      setError(res.message || 'Could not raise the request. Please try again.');
+      return; // keep the draft so nothing the employee typed is lost
     }
+
+    setSelections({});
+    setSnack(
+      skipped.length
+        ? `Saved, but skipped: ${skipped.join('; ')}.`
+        : 'Request raised ✓'
+    );
+    setTimeout(() => navigation.navigate('EmployeeHome'), skipped.length ? 2600 : 900);
   }
 
   return (
@@ -437,7 +477,7 @@ export default function SelfRosterScreen({ navigation }) {
         </View>
       </ScrollView>
 
-      <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={1500}>
+      <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={3000}>
         {snack}
       </Snackbar>
     </View>

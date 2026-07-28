@@ -15,6 +15,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeEmployees } from '../../services/profile';
 import { isBookingPast } from '../../utils/datetime';
+import { SOURCE } from '../../data/mockData';
 import { statusColors, colors } from '../../theme';
 import CalendarFilter, { rangeLabel } from '../../components/CalendarFilter';
 
@@ -22,7 +23,9 @@ const NO_ROUTE = 'No route set';
 const PAST_SECTION = 'Past rides · assignment closed';
 
 export default function BookingsScreen({ navigation }) {
-  const { bookings, cabs, getCabById, assignCabToGroup, approveCancel, rejectCancel } = useApp();
+  const {
+    bookings, cabs, cabCapacity, getCabById, assignCabToGroup, approveCancel, rejectCancel,
+  } = useApp();
 
   const [selected, setSelected] = useState([]); // booking ids ticked for grouping
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -127,11 +130,9 @@ export default function BookingsScreen({ navigation }) {
 
   async function resolve(bookingId, approve) {
     setResolving(bookingId);
-    try {
-      await (approve ? approveCancel(bookingId) : rejectCancel(bookingId));
-    } finally {
-      setResolving(null);
-    }
+    const res = await (approve ? approveCancel(bookingId) : rejectCancel(bookingId));
+    setResolving(null);
+    if (!res?.ok) setError(res?.message || 'Could not update that request.');
   }
 
   function toggle(id) {
@@ -270,6 +271,30 @@ export default function BookingsScreen({ navigation }) {
                   {address || `Pickup: ${item.pickup}`}
                 </Text>
               </View>
+              {/* Why this one-off ride was raised. The employee fills in a
+                  reason and comment on the ad-hoc form, and it was being stored
+                  but never shown here — so the desk was approving blind. */}
+              {item.source === SOURCE.ADHOC && (
+                <View style={styles.adhocBox}>
+                  <View style={styles.adhocHeader}>
+                    <MaterialCommunityIcons name="car-clock" size={15} color={colors.primaryDark} />
+                    <Text variant="labelSmall" style={styles.adhocTitle}>
+                      One-time ride{item.reason ? ` · ${item.reason}` : ''}
+                    </Text>
+                  </View>
+                  {item.comment ? (
+                    <Text variant="bodySmall" style={styles.adhocComment}>
+                      “{item.comment}”
+                    </Text>
+                  ) : null}
+                  {item.officeLocation ? (
+                    <Text variant="bodySmall" style={styles.adhocMeta}>
+                      Office: {item.officeLocation}
+                    </Text>
+                  ) : null}
+                </View>
+              )}
+
               {cab && (
                 <Text variant="bodyMedium" style={styles.assigned}>
                   → {cab.cabNumber} · {cab.driverName}
@@ -407,11 +432,15 @@ export default function BookingsScreen({ navigation }) {
               {cabs.map((c) => (
                 <RadioButton.Item
                   key={c.id}
-                  label={`${c.cabNumber} · ${c.driverName}`}
+                  label={`${c.cabNumber} · ${c.driverName} · ${cabCapacity(c)} seats`}
                   value={c.id}
                 />
               ))}
             </RadioButton.Group>
+            <Text variant="bodySmall" style={styles.pickerHint}>
+              A cab can't be given more riders than it has seats, or two trips in
+              opposite directions at the same time.
+            </Text>
           </Dialog.Content>
           <Dialog.Actions>
             <Button onPress={() => setPickerOpen(false)}>Cancel</Button>
@@ -517,7 +546,18 @@ const styles = StyleSheet.create({
   locationRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 4 },
   locationIcon: { marginTop: 2, marginRight: 4 },
   locationText: { flex: 1, opacity: 0.8 },
-  assigned: { marginTop: 8, fontWeight: 'bold', color: '#2E7D32' },
+  adhocBox: {
+    marginTop: 8,
+    backgroundColor: '#EAF2FE',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  adhocHeader: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  adhocTitle: { color: colors.primaryDark, fontWeight: 'bold' },
+  adhocComment: { marginTop: 4, fontStyle: 'italic', color: colors.text },
+  adhocMeta: { marginTop: 2, color: colors.muted },
+  assigned: { marginTop: 8, fontWeight: 'bold', color: colors.success },
   empty: { textAlign: 'center', marginTop: 40, opacity: 0.6 },
   actionBar: {
     position: 'absolute',
@@ -533,4 +573,5 @@ const styles = StyleSheet.create({
     borderTopColor: '#E0E0E0',
   },
   assignBtn: { flex: 1, marginLeft: 10 },
+  pickerHint: { color: colors.muted, marginTop: 8 },
 });

@@ -15,7 +15,7 @@ import { colors } from '../../theme';
 
 export default function AssignCabScreen({ route, navigation }) {
   const { bookingId } = route.params;
-  const { bookings, cabs, assignCab } = useApp();
+  const { bookings, cabs, cabCapacity, assignCab } = useApp();
 
   const booking = bookings.find((b) => b.id === bookingId);
   const [selectedCabId, setSelectedCabId] = useState(null);
@@ -93,6 +93,9 @@ export default function AssignCabScreen({ route, navigation }) {
                 <Text variant="titleSmall">{item.cabNumber}</Text>
                 <Text variant="bodySmall" style={styles.detail}>
                   {item.driverName} · {item.driverPhone}
+                </Text>
+                <Text variant="bodySmall" style={styles.detail}>
+                  {cabCapacity(item)} seats
                 </Text>
               </View>
             </Card.Content>

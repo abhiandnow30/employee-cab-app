@@ -28,6 +28,11 @@ export default function DriverShareLocationScreen({ navigation }) {
   } = useApp();
   const cabId = currentUser?.cabId;
   const cab = cabId ? getCabById(cabId) : null;
+  // Positions are published under the DRIVER's own id, and the cab record says
+  // which driver it follows. If the cab doesn't point back at this account,
+  // sharing "works" but nobody is listening — so say so rather than letting the
+  // driver think employees can see them.
+  const linkBroken = !!cab && cab.driverUid !== currentUser?.uid;
 
   const [busy, setBusy] = useState(false); // requesting permission / starting
   const [denied, setDenied] = useState(false);
@@ -52,6 +57,16 @@ export default function DriverShareLocationScreen({ navigation }) {
             assigned to your cab will see you move in real time. Sharing keeps
             running while you use the rest of the app.
           </Text>
+
+          {linkBroken ? (
+            <View style={styles.warnBox}>
+              <Text variant="bodySmall" style={styles.warnText}>
+                Cab {cab.cabNumber} isn't linked to your account yet, so employees
+                won't see you move. Ask the transport desk to re-pick your cab in
+                Manage Drivers.
+              </Text>
+            </View>
+          ) : null}
 
           <Text variant="bodyLarge" style={styles.status}>
             {sharing
@@ -125,6 +140,13 @@ export default function DriverShareLocationScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   detail: { opacity: 0.85, marginTop: 6 },
+  warnBox: {
+    backgroundColor: '#FFF6E5',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 12,
+  },
+  warnText: { color: '#B26A00', lineHeight: 18 },
   status: { marginTop: 14, fontWeight: 'bold' },
   coords: { color: colors.muted, marginTop: 4 },
   help: { color: colors.muted, marginTop: 8 },

@@ -30,6 +30,14 @@ export const DRAWER_ITEMS = [
   { label: 'Rate Us', icon: 'star', screen: 'RateUs' },
 ];
 
+// Driver menu. Drivers had no drawer at all, which left their Profile screen
+// registered but unreachable — the only navigation they had was the back arrow.
+export const DRIVER_DRAWER_ITEMS = [
+  { label: 'My Trips', icon: 'car-clock', screen: 'DriverHome' },
+  { label: 'Share Location', icon: 'crosshairs-gps', screen: 'DriverShareLocation' },
+  { label: 'Profile', icon: 'account', screen: 'Profile' },
+];
+
 // Admin (transport desk) menu — the actions that used to be top buttons.
 export const ADMIN_DRAWER_ITEMS = [
   { label: 'Dashboard', icon: 'view-dashboard', screen: 'Bookings' },

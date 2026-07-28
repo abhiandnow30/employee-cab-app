@@ -1,15 +1,21 @@
 // ---------------------------------------------------------------------------
-// SIGN UP SCREEN
-// New users create an account here. Pick a role, fill in the details, Save.
-//   • Employee / Admin → Name, Email, Employee ID, Password, Confirm
-//   • Admin also needs the secret admin code
-//   • Driver → Name, Email, Phone, Password, Confirm + choose a Cab
+// SIGN UP SCREEN  (drivers only)
+// A driver creates their own account here: Name, Email, Phone, Password.
+// The transport desk links them to a cab afterwards.
+//
+// Employees are provisioned by the transport desk (Employee Management), and
+// ADMIN access is granted in the Firebase console — never from the app. The old
+// screen offered an "Admin" role gated by a code that shipped inside the app
+// bundle, which meant anyone could read it and make themselves an admin. The
+// security rules now refuse any self-created role except 'driver', so that
+// option is gone rather than merely hidden.
+//
 // On success, AppContext signs the user in and the app opens their home screen.
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
 import { StyleSheet, View, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
-import { Text, TextInput, Button, HelperText, SegmentedButtons } from 'react-native-paper';
+import { Text, TextInput, Button, HelperText } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../context/AppContext';
 import { colors } from '../theme';
@@ -17,46 +23,26 @@ import { colors } from '../theme';
 export default function SignUpScreen({ navigation }) {
   const { signup } = useApp();
 
-  // Employees are provisioned by the admin (Employees screen), so self-signup is
-  // for Drivers and Admins only. Default to Driver.
-  const [role, setRole] = useState('driver');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [empId, setEmpId] = useState('');
-  const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
-  const [adminCode, setAdminCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const isDriver = role === 'driver';
-  const isAdmin = role === 'admin';
-  const isEmployee = role === 'employee';
-
   async function handleSignup() {
     setError('');
     setLoading(true);
-    const result = await signup({
-      role,
-      name,
-      email,
-      empId,
-      address,
-      phone,
-      adminCode,
-      password,
-      confirm,
-    });
+    const result = await signup({ role: 'driver', name, email, phone, password, confirm });
     setLoading(false);
     if (!result.ok) {
       setError(result.message);
       return;
     }
     // Success: the auth listener loads the profile and App.js switches to the
-    // correct home screen automatically. Nothing more to do here.
+    // driver home screen automatically. Nothing more to do here.
   }
 
   return (
@@ -70,23 +56,12 @@ export default function SignUpScreen({ navigation }) {
           <MaterialCommunityIcons name="account-plus" size={38} color="#FFFFFF" />
         </View>
         <Text variant="headlineMedium" style={styles.title}>
-          Create account
+          Driver sign up
         </Text>
         <Text variant="bodyMedium" style={styles.subtitle}>
-          For drivers and admins. Employees are added by the transport admin.
+          For cab drivers. Employees are added by the transport desk — ask them to
+          create your account.
         </Text>
-
-        {/* Role */}
-        <SegmentedButtons
-          value={role}
-          onValueChange={setRole}
-          density="small"
-          style={styles.role}
-          buttons={[
-            { value: 'driver', label: 'Driver' },
-            { value: 'admin', label: 'Admin' },
-          ]}
-        />
 
         <TextInput
           label="Name"
@@ -108,63 +83,21 @@ export default function SignUpScreen({ navigation }) {
           style={styles.input}
         />
 
-        {/* Employee ID — for Employee & Admin */}
-        {!isDriver && (
-          <TextInput
-            label="Employee ID"
-            value={empId}
-            onChangeText={setEmpId}
-            mode="outlined"
-            left={<TextInput.Icon icon="badge-account" />}
-            style={styles.input}
-          />
-        )}
-
-        {/* Address — for Employee (mandatory; the transport desk uses it for pickup). */}
-        {isEmployee && (
-          <TextInput
-            label="Address"
-            value={address}
-            onChangeText={setAddress}
-            mode="outlined"
-            placeholder="House / street, area, city, pincode"
-            multiline
-            numberOfLines={2}
-            left={<TextInput.Icon icon="map-marker" />}
-            style={styles.input}
-          />
-        )}
-
-        {/* Phone — for Driver. (The admin assigns the cab later.) */}
-        {isDriver && (
-          <>
-            <TextInput
-              label="Phone"
-              value={phone}
-              onChangeText={(t) => setPhone(t.replace(/[^0-9]/g, ''))}
-              mode="outlined"
-              keyboardType="phone-pad"
-              left={<TextInput.Icon icon="phone" />}
-              style={styles.input}
-            />
-            <HelperText type="info" visible={true} style={styles.info}>
-              Your transport desk will assign your cab after you sign up.
-            </HelperText>
-          </>
-        )}
-
-        {/* Admin code — for Admin */}
-        {isAdmin && (
-          <TextInput
-            label="Admin code"
-            value={adminCode}
-            onChangeText={setAdminCode}
-            mode="outlined"
-            autoCapitalize="characters"
-            left={<TextInput.Icon icon="shield-key" />}
-            style={styles.input}
-          />
-        )}
+        {/* The transport desk links the cab afterwards — that's also what turns
+            on live location sharing for this driver. */}
+        <TextInput
+          label="Phone"
+          value={phone}
+          onChangeText={(t) => setPhone(t.replace(/[^0-9]/g, ''))}
+          mode="outlined"
+          keyboardType="phone-pad"
+          maxLength={10}
+          left={<TextInput.Icon icon="phone" />}
+          style={styles.input}
+        />
+        <HelperText type="info" visible={true} style={styles.info}>
+          Your transport desk will link your cab after you sign up.
+        </HelperText>
 
         <TextInput
           label="Password"
@@ -235,7 +168,6 @@ const styles = StyleSheet.create({
   title: { textAlign: 'center', fontWeight: 'bold', color: colors.primary },
   subtitle: { textAlign: 'center', marginBottom: 20, opacity: 0.7 },
   label: { marginBottom: 6, marginTop: 4, opacity: 0.8 },
-  role: { marginBottom: 14 },
   input: { marginBottom: 12 },
   info: { marginBottom: 8 },
   button: { marginTop: 8, paddingVertical: 4 },
