@@ -21,10 +21,16 @@ import { COMPANY_NAME, companyLogo } from '../branding';
 // Each menu item → which screen it opens.
 export const DRAWER_ITEMS = [
   { label: 'Home', icon: 'home', screen: 'EmployeeHome' },
+  // The employee's shifts now come from the roster HR uploads, so their calendar
+  // sits near the top — it's the thing they check most.
+  { label: 'My Shift Calendar', icon: 'calendar-month', screen: 'MySchedule' },
   { label: 'Profile', icon: 'account', screen: 'Profile' },
   { label: 'My Rides', icon: 'calendar-search', screen: 'MyRides' },
+  { label: 'Notifications', icon: 'bell', screen: 'Notifications' },
+  // Replaces self-booking: the employee raises an exception to the roster
+  // instead of creating rides.
+  { label: 'Change Request', icon: 'calendar-edit', screen: 'ChangeRequest' },
   { label: 'Ride History', icon: 'history', screen: 'RosterHistory' },
-  { label: 'Trip Cancel', icon: 'car-off', screen: 'TripCancel' },
   { label: 'Track Cab', icon: 'map-marker-radius', screen: 'TrackCab' },
   { label: 'Feedback', icon: 'message-text', screen: 'Feedback' },
   { label: 'Rate Us', icon: 'star', screen: 'RateUs' },
@@ -39,19 +45,40 @@ export const DRIVER_DRAWER_ITEMS = [
 ];
 
 // Admin (transport desk) menu — the actions that used to be top buttons.
+// HR / Admin owns the SOURCE DATA and the policy: the monthly roster, who exists,
+// what the shifts mean, and the reporting. Day-to-day cab assignment is the
+// coordinator's job and deliberately absent here.
 export const ADMIN_DRAWER_ITEMS = [
-  { label: 'Dashboard', icon: 'view-dashboard', screen: 'Bookings' },
+  { label: 'Upload Roster', icon: 'file-upload-outline', screen: 'RosterUpload' },
+  { label: 'Shift Policy', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
+  // Each employee's pickup route. The coordinator groups carpools by this, so
+  // without it everyone lands under "No route set" and has to be grouped by hand.
+  { label: 'Employee Routes', icon: 'map-marker-account', screen: 'EmployeeRoutes' },
+  // Only two things reach HR: shift extensions, and emergency rides the
+  // coordinator had no vehicle for.
+  { label: 'Exception Approvals', icon: 'clipboard-alert-outline', screen: 'ExceptionApprovals' },
   { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
-  { label: 'Messages', icon: 'email-outline', screen: 'Messages' },
-  { label: 'Manage Cabs', icon: 'car-multiple', screen: 'ManageCabs' },
-  { label: 'Manage Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
-  { label: 'Shift Roster', icon: 'calendar-account', screen: 'ShiftRoster' },
-  { label: 'Manage Timings', icon: 'clock-edit-outline', screen: 'ManageTimings' },
-  { label: 'Track Cabs', icon: 'map-marker-radius', screen: 'TrackCabs' },
+  { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
+  { label: 'Routes & Timings', icon: 'map-marker-path', screen: 'ManageTimings' },
   { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
   { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
   { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
+];
+
+// The COORDINATOR runs the day: turn the roster into assigned cabs, watch the
+// trips, keep the fleet current. No roster upload, no policy, no employee
+// records.
+export const COORDINATOR_DRAWER_ITEMS = [
+  { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
+  { label: 'Change Requests', icon: 'clipboard-list-outline', screen: 'ChangeRequests' },
+  { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
+  { label: 'Fleet', icon: 'car-multiple', screen: 'ManageCabs' },
+  { label: 'Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
+  { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
+  { label: 'Messages', icon: 'email-outline', screen: 'Messages' },
+  { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
+  { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
 ];
 
 const EMPTY_PW = { current: '', next: '', confirm: '' };
@@ -145,7 +172,12 @@ function ChangePasswordDialog({ visible, onDismiss, onChangePassword }) {
 }
 
 // Friendly label for a role.
-const ROLE_LABEL = { admin: 'Admin', driver: 'Driver', employee: 'Employee' };
+const ROLE_LABEL = {
+  admin: 'HR / Admin',
+  coordinator: 'Transport Coordinator',
+  driver: 'Driver',
+  employee: 'Employee',
+};
 
 // The signed-in user card at the bottom: name + role, expands on tap.
 function UserCard({ user, onChangePassword }) {

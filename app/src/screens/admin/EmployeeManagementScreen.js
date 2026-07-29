@@ -22,6 +22,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeEmployees } from '../../services/profile';
 import useSyncedDraft from '../../utils/useSyncedDraft';
+import Dropdown from '../../components/Dropdown';
 import { colors } from '../../theme';
 
 function draftOf(emp, homeAddressOf) {
@@ -30,6 +31,9 @@ function draftOf(emp, homeAddressOf) {
     name: emp.name || '',
     phone: emp.phone || '',
     address: emp.address || homeAddressOf(emp) || '',
+    // The pickup route the coordinator groups this person's rides under. Lives at
+    // roster.route, so it is saved separately from the fields above.
+    route: emp.roster?.route || null,
   };
 }
 
@@ -40,9 +44,10 @@ const DEFAULT_EMPLOYEE_PHONE = '9848094029';
 
 const EMPTY_NEW = {
   role: 'employee', email: '', password: '', empId: '', name: '', phone: '', address: '',
+  route: null,
 };
 
-function EmployeeCard({ emp, onSave, onDelete, homeAddressOf }) {
+function EmployeeCard({ emp, onSave, onDelete, homeAddressOf, routeOptions }) {
   // Draft over the LIVE profile, so a change made elsewhere (an approved address
   // request, another admin) is picked up while this card is untouched. Seeding
   // once at mount meant a Save could overwrite newer data with a stale copy.
@@ -64,6 +69,7 @@ function EmployeeCard({ emp, onSave, onDelete, homeAddressOf }) {
       name: draft.name.trim() || emp.email,
       phone: draft.phone.trim(),
       address: draft.address.trim(),
+      route: draft.route || null,
     });
     setSaving(false);
     setMsg(res?.ok ? 'Saved ✓' : res?.message || 'Could not save.');
@@ -122,6 +128,23 @@ function EmployeeCard({ emp, onSave, onDelete, homeAddressOf }) {
           style={styles.input}
         />
 
+        {/* The route is what puts this person in a cab with their neighbours.
+            Without one they sit under "No route set" on the coordinator's board
+            and have to be grouped by hand every day of the month. */}
+        <Text variant="labelLarge" style={styles.fieldLabel}>
+          Pickup route
+        </Text>
+        <Dropdown
+          value={draft.route}
+          options={routeOptions}
+          onSelect={(route) => setDraft((d) => ({ ...d, route }))}
+          compact={false}
+          placeholder="No route set — coordinator can't group this person"
+          status={draft.route ? undefined : 'error'}
+          leadingIcon="map-marker-outline"
+        />
+        <View style={styles.routeSpacer} />
+
         {msg ? (
           <HelperText type={msg.startsWith('Saved') ? 'info' : 'error'} visible>
             {msg}
@@ -147,12 +170,15 @@ function EmployeeCard({ emp, onSave, onDelete, homeAddressOf }) {
 // a DRIVER. Drivers previously had no provisioning route at all: this dialog
 // always created employees, and the self-signup screen was only reachable by
 // typing a URL, so on a phone a driver account couldn't be created.
-function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) {
+function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', routeOptions = [] }) {
   const [form, setForm] = useState(() => ({ ...EMPTY_NEW, phone: defaultPhone }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const setField = (key) => (t) => setForm((f) => ({ ...f, [key]: t }));
   const isDriver = form.role === 'driver';
+  const isCoordinator = form.role === 'coordinator';
+  // Only employees ride in cabs, so only they need an ID and a home address.
+  const needsRiderFields = !isDriver && !isCoordinator;
 
   function close() {
     setForm({ ...EMPTY_NEW, phone: defaultPhone });
@@ -173,7 +199,7 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
       setError('Temporary password must be at least 6 characters.');
       return;
     }
-    if (!isDriver && !form.empId.trim()) {
+    if (needsRiderFields && !form.empId.trim()) {
       setError('Employee ID is required.');
       return;
     }
@@ -190,7 +216,9 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
   return (
     <Portal>
       <Dialog visible={visible} onDismiss={close} style={styles.dialog}>
-        <Dialog.Title>Add {isDriver ? 'Driver' : 'Employee'}</Dialog.Title>
+        <Dialog.Title>
+          Add {isDriver ? 'Driver' : isCoordinator ? 'Coordinator' : 'Employee'}
+        </Dialog.Title>
         <Dialog.ScrollArea>
           <View style={styles.dialogBody}>
             <Text variant="bodySmall" style={styles.dialogHint}>
@@ -206,12 +234,19 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
               buttons={[
                 { value: 'employee', label: 'Employee', icon: 'account' },
                 { value: 'driver', label: 'Driver', icon: 'account-tie-hat' },
+                { value: 'coordinator', label: 'Coordinator', icon: 'headset' },
               ]}
             />
             {isDriver ? (
               <HelperText type="info" visible style={styles.pwHint}>
-                Link the driver to a cab afterwards in Manage Drivers — that's what
-                turns on their live location.
+                The coordinator links this driver to a cab on the Fleet screen —
+                that's what turns on their live location.
+              </HelperText>
+            ) : null}
+            {isCoordinator ? (
+              <HelperText type="info" visible style={styles.pwHint}>
+                Coordinators run the daily cab assignment and resolve change
+                requests. They can't upload rosters or change policy.
               </HelperText>
             ) : null}
             <TextInput
@@ -234,8 +269,8 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
             <HelperText type="info" visible style={styles.pwHint}>
               At least 6 characters. They can change it after signing in.
             </HelperText>
-            {/* Drivers have no employee id or home address on file. */}
-            {!isDriver ? (
+            {/* Only employees ride, so only they get an ID and home address. */}
+            {needsRiderFields ? (
               <TextInput
                 label="Employee ID"
                 value={form.empId}
@@ -261,7 +296,7 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
               maxLength={10}
               style={styles.input}
             />
-            {!isDriver ? (
+            {needsRiderFields ? (
               <TextInput
                 label="Home Address"
                 value={form.address}
@@ -271,6 +306,28 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
                 placeholder="Flat / House, Street, Area, City, Pincode"
                 style={styles.input}
               />
+            ) : null}
+            {/* Route them now. This is the only moment when someone is guaranteed
+                to be thinking about where this person lives — asking later is what
+                left the coordinator's board full of unrouted riders. */}
+            {needsRiderFields ? (
+              <>
+                <Text variant="labelLarge" style={styles.fieldLabel}>
+                  Pickup route
+                </Text>
+                <Dropdown
+                  value={form.route}
+                  options={routeOptions}
+                  onSelect={(route) => setForm((f) => ({ ...f, route }))}
+                  compact={false}
+                  placeholder="Choose the pickup route"
+                  leadingIcon="map-marker-outline"
+                />
+                <HelperText type="info" visible style={styles.pwHint}>
+                  The coordinator groups the day's cabs by route. You can change it
+                  later on Employee Routes.
+                </HelperText>
+              </>
             ) : null}
             {error ? <HelperText type="error" visible>{error}</HelperText> : null}
           </View>
@@ -287,7 +344,10 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '' }) 
 }
 
 export default function EmployeeManagementScreen() {
-  const { adminSaveEmployee, adminCreateEmployee, adminRemoveEmployee, homeAddressOf } = useApp();
+  const {
+    adminSaveEmployee, adminCreateEmployee, adminRemoveEmployee, homeAddressOf,
+    routeOptions,
+  } = useApp();
   const [employees, setEmployees] = useState([]);
   const [error, setError] = useState('');
   const [snack, setSnack] = useState('');
@@ -314,7 +374,10 @@ export default function EmployeeManagementScreen() {
     setError('');
     const res = await adminCreateEmployee(form);
     if (res?.ok) {
-      const who = form.role === 'driver' ? 'Driver' : 'Employee';
+      const who =
+        form.role === 'driver' ? 'Driver'
+        : form.role === 'coordinator' ? 'Coordinator'
+        : 'Employee';
       setSnack(`${who} ${form.name || form.email} created.`);
     }
     return res;
@@ -353,6 +416,7 @@ export default function EmployeeManagementScreen() {
               onSave={handleSave}
               onDelete={setDeleteFor}
               homeAddressOf={homeAddressOf}
+              routeOptions={routeOptions}
             />
           )}
           contentContainerStyle={styles.list}
@@ -372,6 +436,7 @@ export default function EmployeeManagementScreen() {
         onDismiss={() => setAddOpen(false)}
         onCreate={handleCreate}
         defaultPhone={DEFAULT_EMPLOYEE_PHONE}
+        routeOptions={routeOptions}
       />
 
       <Portal>
@@ -428,6 +493,8 @@ const styles = StyleSheet.create({
   deleteBtn: { margin: 0 },
   divider: { marginVertical: 10 },
   input: { marginBottom: 10 },
+  fieldLabel: { opacity: 0.8, marginBottom: 6 },
+  routeSpacer: { height: 10 },
   pwHint: { marginTop: -8, marginBottom: 2 },
   saveBtn: { marginTop: 2 },
   error: { color: colors.danger, paddingHorizontal: 12 },

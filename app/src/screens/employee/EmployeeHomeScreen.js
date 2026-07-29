@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
-// EMPLOYEE HOME  (modelled on the SMART TRANSPORT reference)
-//   Header:  My Services - [employee id]
-//   Tiles:   SELF ROSTER | ADHOC | FEEDBACK  → open those pages
-//   Sections: My ORS   → rides booked via Self Roster
-//             My Adhoc → rides booked via Adhoc
-//   Each section has a refresh + collapse (–/+) control, like the screenshot.
+// EMPLOYEE HOME
+//   Header:  name + employee id
+//   Tiles:   MY SHIFT CALENDAR | CHANGE REQUEST | FEEDBACK
+//   Section: the rides the roster has generated for them
+// Employees don't create rides any more — HR uploads a monthly shift roster and
+// the rides follow from it. This screen is view-and-flag, not book.
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
@@ -108,17 +108,18 @@ export default function EmployeeHomeScreen({ navigation }) {
           Employee ID: {currentUser?.empId || '—'}
         </Text>
 
-        {/* Top action tiles */}
+        {/* Top action tiles. Employees no longer book rides — their shifts come
+            from the roster HR uploads — so these are view + exception, not create. */}
         <View style={styles.tileRow}>
           <Tile
             icon="calendar-month"
-            label="WEEKLY SCHEDULE"
-            onPress={() => navigation.navigate('SelfRoster')}
+            label="MY SHIFT CALENDAR"
+            onPress={() => navigation.navigate('MySchedule')}
           />
           <Tile
-            icon="car-clock"
-            label="ONE-TIME RIDE"
-            onPress={() => navigation.navigate('BookCab')}
+            icon="calendar-edit"
+            label="CHANGE REQUEST"
+            onPress={() => navigation.navigate('ChangeRequest')}
           />
           <Tile
             icon="message-draw"

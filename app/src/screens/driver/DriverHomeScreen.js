@@ -1,11 +1,13 @@
 // ---------------------------------------------------------------------------
-// DRIVER HOME  (My Trips)
-// Shows the trips the admin assigned to THIS driver's cab. The driver advances
+// DRIVER HOME  (My Trips) — Step 9
+// The trips the coordinator assigned to THIS driver's cab, in PICKUP SEQUENCE:
+// sorted by date then pickup time, and numbered within each run so a carpool
+// reads as "Stop 2 of 4" rather than an unordered list. The driver advances
 // each trip's status: Cab assigned → On the way → Arrived → Completed.
 // A "Share Live Location" button broadcasts the driver's GPS for the cab.
 // ---------------------------------------------------------------------------
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import { Text, Card, Chip, Button, Divider, Snackbar, Portal, Dialog } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -13,6 +15,7 @@ import { useApp } from '../../context/AppContext';
 import { statusColors, colors } from '../../theme';
 import { SUPPORT_HELPLINE } from '../../branding';
 import { tripPickupPoint, tripPlaceLabels } from '../../services/directions';
+import { timeToMinutes } from '../../utils/datetime';
 import { openDirections, callNumber } from '../../utils/externalLinks';
 
 // Open maps directions to where the driver collects this employee. Platform
@@ -32,6 +35,7 @@ export default function DriverHomeScreen({ navigation }) {
   const {
     currentUser,
     bookings,
+    myCab,
     updateBookingStatus,
     markNoShow,
     getCabById,
@@ -66,14 +70,47 @@ export default function DriverHomeScreen({ navigation }) {
     if (!res?.ok) setError(res?.message || 'Could not flag the no-show. Please try again.');
   }
 
-  const cab = currentUser?.cabId ? getCabById(currentUser.cabId) : null;
+  // The vehicle this driver is on. Looked up by ownership (the cab pointing at
+  // them) rather than by the profile's stored cabId, so the two can't disagree —
+  // the old code read "No cab assigned" while trips for a since-deleted cab still
+  // showed. The coordinator sets this link; the driver only reads it.
+  const cab = myCab || (currentUser?.cabId ? getCabById(currentUser.cabId) : null);
+  const needsCab = !myCab;
   // Trips for THIS driver's cab that aren't cancelled. The context subscription
   // (subscribeCabBookings) already scopes `bookings` to this cab, but we filter
   // by assignedCabId explicitly too so a driver can never see another cab's
   // trips even if that ever changes.
-  const trips = bookings.filter(
-    (b) => b.status !== 'Cancelled' && b.assignedCabId === currentUser?.cabId
-  );
+  //
+  // Step 9 — PICKUP SEQUENCE. A carpool is several riders at the same time going
+  // the same way, and the driver needs them in the order they'll be collected,
+  // not in whatever order the desk happened to assign them. Trips are sorted by
+  // date, then pickup time, then rider name, and each gets a stop number within
+  // its run so "Stop 2 of 4" is meaningful.
+  const trips = useMemo(() => {
+    const mine = bookings.filter(
+      (b) => b.status !== 'Cancelled' && b.assignedCabId === currentUser?.cabId
+    );
+    const sorted = [...mine].sort((a, b) => {
+      const byDate = String(a.date || '').localeCompare(String(b.date || ''));
+      if (byDate) return byDate;
+      const byTime = (timeToMinutes(a.shift) ?? 0) - (timeToMinutes(b.shift) ?? 0);
+      if (byTime) return byTime;
+      return String(a.employeeName || '').localeCompare(String(b.employeeName || ''));
+    });
+    // Number the stops within each run (same date + time + direction).
+    // How many stops each run has, so a card can say "of 4".
+    const runs = {};
+    sorted.forEach((b) => {
+      const run = `${b.date}|${b.shift}|${b.direction}`;
+      runs[run] = (runs[run] || 0) + 1;
+    });
+    const seen = {};
+    return sorted.map((b) => {
+      const run = `${b.date}|${b.shift}|${b.direction}`;
+      seen[run] = (seen[run] || 0) + 1;
+      return { ...b, stopNumber: seen[run], stopCount: runs[run], runKey: run };
+    });
+  }, [bookings, currentUser?.cabId]);
 
   function renderTrip({ item }) {
     const action = NEXT_ACTION[item.status];
@@ -82,7 +119,22 @@ export default function DriverHomeScreen({ navigation }) {
       <Card style={styles.card} mode="elevated">
         <Card.Content>
           <View style={styles.rowBetween}>
-            <Text variant="titleMedium">{item.employeeName}</Text>
+            <View style={styles.nameWrap}>
+              {/* Only worth showing when the cab is actually sharing a run. */}
+              {item.stopCount > 1 ? (
+                <View style={styles.stopBadge}>
+                  <Text style={styles.stopBadgeText}>{item.stopNumber}</Text>
+                </View>
+              ) : null}
+              <View style={styles.nameCol}>
+                <Text variant="titleMedium">{item.employeeName}</Text>
+                {item.stopCount > 1 ? (
+                  <Text variant="bodySmall" style={styles.stopText}>
+                    Stop {item.stopNumber} of {item.stopCount}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
             <Chip
               compact
               style={{ backgroundColor: statusColors[item.status] || '#9E9E9E' }}
@@ -172,9 +224,31 @@ export default function DriverHomeScreen({ navigation }) {
           {currentUser?.name}
         </Text>
         <Text variant="bodyMedium" style={styles.sub}>
-          {cab ? `Cab ${cab.cabNumber}` : 'No cab assigned'}
+          {cab ? `Cab ${cab.cabNumber}` : 'No cab linked yet'}
         </Text>
       </View>
+
+      {/* Until the coordinator links a cab to this account there are no trips to
+          show and nothing to broadcast, so say what's needed rather than leaving
+          a dead screen. */}
+      {needsCab ? (
+        <Card mode="outlined" style={styles.setupCard}>
+          <Card.Content>
+            <View style={styles.setupRow}>
+              <MaterialCommunityIcons name="car-clock" size={26} color={colors.primary} />
+              <View style={styles.setupText}>
+                <Text variant="titleSmall">Waiting for a cab</Text>
+                <Text variant="bodySmall" style={styles.setupBody}>
+                  The transport coordinator hasn't linked a vehicle to your account
+                  yet. Once they do, your trips appear here and you can share your
+                  location. Call the desk on {SUPPORT_HELPLINE} if today's shift has
+                  started.
+                </Text>
+              </View>
+            </View>
+          </Card.Content>
+        </Card>
+      ) : null}
 
       <Button
         icon={sharingLocation ? 'access-point-check' : 'crosshairs-gps'}
@@ -182,6 +256,7 @@ export default function DriverHomeScreen({ navigation }) {
         style={styles.shareBtn}
         contentStyle={styles.shareBtnContent}
         onPress={() => navigation.navigate('DriverShareLocation')}
+        disabled={needsCab}
       >
         {sharingLocation ? 'Location Sharing — On' : 'Share Live Location'}
       </Button>
@@ -263,6 +338,11 @@ const styles = StyleSheet.create({
   header: { marginBottom: 12 },
   name: { fontWeight: 'bold' },
   sub: { color: colors.muted, marginTop: 2 },
+  setupCard: { marginBottom: 12, borderColor: colors.primary },
+  setupRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  setupText: { flex: 1 },
+  setupBody: { color: colors.muted, marginTop: 2, lineHeight: 18 },
+  setupBtn: { marginTop: 12, borderRadius: 8 },
   shareBtn: { borderRadius: 10, marginBottom: 10 },
   shareBtnContent: { paddingVertical: 8 },
   sharingBanner: {
@@ -295,6 +375,18 @@ const styles = StyleSheet.create({
   contactBtn: { flex: 1, borderRadius: 8 },
   divider: { marginVertical: 12 },
   noShowBtn: { marginTop: 8, borderColor: colors.danger },
+  nameWrap: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  nameCol: { flex: 1 },
+  stopBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stopBadgeText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 },
+  stopText: { color: colors.muted, marginTop: 1 },
   dialog: { width: '100%', maxWidth: 420, alignSelf: 'center' },
   empty: { alignItems: 'center', marginTop: 40 },
   emptyText: { color: colors.muted, marginTop: 8 },

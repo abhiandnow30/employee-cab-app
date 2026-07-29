@@ -20,7 +20,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { theme, colors } from './src/theme';
 import { AppProvider, useApp } from './src/context/AppContext';
 import AppDrawer, {
-  DRAWER_ITEMS, ADMIN_DRAWER_ITEMS, DRIVER_DRAWER_ITEMS,
+  DRAWER_ITEMS, ADMIN_DRAWER_ITEMS, DRIVER_DRAWER_ITEMS, COORDINATOR_DRAWER_ITEMS,
 } from './src/components/AppDrawer';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { companyLogo, SUPPORT_HELPLINE } from './src/branding';
@@ -28,20 +28,16 @@ import { companyLogo, SUPPORT_HELPLINE } from './src/branding';
 import LoginScreen from './src/screens/LoginScreen';
 import SignUpScreen from './src/screens/SignUpScreen';
 import EmployeeHomeScreen from './src/screens/employee/EmployeeHomeScreen';
-import SelfRosterScreen from './src/screens/employee/SelfRosterScreen';
 import FeedbackScreen from './src/screens/employee/FeedbackScreen';
 import MyRidesScreen from './src/screens/employee/MyRidesScreen';
-import BookCabScreen from './src/screens/employee/BookCabScreen';
 import RosterHistoryScreen from './src/screens/employee/RosterHistoryScreen';
-import TripCancelScreen from './src/screens/employee/TripCancelScreen';
 import TrackCabScreen from './src/screens/employee/TrackCabScreen';
 import RateUsScreen from './src/screens/employee/RateUsScreen';
 import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
-import AssignCabScreen from './src/screens/admin/AssignCabScreen';
 import ManageDriversScreen from './src/screens/admin/ManageDriversScreen';
 import ManageCabsScreen from './src/screens/admin/ManageCabsScreen';
-import ShiftRosterScreen from './src/screens/admin/ShiftRosterScreen';
+import EmployeeRoutesScreen from './src/screens/admin/EmployeeRoutesScreen';
 import ManageTimingsScreen from './src/screens/admin/ManageTimingsScreen';
 import CancelledRidesScreen from './src/screens/admin/CancelledRidesScreen';
 import NoShowsScreen from './src/screens/admin/NoShowsScreen';
@@ -52,6 +48,13 @@ import AddressChangeRequestsScreen from './src/screens/admin/AddressChangeReques
 import MessagesScreen from './src/screens/admin/MessagesScreen';
 import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
 import DriverShareLocationScreen from './src/screens/driver/DriverShareLocationScreen';
+import MyScheduleScreen from './src/screens/employee/MyScheduleScreen';
+import RosterUploadScreen from './src/screens/admin/RosterUploadScreen';
+import ShiftPolicyScreen from './src/screens/admin/ShiftPolicyScreen';
+import CoordinatorDashboardScreen from './src/screens/coordinator/CoordinatorDashboardScreen';
+import ChangeRequestQueueScreen from './src/screens/coordinator/ChangeRequestQueueScreen';
+import ChangeRequestScreen from './src/screens/employee/ChangeRequestScreen';
+import NotificationsScreen from './src/screens/employee/NotificationsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -74,21 +77,22 @@ const linking = {
       SignUp: 'signup',
       // Employee
       EmployeeHome: 'home',
-      SelfRoster: 'self-roster',
-      BookCab: 'adhoc',
+      MySchedule: 'my-schedule',
+      ChangeRequest: 'change-request',
+      Notifications: 'notifications',
       Feedback: 'feedback',
       MyRides: 'my-rides',
       RosterHistory: 'roster-history',
-      TripCancel: 'trip-cancel',
       TrackCab: 'track',
       RateUs: 'rate-us',
       Profile: 'profile',
-      // Admin
+      // HR / Admin
+      RosterUpload: 'roster-upload',
+      ShiftPolicy: 'shift-policy',
       Bookings: 'bookings',
-      AssignCab: 'assign-cab',
       ManageDrivers: 'drivers',
       ManageCabs: 'cabs',
-      ShiftRoster: 'shift-roster',
+      EmployeeRoutes: 'employee-routes',
       ManageTimings: 'manage-timings',
       CancelledRides: 'cancelled-rides',
       NoShows: 'no-shows',
@@ -97,6 +101,10 @@ const linking = {
       EmployeeManagement: 'employees',
       AddressRequests: 'address-requests',
       Messages: 'messages',
+      ExceptionApprovals: 'exception-approvals',
+      // Coordinator
+      CoordinatorHome: 'coordinator',
+      ChangeRequests: 'change-requests',
       // Driver
       DriverHome: 'driver',
       DriverShareLocation: 'driver/share',
@@ -107,7 +115,7 @@ const linking = {
 // A custom header that shows the screen title and a Log out action on the right.
 // We use Paper's Appbar so the header matches the app's look.
 function AppHeader({ navigation, route, options, back }) {
-  const { logout, currentUser, changePassword, sendMessage } = useApp();
+  const { logout, currentUser, changePassword, sendMessage, unreadCount } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { width } = useWindowDimensions();
 
@@ -147,14 +155,17 @@ function AppHeader({ navigation, route, options, back }) {
 
   const isEmployee = currentUser?.role === 'employee';
   const isAdmin = currentUser?.role === 'admin';
+  const isCoordinator = currentUser?.role === 'coordinator';
   const isDriver = currentUser?.role === 'driver';
   // Every signed-in role gets a navigation drawer. On wide screens it's a
   // permanent left sidebar (rendered in RootNavigator), so the header's ☰ menu
   // button isn't needed there. (Drivers had no drawer at all, which left their
   // Profile screen unreachable.)
-  const hasDrawer = isEmployee || isAdmin || isDriver;
+  const hasDrawer = !!currentUser;
   const drawerItems = isAdmin
     ? ADMIN_DRAWER_ITEMS
+    : isCoordinator
+    ? COORDINATOR_DRAWER_ITEMS
     : isDriver
     ? DRIVER_DRAWER_ITEMS
     : DRAWER_ITEMS;
@@ -162,7 +173,9 @@ function AppHeader({ navigation, route, options, back }) {
   // Which screen "home" means for this role.
   const homeRoute =
     currentUser?.role === 'admin'
-      ? 'Bookings'
+      ? 'RosterUpload'
+      : currentUser?.role === 'coordinator'
+      ? 'CoordinatorHome'
       : currentUser?.role === 'driver'
       ? 'DriverHome'
       : 'EmployeeHome';
@@ -200,9 +213,28 @@ function AppHeader({ navigation, route, options, back }) {
           // Tapping the brand title returns to the role's home screen.
           onPress={currentUser ? () => navigation.navigate(homeRoute) : undefined}
         />
-        {/* Message + call the transport desk — employees only. */}
+        {/* Notifications, message + call the transport desk — employees only. */}
         {isEmployee ? (
           <>
+            {/* The badge is the whole point of in-app notifications: an employee
+                shouldn't have to go looking to find out a cab was assigned. */}
+            <View style={styles.bellWrap}>
+              <Appbar.Action
+                icon="bell"
+                color="#FFFFFF"
+                onPress={() => navigation.navigate('Notifications')}
+                accessibilityLabel={
+                  unreadCount ? `Notifications, ${unreadCount} unread` : 'Notifications'
+                }
+              />
+              {unreadCount > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             <Appbar.Action icon="message-text" color="#FFFFFF" onPress={openMsg} />
             <Appbar.Action icon="phone" color="#FFFFFF" onPress={callDesk} />
           </>
@@ -219,7 +251,7 @@ function AppHeader({ navigation, route, options, back }) {
         user={currentUser}
         items={drawerItems}
         onChangePassword={changePassword}
-        onLogout={isAdmin ? logout : undefined}
+        onLogout={isAdmin || isCoordinator ? logout : undefined}
         activeScreen={route.name}
         onNavigate={(item) => {
           setDrawerOpen(false);
@@ -288,6 +320,37 @@ function UnprovisionedScreen() {
   );
 }
 
+// Signed in, but the database couldn't be reached — so we don't know whether this
+// account has a profile or not. Distinct from UnprovisionedScreen on purpose: the
+// old code showed "Account not set up" for a network failure, which sent people
+// looking for an administrator when the real problem was a blocked connection.
+function ConnectionErrorScreen() {
+  const { profileError, retryProfile, logout } = useApp();
+  return (
+    <View style={styles.splash}>
+      <View style={styles.lockedCard}>
+        <MaterialCommunityIcons name="cloud-alert" size={56} color={colors.danger} />
+        <Text variant="headlineSmall" style={styles.lockedTitle}>
+          Can't reach the server
+        </Text>
+        <Text variant="bodyMedium" style={styles.lockedBody}>
+          {profileError}
+        </Text>
+        <Text variant="bodySmall" style={styles.lockedHelp}>
+          Your data is safe — the app simply couldn't load it. On a company network,
+          try a different browser or an incognito window with extensions disabled.
+        </Text>
+        <Button mode="contained" icon="refresh" onPress={retryProfile} style={styles.lockedBtn}>
+          Try again
+        </Button>
+        <Button mode="text" icon="logout" onPress={logout}>
+          Sign out
+        </Button>
+      </View>
+    </View>
+  );
+}
+
 // A dismissible banner for live-subscription failures. Without it a permissions
 // error or a dropped connection just renders an empty list, which reads as
 // "you have no rides".
@@ -308,17 +371,22 @@ function DataErrorBanner() {
 }
 
 function RootNavigator() {
-  const { currentUser, authReady, profileMissing, changePassword, logout } = useApp();
+  const {
+    currentUser, authReady, profileMissing, profileError, changePassword, logout,
+  } = useApp();
   const { width } = useWindowDimensions();
   const navRef = useNavigationContainerRef();
   const [activeRoute, setActiveRoute] = useState(null);
 
   // On a wide screen every signed-in role gets a permanent left sidebar.
   const isAdmin = currentUser?.role === 'admin';
+  const isCoordinator = currentUser?.role === 'coordinator';
   const isDriver = currentUser?.role === 'driver';
   const showSidebar = !!currentUser && width >= WIDE_BREAKPOINT;
   const sidebarItems = isAdmin
     ? ADMIN_DRAWER_ITEMS
+    : isCoordinator
+    ? COORDINATOR_DRAWER_ITEMS
     : isDriver
     ? DRIVER_DRAWER_ITEMS
     : DRAWER_ITEMS;
@@ -332,6 +400,10 @@ function RootNavigator() {
       </View>
     );
   }
+
+  // Couldn't reach the database → say so, and offer a retry. Checked BEFORE
+  // profileMissing, because a failed read tells us nothing about provisioning.
+  if (profileError) return <ConnectionErrorScreen />;
 
   // Authenticated but not provisioned → locked out, with a way to sign out.
   if (profileMissing) return <UnprovisionedScreen />;
@@ -350,7 +422,7 @@ function RootNavigator() {
             user={currentUser}
             items={sidebarItems}
             onChangePassword={changePassword}
-            onLogout={isAdmin ? logout : undefined}
+            onLogout={isAdmin || isCoordinator ? logout : undefined}
             activeScreen={activeRoute}
             onNavigate={(item) => navRef.navigate(item.screen, item.params)}
           />
@@ -387,14 +459,19 @@ function RootNavigator() {
               options={{ title: 'Home' }}
             />
             <Stack.Screen
-              name="SelfRoster"
-              component={SelfRosterScreen}
-              options={{ title: 'Weekly Schedule' }}
+              name="MySchedule"
+              component={MyScheduleScreen}
+              options={{ title: 'My Shift Calendar' }}
             />
             <Stack.Screen
-              name="BookCab"
-              component={BookCabScreen}
-              options={{ title: 'Book a Ride' }}
+              name="ChangeRequest"
+              component={ChangeRequestScreen}
+              options={{ title: 'Change Request' }}
+            />
+            <Stack.Screen
+              name="Notifications"
+              component={NotificationsScreen}
+              options={{ title: 'Notifications' }}
             />
             <Stack.Screen
               name="Feedback"
@@ -410,11 +487,6 @@ function RootNavigator() {
               name="RosterHistory"
               component={RosterHistoryScreen}
               options={{ title: 'Ride History' }}
-            />
-            <Stack.Screen
-              name="TripCancel"
-              component={TripCancelScreen}
-              options={{ title: 'Trip Cancel' }}
             />
             <Stack.Screen
               name="TrackCab"
@@ -452,37 +524,83 @@ function RootNavigator() {
             />
           </>
         ) : (
-          // ---- Admin screens ----
+          // ---- Desk screens (HR/Admin + Coordinator) ----
+          // Both desk roles share the operational screens; the two role-specific
+          // groups below are what differ. Registering both sets for both roles
+          // would let a coordinator deep-link into roster upload, so each is
+          // gated on the role.
           <>
+            {currentUser.role === 'admin' ? (
+              <>
+                <Stack.Screen
+                  name="RosterUpload"
+                  component={RosterUploadScreen}
+                  options={{ title: 'Upload Monthly Roster' }}
+                />
+                <Stack.Screen
+                  name="ShiftPolicy"
+                  component={ShiftPolicyScreen}
+                  options={{ title: 'Shift Policy' }}
+                />
+                <Stack.Screen
+                  name="EmployeeManagement"
+                  component={EmployeeManagementScreen}
+                  options={{ title: 'Employee Management' }}
+                />
+                <Stack.Screen
+                  name="ExceptionApprovals"
+                  component={ChangeRequestQueueScreen}
+                  options={{ title: 'Exception Approvals' }}
+                />
+                <Stack.Screen
+                  name="AddressRequests"
+                  component={AddressChangeRequestsScreen}
+                  options={{ title: 'Address Change Requests' }}
+                />
+                <Stack.Screen
+                  name="EmployeeRoutes"
+                  component={EmployeeRoutesScreen}
+                  options={{ title: 'Employee Routes' }}
+                />
+                <Stack.Screen
+                  name="ManageTimings"
+                  component={ManageTimingsScreen}
+                  options={{ title: 'Routes & Timings' }}
+                />
+                <Stack.Screen
+                  name="FeedbackInbox"
+                  component={FeedbackInboxScreen}
+                  options={{ title: 'Feedback & Ratings' }}
+                />
+              </>
+            ) : (
+              <>
+                <Stack.Screen
+                  name="CoordinatorHome"
+                  component={CoordinatorDashboardScreen}
+                  options={{ title: "Today's Rides" }}
+                />
+                <Stack.Screen
+                  name="ChangeRequests"
+                  component={ChangeRequestQueueScreen}
+                  options={{ title: 'Change Requests' }}
+                />
+              </>
+            )}
             <Stack.Screen
               name="Bookings"
               component={BookingsScreen}
               options={{ title: 'All Bookings' }}
             />
             <Stack.Screen
-              name="AssignCab"
-              component={AssignCabScreen}
-              options={{ title: 'Assign Cab' }}
-            />
-            <Stack.Screen
               name="ManageDrivers"
               component={ManageDriversScreen}
-              options={{ title: 'Manage Drivers' }}
+              options={{ title: 'Coordinators' }}
             />
             <Stack.Screen
               name="ManageCabs"
               component={ManageCabsScreen}
-              options={{ title: 'Manage Cabs' }}
-            />
-            <Stack.Screen
-              name="ShiftRoster"
-              component={ShiftRosterScreen}
-              options={{ title: 'Shift Roster' }}
-            />
-            <Stack.Screen
-              name="ManageTimings"
-              component={ManageTimingsScreen}
-              options={{ title: 'Manage Timings' }}
+              options={{ title: 'Fleet' }}
             />
             <Stack.Screen
               name="CancelledRides"
@@ -498,21 +616,6 @@ function RootNavigator() {
               name="TrackCabs"
               component={TrackCabsScreen}
               options={{ title: 'Track Cabs' }}
-            />
-            <Stack.Screen
-              name="FeedbackInbox"
-              component={FeedbackInboxScreen}
-              options={{ title: 'Feedback & Ratings' }}
-            />
-            <Stack.Screen
-              name="EmployeeManagement"
-              component={EmployeeManagementScreen}
-              options={{ title: 'Employee Management' }}
-            />
-            <Stack.Screen
-              name="AddressRequests"
-              component={AddressChangeRequestsScreen}
-              options={{ title: 'Address Change Requests' }}
             />
             <Stack.Screen
               name="Messages"
@@ -599,4 +702,18 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   dataErrorText: { color: '#B26A00', flex: 1 },
+  bellWrap: { position: 'relative' },
+  badge: {
+    position: 'absolute',
+    top: 4,
+    right: 2,
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: 'bold' },
 });

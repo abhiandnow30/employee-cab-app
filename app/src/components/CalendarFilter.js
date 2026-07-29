@@ -1,245 +1,270 @@
 // ---------------------------------------------------------------------------
-// CalendarFilter — a pop-up month calendar for filtering by date, with preset
-// ranges (Today, This Week, This Month, …). Dependency-free (no date-picker
-// library) so it works the same on web and mobile.
+// CalendarFilter — pick a date, a range, or a whole month.
 //
-// Value model: null = "All dates", or { start, end } where both are
-// "YYYY-MM-DD" keys (a single day has start === end). Because the keys are
-// zero-padded ISO strings, plain string comparison gives correct ordering.
+// Renders as a compact chip showing the current selection; tapping it opens a
+// dialog with a month grid and a set of presets.
 //
-// Usage:
+// API (unchanged — the Bookings screen depends on it):
 //   <CalendarFilter value={range} onChange={setRange} />
-//   const shown = range ? rows.filter(r => r.date >= range.start && r.date <= range.end) : rows
+//     value    — { start, end } as ISO "YYYY-MM-DD" keys, or null for "all dates"
+//     onChange — called with a new { start, end }, or null when cleared
+//   rangeLabel(range) — the same human-readable string the chip shows
+//
+// Picking works the way people expect from a booking site: the first tap sets the
+// start and clears the end, the second tap closes the range. Tapping a day before
+// the start restarts the selection from there rather than producing a backwards
+// range.
 // ---------------------------------------------------------------------------
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, Pressable } from 'react-native';
-import { Text, Button, Portal, Dialog, Divider } from 'react-native-paper';
+import { Text, Portal, Dialog, Button, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { todayKey, shiftDateKey } from '../utils/datetime';
 import { colors } from '../theme';
 
-const WEEK = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-const MON_FULL = [
+const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
-const MON_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const CELL = 40;
 
-const pad = (n) => String(n).padStart(2, '0');
-const toKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const keyToDate = (key) => {
+const parse = (key) => {
   const [y, m, d] = String(key).split('-').map((n) => parseInt(n, 10));
-  return new Date(y, m - 1, d);
+  return { y, m: (m || 1) - 1, d: d || 1 };
 };
-const startOfDay = (d) => {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-};
-const addDays = (d, n) => {
-  const x = new Date(d);
-  x.setDate(x.getDate() + n);
-  return x;
-};
-const addMonths = (d, n) => {
-  const x = new Date(d);
-  x.setMonth(x.getMonth() + n);
-  return x;
-};
-const firstOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
-const lastOfMonth = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
-const fmt = (key) => {
-  const d = keyToDate(key);
-  return `${MON_SHORT[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+const keyOf = (y, m, d) =>
+  `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+const pretty = (key) => {
+  const { y, m, d } = parse(key);
+  return `${String(d).padStart(2, '0')} ${SHORT[m]} ${y}`;
 };
 
-// Human label for the trigger button.
-export function rangeLabel(value) {
-  if (!value) return 'All dates';
-  if (value.start === value.end) return fmt(value.start);
-  // Whole calendar month → show "Jul 2026".
-  const s = keyToDate(value.start);
-  const e = keyToDate(value.end);
-  const isWholeMonth =
-    s.getDate() === 1 &&
-    e.getTime() === lastOfMonth(s).getTime() &&
-    s.getMonth() === e.getMonth() &&
-    s.getFullYear() === e.getFullYear();
-  if (isWholeMonth) return `${MON_SHORT[s.getMonth()]} ${s.getFullYear()}`;
-  return `${fmt(value.start)} – ${fmt(value.end)}`;
-}
-
-// Preset ranges, computed relative to `today`.
-function presets(today) {
-  const t = startOfDay(today);
-  const mkThisWeek = () => {
-    const start = addDays(t, -t.getDay()); // Sunday
-    return { start: toKey(start), end: toKey(addDays(start, 6)) };
-  };
-  return [
-    { label: 'Today', range: () => ({ start: toKey(t), end: toKey(t) }) },
-    { label: 'Yesterday', range: () => ({ start: toKey(addDays(t, -1)), end: toKey(addDays(t, -1)) }) },
-    { label: 'This Week', range: mkThisWeek },
-    { label: 'Last 7 Days', range: () => ({ start: toKey(addDays(t, -6)), end: toKey(t) }) },
-    { label: 'This Month', range: () => ({ start: toKey(firstOfMonth(t)), end: toKey(lastOfMonth(t)) }) },
-    {
-      label: 'Previous Month',
-      range: () => {
-        const p = addMonths(t, -1);
-        return { start: toKey(firstOfMonth(p)), end: toKey(lastOfMonth(p)) };
-      },
-    },
-    {
-      label: 'Last 3 Months',
-      range: () => ({ start: toKey(firstOfMonth(addMonths(t, -2))), end: toKey(lastOfMonth(t)) }),
-    },
-    {
-      label: 'Last 6 Months',
-      range: () => ({ start: toKey(firstOfMonth(addMonths(t, -5))), end: toKey(lastOfMonth(t)) }),
-    },
-  ];
+// The label shown on the chip, and reusable by callers for empty states.
+export function rangeLabel(range) {
+  if (!range?.start) return 'All dates';
+  if (range.start === range.end) return pretty(range.start);
+  // A whole calendar month reads better as the month's name.
+  const s = parse(range.start);
+  const e = parse(range.end);
+  const lastOfMonth = new Date(s.y, s.m + 1, 0).getDate();
+  if (s.y === e.y && s.m === e.m && s.d === 1 && e.d === lastOfMonth) {
+    return `${MONTHS[s.m]} ${s.y}`;
+  }
+  return `${pretty(range.start)} – ${pretty(range.end)}`;
 }
 
 export default function CalendarFilter({ value, onChange }) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(value || null);
-  const initial = value ? keyToDate(value.start) : new Date();
-  const [viewY, setViewY] = useState(initial.getFullYear());
-  const [viewM, setViewM] = useState(initial.getMonth()); // 0-based
+  const [month, setMonth] = useState(() => (value?.start || todayKey()).slice(0, 7));
+  // In-dialog draft, so cancelling leaves the caller's value untouched.
+  const [start, setStart] = useState(value?.start || null);
+  const [end, setEnd] = useState(value?.end || null);
 
-  const today = new Date();
-  const todayKey = toKey(today);
+  const { y, m } = useMemo(() => {
+    const [yy, mm] = month.split('-').map((n) => parseInt(n, 10));
+    return { y: yy, m: (mm || 1) - 1 };
+  }, [month]);
+
+  const weeks = useMemo(() => {
+    const days = new Date(y, m + 1, 0).getDate();
+    const firstDow = (new Date(y, m, 1).getDay() + 6) % 7; // Monday first
+    const cells = Array(firstDow).fill(null);
+    for (let d = 1; d <= days; d++) cells.push(d);
+    while (cells.length % 7) cells.push(null);
+    const out = [];
+    for (let i = 0; i < cells.length; i += 7) out.push(cells.slice(i, i + 7));
+    return out;
+  }, [y, m]);
 
   function openDialog() {
-    setDraft(value || null);
-    const base = value ? keyToDate(value.start) : new Date();
-    setViewY(base.getFullYear());
-    setViewM(base.getMonth());
+    setStart(value?.start || null);
+    setEnd(value?.end || null);
+    setMonth((value?.start || todayKey()).slice(0, 7));
     setOpen(true);
   }
 
-  function stepMonth(delta) {
-    const d = addMonths(new Date(viewY, viewM, 1), delta);
-    setViewY(d.getFullYear());
-    setViewM(d.getMonth());
+  function tapDay(d) {
+    const key = keyOf(y, m, d);
+    // No start yet, or a completed range, or a tap before the start → begin again.
+    if (!start || (start && end) || key < start) {
+      setStart(key);
+      setEnd(null);
+      return;
+    }
+    setEnd(key);
   }
 
-  // Tap a day: first tap picks a single day; a second tap extends to a range.
-  function pickDay(dayNum) {
-    const key = toKey(new Date(viewY, viewM, dayNum));
-    setDraft((cur) => {
-      if (!cur || cur.start !== cur.end) return { start: key, end: key };
-      return cur.start <= key ? { start: cur.start, end: key } : { start: key, end: cur.start };
-    });
+  function shiftMonth(by) {
+    const next = new Date(y, m + by, 1);
+    setMonth(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`);
   }
 
-  function choosePreset(p) {
-    const r = p.range();
-    setDraft(r);
-    const s = keyToDate(r.start);
-    setViewY(s.getFullYear());
-    setViewM(s.getMonth());
-  }
+  const presets = [
+    { label: 'Today', get: () => ({ start: todayKey(), end: todayKey() }) },
+    {
+      label: 'Tomorrow',
+      get: () => {
+        const t = shiftDateKey(todayKey(), 1);
+        return { start: t, end: t };
+      },
+    },
+    { label: 'Next 7 days', get: () => ({ start: todayKey(), end: shiftDateKey(todayKey(), 6) }) },
+    {
+      label: 'This month',
+      get: () => {
+        const t = parse(todayKey());
+        return {
+          start: keyOf(t.y, t.m, 1),
+          end: keyOf(t.y, t.m, new Date(t.y, t.m + 1, 0).getDate()),
+        };
+      },
+    },
+    {
+      label: 'Last 30 days',
+      get: () => ({ start: shiftDateKey(todayKey(), -29), end: todayKey() }),
+    },
+  ];
 
   function apply() {
-    onChange(draft);
+    if (!start) {
+      onChange(null);
+    } else {
+      // A single tap means that one day.
+      onChange({ start, end: end || start });
+    }
     setOpen(false);
   }
-  function clearAll() {
-    setDraft(null);
-  }
 
-  const inRange = (key) => draft && key >= draft.start && key <= draft.end;
-  const isEnd = (key) => draft && (key === draft.start || key === draft.end);
-
-  // Build the month grid: leading blanks + day numbers.
-  const daysInMonth = new Date(viewY, viewM + 1, 0).getDate();
-  const firstWeekday = new Date(viewY, viewM, 1).getDay();
-  const cells = [];
-  for (let i = 0; i < firstWeekday; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const inRange = (d) => {
+    const key = keyOf(y, m, d);
+    if (!start) return false;
+    const hi = end || start;
+    return key >= start && key <= hi;
+  };
+  const isEdge = (d) => {
+    const key = keyOf(y, m, d);
+    return key === start || key === end;
+  };
 
   return (
     <>
-      <Pressable style={styles.trigger} onPress={openDialog}>
-        <MaterialCommunityIcons name="calendar-month" size={18} color={colors.primary} />
-        <Text style={styles.triggerText} numberOfLines={1}>{rangeLabel(value)}</Text>
-        <MaterialCommunityIcons name="chevron-down" size={18} color={colors.primary} />
+      <Pressable
+        style={styles.trigger}
+        onPress={openDialog}
+        accessibilityRole="button"
+        accessibilityLabel={`Date filter: ${rangeLabel(value)}`}
+      >
+        <MaterialCommunityIcons name="calendar-range" size={16} color={colors.primary} />
+        <Text style={styles.triggerText} numberOfLines={1}>
+          {rangeLabel(value)}
+        </Text>
+        <MaterialCommunityIcons name="chevron-down" size={16} color={colors.primary} />
       </Pressable>
 
       <Portal>
         <Dialog visible={open} onDismiss={() => setOpen(false)} style={styles.dialog}>
-          <Dialog.Title style={styles.title}>Calendar</Dialog.Title>
+          <Dialog.Title>Filter by date</Dialog.Title>
           <Dialog.Content>
             <View style={styles.body}>
-              {/* Calendar */}
+              {/* Month grid */}
               <View style={styles.calCol}>
                 <View style={styles.monthBar}>
-                  <Text variant="titleMedium" style={styles.monthLabel}>
-                    {MON_FULL[viewM]} {viewY}
-                  </Text>
-                  <View style={styles.navBtns}>
-                    <Pressable hitSlop={8} onPress={() => stepMonth(-1)} style={styles.navBtn}>
-                      <MaterialCommunityIcons name="chevron-left" size={22} color={colors.text} />
-                    </Pressable>
-                    <Pressable hitSlop={8} onPress={() => stepMonth(1)} style={styles.navBtn}>
-                      <MaterialCommunityIcons name="chevron-right" size={22} color={colors.text} />
-                    </Pressable>
-                  </View>
+                  <Pressable onPress={() => shiftMonth(-1)} hitSlop={8} style={styles.arrow}>
+                    <MaterialCommunityIcons name="chevron-left" size={22} color={colors.primary} />
+                  </Pressable>
+                  <Text variant="titleSmall">{`${MONTHS[m]} ${y}`}</Text>
+                  <Pressable onPress={() => shiftMonth(1)} hitSlop={8} style={styles.arrow}>
+                    <MaterialCommunityIcons name="chevron-right" size={22} color={colors.primary} />
+                  </Pressable>
                 </View>
-
-                <View style={styles.weekRow}>
-                  {WEEK.map((w, i) => (
-                    <Text key={i} style={styles.weekday}>{w}</Text>
+                <View style={styles.dowRow}>
+                  {DOW.map((d) => (
+                    <Text key={d} style={styles.dowText}>
+                      {d}
+                    </Text>
                   ))}
                 </View>
-
                 <View style={styles.grid}>
-                  {cells.map((d, i) => {
-                    if (d == null) return <View key={`b${i}`} style={styles.cell} />;
-                    const key = toKey(new Date(viewY, viewM, d));
-                    const selected = isEnd(key);
-                    const between = inRange(key) && !selected;
-                    const isToday = key === todayKey;
-                    return (
-                      <Pressable key={key} style={styles.cell} onPress={() => pickDay(d)}>
-                        <View
+                  {weeks.flat().map((d, i) =>
+                    d == null ? (
+                      <View key={`b${i}`} style={styles.cell} />
+                    ) : (
+                      <Pressable
+                        key={d}
+                        onPress={() => tapDay(d)}
+                        style={[
+                          styles.cell,
+                          styles.dayCell,
+                          inRange(d) && styles.inRange,
+                          isEdge(d) && styles.edge,
+                        ]}
+                      >
+                        <Text
                           style={[
-                            styles.day,
-                            between && styles.dayBetween,
-                            selected && styles.daySelected,
-                            isToday && !selected && styles.dayToday,
+                            styles.dayText,
+                            inRange(d) && styles.inRangeText,
+                            isEdge(d) && styles.edgeText,
                           ]}
                         >
-                          <Text style={[styles.dayText, selected && styles.dayTextSelected]}>{d}</Text>
-                        </View>
+                          {d}
+                        </Text>
                       </Pressable>
-                    );
-                  })}
+                    )
+                  )}
                 </View>
+                <Text variant="bodySmall" style={styles.help}>
+                  {!start
+                    ? 'Tap a day to start.'
+                    : !end
+                    ? 'Tap a second day for a range, or apply for just this one.'
+                    : `${pretty(start)} – ${pretty(end)}`}
+                </Text>
               </View>
 
               {/* Presets */}
               <View style={styles.presetCol}>
-                <Text variant="labelLarge" style={styles.presetHead}>Preset Filters</Text>
-                <Pressable onPress={clearAll} style={styles.presetItem}>
-                  <Text style={[styles.presetText, !draft && styles.presetTextActive]}>All dates</Text>
-                </Pressable>
-                {presets(today).map((p) => (
-                  <Pressable key={p.label} onPress={() => choosePreset(p)} style={styles.presetItem}>
-                    <Text style={styles.presetText}>{p.label}</Text>
-                  </Pressable>
+                <Text variant="labelLarge" style={styles.presetLabel}>
+                  Quick picks
+                </Text>
+                {presets.map((p) => (
+                  <Button
+                    key={p.label}
+                    mode="text"
+                    compact
+                    style={styles.presetBtn}
+                    contentStyle={styles.presetContent}
+                    onPress={() => {
+                      const r = p.get();
+                      setStart(r.start);
+                      setEnd(r.end);
+                      setMonth(r.start.slice(0, 7));
+                    }}
+                  >
+                    {p.label}
+                  </Button>
                 ))}
+                <Divider style={styles.presetDivider} />
+                <Button
+                  mode="text"
+                  compact
+                  icon="filter-remove"
+                  style={styles.presetBtn}
+                  contentStyle={styles.presetContent}
+                  onPress={() => {
+                    setStart(null);
+                    setEnd(null);
+                  }}
+                >
+                  All dates
+                </Button>
               </View>
             </View>
-
-            <Divider style={styles.footDivider} />
-            <Text variant="bodySmall" style={styles.selection}>
-              {rangeLabel(draft)}
-            </Text>
           </Dialog.Content>
           <Dialog.Actions>
-            <Button mode="outlined" onPress={() => setOpen(false)} style={styles.footBtn}>
+            <Button onPress={() => setOpen(false)} style={styles.footBtn}>
               Cancel
             </Button>
             <Button mode="contained" onPress={apply} style={styles.footBtn}>
@@ -252,46 +277,50 @@ export default function CalendarFilter({ value, onChange }) {
   );
 }
 
-const CELL = 40;
-
 const styles = StyleSheet.create({
   trigger: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    alignSelf: 'flex-start',
+    gap: 6,
     backgroundColor: '#EFF3F9',
-    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#D6E0EE',
+    borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  triggerText: { color: colors.primaryDark, fontWeight: 'bold', maxWidth: 220 },
+  triggerText: { color: colors.primaryDark, fontWeight: '600', maxWidth: 220 },
   dialog: { width: '100%', maxWidth: 620, alignSelf: 'center' },
-  title: { paddingBottom: 0 },
   body: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
   calCol: { flexGrow: 1, minWidth: 300 },
-  monthBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  monthLabel: { fontWeight: 'bold' },
-  navBtns: { flexDirection: 'row', gap: 8 },
-  navBtn: { padding: 4, borderRadius: 6 },
-  weekRow: { flexDirection: 'row' },
-  weekday: { width: CELL, textAlign: 'center', color: colors.muted, fontSize: 12, marginBottom: 4 },
+  monthBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  arrow: { padding: 4 },
+  dowRow: { flexDirection: 'row', width: CELL * 7 },
+  dowText: {
+    width: CELL,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.muted,
+  },
   grid: { flexDirection: 'row', flexWrap: 'wrap', width: CELL * 7 },
   cell: { width: CELL, height: CELL, alignItems: 'center', justifyContent: 'center' },
-  day: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  dayBetween: { backgroundColor: '#E3ECFB', borderRadius: 6, width: CELL },
-  daySelected: { backgroundColor: colors.primary },
-  dayToday: { borderWidth: 1, borderColor: colors.primary },
-  dayText: { color: colors.text, fontSize: 14 },
-  dayTextSelected: { color: '#FFFFFF', fontWeight: 'bold' },
+  dayCell: { borderRadius: 8 },
+  inRange: { backgroundColor: '#EAF2FE' },
+  edge: { backgroundColor: colors.primary },
+  dayText: { fontSize: 13, color: colors.text },
+  inRangeText: { color: colors.primaryDark, fontWeight: '600' },
+  edgeText: { color: '#FFFFFF', fontWeight: 'bold' },
+  help: { color: colors.muted, marginTop: 8 },
   presetCol: { flexGrow: 1, minWidth: 150 },
-  presetHead: { marginBottom: 6, color: colors.text },
-  presetItem: { paddingVertical: 7 },
-  presetText: { color: colors.muted, fontSize: 15 },
-  presetTextActive: { color: colors.primary, fontWeight: 'bold' },
-  footDivider: { marginTop: 14, marginBottom: 8 },
-  selection: { color: colors.primaryDark, fontWeight: '600' },
+  presetLabel: { color: colors.text, marginBottom: 4 },
+  presetBtn: { alignSelf: 'flex-start' },
+  presetContent: { justifyContent: 'flex-start' },
+  presetDivider: { marginVertical: 8 },
   footBtn: { minWidth: 96 },
 });
