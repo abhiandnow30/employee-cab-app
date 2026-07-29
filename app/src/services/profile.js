@@ -24,12 +24,15 @@ import {
   serverTimestamp, writeBatch, getDocs,
 } from 'firebase/firestore';
 import { initializeApp, getApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import {
+  getAuth, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail,
+} from 'firebase/auth';
 import { firestore, firebaseConfig } from './firebase';
 
 // The roles an admin may hand out from the app. 'admin' is deliberately absent:
-// admin access is granted in the Firebase console only.
-export const ASSIGNABLE_ROLES = ['employee', 'driver'];
+// HR/Admin access is granted in the Firebase console only, so nobody can create
+// a second HR account from inside the app.
+export const ASSIGNABLE_ROLES = ['employee', 'driver', 'coordinator'];
 
 // Set by AppContext.signup() right before creating the account.
 let pendingProfile = null;
@@ -80,56 +83,11 @@ export function subscribeDrivers(cb, onError) {
   );
 }
 
-// Admin links a driver to a cab — or unlinks them when `cabId` is null.
-//
-// This keeps BOTH sides of the link in step, atomically:
-//   • employees/<driverUid>.cabId — which cab this driver drives
-//   • cabs/<cabId>.driverUid      — which driver's live location this cab shows
-//     (the live-location feed is keyed by driver uid so the database rules can
-//      guarantee a driver only writes their own position)
-//   • cabs/<cabId>.driverName / driverPhone — kept in sync with the account, so
-//     the name employees see is the person actually driving
-// A cab can only have one driver, so any previous holder is unlinked first.
-export async function assignCabToDriver(driverUid, cabId) {
-  if (!firestore) throw new Error('Backend not configured.');
-  const driverSnap = await getDoc(doc(firestore, 'employees', driverUid));
-  const driver = driverSnap.exists() ? driverSnap.data() : {};
-  const previousCabId = driver.cabId || null;
-
-  const batch = writeBatch(firestore);
-  batch.update(doc(firestore, 'employees', driverUid), { cabId: cabId || null });
-
-  // Leaving the old cab: forget the driver on it so nobody tracks a stale feed.
-  if (previousCabId && previousCabId !== cabId) {
-    batch.set(
-      doc(firestore, 'cabs', previousCabId),
-      { driverUid: null },
-      { merge: true }
-    );
-  }
-
-  if (cabId) {
-    // Another driver may still be holding this cab — unlink them.
-    const holders = await getDocs(
-      query(collection(firestore, 'employees'), where('cabId', '==', cabId))
-    );
-    holders.docs
-      .filter((d) => d.id !== driverUid)
-      .forEach((d) => batch.update(d.ref, { cabId: null }));
-
-    batch.set(
-      doc(firestore, 'cabs', cabId),
-      {
-        driverUid,
-        driverName: driver.name || '',
-        driverPhone: driver.phone || '',
-      },
-      { merge: true }
-    );
-  }
-
-  return batch.commit();
-}
+// NOTE: driver↔cab linking lives in services/cabs.js (linkCabDriver), because the
+// COORDINATOR owns the fleet. It writes both sides together:
+//   cabs/<cabId>.driverUid  ←→  employees/<uid>.cabId
+// Neither side is ever writable by the driver — `cabId` is what grants read
+// access to that cab's riders.
 
 // Admin edits an employee's profile (Employee Management screen). Only the admin
 // may write another user's profile — enforced by the Firestore security rules.
@@ -203,6 +161,119 @@ export async function adminCreateAccount({ email, password, role = 'employee', p
   }
 }
 
+// --- Admin: provision a whole roster's worth of people ----------------------
+//
+// HR's monthly sheet already names everyone, with their id, email, phone and home
+// address. Re-typing all of that into a dialog once per person is the slowest,
+// most error-prone part of onboarding — and an id typed differently from the sheet
+// silently drops that person out of the roster.
+//
+// So the sheet provisions them. Three decisions worth keeping:
+//
+//   * NOBODY IS GIVEN A PASSWORD. Each account is created with a throwaway random
+//     one that is never shown to anyone, then Firebase emails the person a link to
+//     set their own. HR never invents, stores or distributes a password.
+//   * ONE AT A TIME, not in parallel. Every create runs through the same secondary
+//     Firebase app, and each one signs *into* it; overlapping creates would race
+//     over that single session.
+//   * ONE FAILURE IS NOT A FAILED BATCH. A duplicate email or a typo'd address
+//     stops that person only — everyone else is still created, and the caller gets
+//     a per-person reason for whatever didn't work.
+
+// A password nobody will ever type. It exists only because Firebase requires one
+// at creation; the reset email is how the person actually gets in.
+function throwawayPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  const size = 24;
+  let out = '';
+  const cryptoObj = typeof globalThis !== 'undefined' ? globalThis.crypto : null;
+  if (cryptoObj?.getRandomValues) {
+    const bytes = new Uint8Array(size);
+    cryptoObj.getRandomValues(bytes);
+    for (let i = 0; i < size; i++) out += alphabet[bytes[i] % alphabet.length];
+    return out;
+  }
+  // No Web Crypto (very old browser). Still unguessable enough for a value that is
+  // discarded before anyone could try it.
+  for (let i = 0; i < size; i++) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
+}
+
+// Turn Firebase's auth codes into something HR can act on.
+function inviteError(e) {
+  switch (e?.code) {
+    case 'auth/email-already-in-use':
+      return 'That email already has an account';
+    case 'auth/invalid-email':
+      return 'That email address is not valid';
+    case 'auth/weak-password':
+      return 'Firebase rejected the generated password — try again';
+    case 'auth/too-many-requests':
+      return 'Firebase is rate-limiting new accounts — wait a minute and retry';
+    case 'permission-denied':
+      return 'Not allowed to create employee records — check the Firestore rules';
+    default:
+      return e?.message || 'Could not create this account';
+  }
+}
+
+// `people`: [{ email, name, empId, phone, address, route }]
+// `onProgress(done, total, label)` is called as each one finishes, so a long batch
+// can show real progress rather than an indeterminate spinner.
+export async function adminInviteEmployees(people, { onProgress, role = 'employee' } = {}) {
+  if (!firestore) throw new Error('Backend not configured.');
+  const list = Array.isArray(people) ? people : [];
+  const created = [];
+  const failed = [];
+
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    const email = String(p?.email || '').trim().toLowerCase();
+    const name = String(p?.name || '').trim();
+    try {
+      if (!email) throw new Error('No email address for this person');
+      if (!name) throw new Error('No name for this person');
+      const uid = await adminCreateAccount({
+        email,
+        password: throwawayPassword(),
+        role,
+        profile: {
+          name,
+          empId: String(p.empId || '').trim(),
+          phone: String(p.phone || '').trim(),
+          address: String(p.address || '').trim(),
+          // The route the sheet named, if any — the coordinator groups rides by it.
+          ...(p.route ? { roster: { route: String(p.route).trim() } } : {}),
+        },
+      });
+      // The account exists; now let them set their own password. A failure here is
+      // NOT a failed creation — the account is real and HR can resend the email —
+      // so it is reported separately rather than rolled back.
+      let invited = true;
+      try {
+        await sendPasswordResetEmail(getAuth(), email);
+      } catch {
+        invited = false;
+      }
+      created.push({ uid, email, name, empId: p.empId, invited });
+    } catch (e) {
+      failed.push({ email, name, empId: p?.empId, reason: inviteError(e) });
+    }
+    onProgress?.(i + 1, list.length, name || email);
+  }
+
+  return {
+    created,
+    failed,
+    createdCount: created.length,
+    failedCount: failed.length,
+    // Accounts that exist but whose "set your password" email didn't send.
+    notInvited: created.filter((c) => !c.invited),
+  };
+}
+
 // --- Admin: shift roster ---------------------------------------------------
 
 // Live list of all EMPLOYEE accounts (the people the admin rosters). Calls cb
@@ -223,13 +294,55 @@ export function subscribeEmployees(cb, onError) {
 // Admin saves an employee's shift roster. `roster` is:
 //   {
 //     route:       'JNTU Cab',                 // cab location / pickup route
-//     shift:       '1:00 PM – 10:00 PM',       // shift timing (day / night)
-//     workingDays: ['Mon','Tue','Wed','Thu','Fri'],  // may include Sat/Sun
+//     shift:       '1:00 PM – 10:00 PM',       // legacy, no longer read
+//     workingDays: ['Mon','Tue','Wed','Thu','Fri'],  // legacy, no longer read
 //   }
-// `workingDays` is the source of truth for which days an employee may book a
-// cab — an employee rostered on Sat/Sun can book weekend rides; others can't.
+// Shifts now come from the monthly roster HR uploads (services/roster.js), so
+// `route` is the only field of this map anything still reads. Kept whole-map for
+// the documents that already carry the old fields.
 export function updateEmployeeRoster(uid, roster) {
   return updateDoc(doc(firestore, 'employees', uid), { roster });
+}
+
+// --- Pickup route ----------------------------------------------------------
+//
+// THE ROUTE IS THE UNIT THE COORDINATOR WORKS IN. Everyone on one route is a
+// cabful of people who live near each other, so grouping today's rides by route
+// is what turns ~200 rides into ~15 assignment decisions. An employee with no
+// route lands in "No route set" and has to be grouped by hand, every single day
+// of the month — which is why setting it is worth this much plumbing.
+//
+// Stored at employees/<uid>.roster.route, and written with a DOTTED PATH so the
+// legacy shift / workingDays fields beside it survive the write. Sending the
+// whole `roster` map would silently drop them.
+//
+// The rules let HR write it, and let a coordinator write THIS FIELD ONLY, so a
+// missing route can be fixed by whoever notices it at 9 PM without waiting for
+// HR the next morning.
+export function updateEmployeeRoute(uid, route) {
+  if (!firestore || !uid) return Promise.resolve();
+  const value = route ? String(route).trim() : null;
+  return updateDoc(doc(firestore, 'employees', uid), { 'roster.route': value });
+}
+
+// Set one route on many employees at once — the fast path for a fresh company or
+// a re-drawn route map, where doing it one card at a time is what stops it from
+// happening at all. Chunked because Firestore commits at most 500 writes a batch.
+export async function bulkSetEmployeeRoute(uids, route) {
+  if (!firestore) throw new Error('Backend not configured.');
+  const list = (uids || []).filter(Boolean);
+  if (!list.length) return 0;
+  const value = route ? String(route).trim() : null;
+
+  const LIMIT = 450;
+  for (let i = 0; i < list.length; i += LIMIT) {
+    const batch = writeBatch(firestore);
+    list.slice(i, i + LIMIT).forEach((uid) => {
+      batch.update(doc(firestore, 'employees', uid), { 'roster.route': value });
+    });
+    await batch.commit();
+  }
+  return list.length;
 }
 
 // Live view of ONE user's own profile document. Used to keep the signed-in

@@ -1,27 +1,28 @@
 // ---------------------------------------------------------------------------
 // CABS SERVICE
-// The company fleet lives in the Firestore "cabs" collection so the admin can
-// add / edit / remove cabs. Every screen that needs the cab list (assign
-// dialog, Manage Drivers, Track Cab) reads it live from here.
+// The fleet lives in the Firestore "cabs" collection, maintained by the TRANSPORT
+// COORDINATOR: they add each vehicle, keep its details current, and link the
+// driver account that will broadcast its location.
 //
 // A cab document:
 //   { cabNumber, driverName, driverPhone, capacity, driverUid }
 //   • capacity  — how many riders fit, so the desk can't overfill a carpool.
-//   • driverUid — the driver ACCOUNT linked to this cab (set from Manage
-//                 Drivers). It's how the app finds the cab's live-location feed,
-//                 which is keyed by driver uid. driverName/driverPhone are kept
-//                 in step with that account.
+//   • driverUid — the driver ACCOUNT this cab follows. It is also the key the
+//                 live-location feed uses (driverLocations/<uid>), so linking a
+//                 driver here is what switches their tracking on.
 //
-// The 3 starter cabs keep their original ids (c1/c2/c3) so any existing
-// bookings/driver links that reference them stay valid.
+// The link is two-sided and always written together:
+//   cabs/<cabId>.driverUid  ←→  employees/<uid>.cabId
+// A driver cannot write either side — `cabId` is what grants read access to that
+// cab's riders (names and home addresses), so only the desk sets it.
 // ---------------------------------------------------------------------------
 
 import {
-  collection, doc, addDoc, updateDoc, setDoc, onSnapshot, getDocs,
-  query, where, writeBatch,
+  collection, doc, addDoc, updateDoc, getDoc, onSnapshot, getDocs,
+  query, where, writeBatch, serverTimestamp,
 } from 'firebase/firestore';
 import { firestore } from './firebase';
-import { cabs as DEFAULT_CABS, DEFAULT_CAB_CAPACITY, STATUS } from '../data/mockData';
+import { DEFAULT_CAB_CAPACITY, STATUS } from '../data/mockData';
 
 const COL = 'cabs';
 
@@ -45,6 +46,8 @@ export function subscribeCabs(cb, onError) {
   );
 }
 
+// --- Fleet CRUD (coordinator) -----------------------------------------------
+
 export function addCab({ cabNumber, driverName, driverPhone, capacity }) {
   return addDoc(collection(firestore, COL), {
     cabNumber: (cabNumber || '').trim(),
@@ -52,18 +55,69 @@ export function addCab({ cabNumber, driverName, driverPhone, capacity }) {
     driverPhone: (driverPhone || '').trim(),
     capacity: Number(capacity) || DEFAULT_CAB_CAPACITY,
     driverUid: null,
+    createdAt: serverTimestamp(),
   });
 }
 
-export function updateCab(id, data) {
-  const fields = { ...data };
-  if ('capacity' in fields) fields.capacity = Number(fields.capacity) || DEFAULT_CAB_CAPACITY;
-  return updateDoc(doc(firestore, COL, id), fields);
+export function updateCab(id, { cabNumber, driverName, driverPhone, capacity }) {
+  return updateDoc(doc(firestore, COL, id), {
+    cabNumber: (cabNumber || '').trim(),
+    driverName: (driverName || '').trim(),
+    driverPhone: (driverPhone || '').trim(),
+    capacity: Number(capacity) || DEFAULT_CAB_CAPACITY,
+    updatedAt: serverTimestamp(),
+  });
 }
 
-// Remove a cab, cleaning up everything that pointed at it — otherwise the fleet
-// loses the cab but its driver keeps broadcasting for a cab that no longer
-// exists, and rides show a blank cab.
+// Point a cab at a driver account — or at nobody, when `driverUid` is null.
+//
+// Writes BOTH sides atomically, and releases whatever each side was holding
+// before: a cab has one driver and a driver has one cab, so re-linking has to
+// clear the previous pairing or the app ends up tracking a stale feed.
+// Also copies the driver's name/phone onto the cab, so the name employees see is
+// the person actually driving.
+export async function linkCabDriver(cabId, driverUid) {
+  if (!firestore) throw new Error('Backend not configured.');
+
+  let driver = {};
+  if (driverUid) {
+    const snap = await getDoc(doc(firestore, 'employees', driverUid));
+    if (!snap.exists()) throw new Error('That driver account no longer exists.');
+    driver = snap.data();
+  }
+
+  const batch = writeBatch(firestore);
+
+  // Whoever currently holds this cab loses it.
+  const holders = await getDocs(
+    query(collection(firestore, 'employees'), where('cabId', '==', cabId))
+  );
+  holders.docs
+    .filter((d) => d.id !== driverUid)
+    .forEach((d) => batch.update(d.ref, { cabId: null }));
+
+  // If this driver was on another cab, that cab loses its driver.
+  if (driverUid && driver.cabId && driver.cabId !== cabId) {
+    batch.set(doc(firestore, COL, driver.cabId), { driverUid: null }, { merge: true });
+  }
+
+  batch.set(
+    doc(firestore, COL, cabId),
+    driverUid
+      ? { driverUid, driverName: driver.name || '', driverPhone: driver.phone || '' }
+      : { driverUid: null },
+    { merge: true }
+  );
+  if (driverUid) batch.update(doc(firestore, 'employees', driverUid), { cabId });
+
+  return batch.commit();
+}
+
+// --- Fleet oversight --------------------------------------------------------
+
+// Take a vehicle out of the fleet, cleaning up everything that pointed at
+// it — otherwise its driver keeps broadcasting for a cab that no longer exists
+// and rides show a blank cab.
 //
 // Refuses while the cab still has upcoming rides: those riders would silently
 // lose their cab, so the desk has to re-assign them first.
@@ -105,22 +159,7 @@ export async function removeCabSafely(id, todayKey) {
   return { ok: true, unlinkedDrivers: holders.size };
 }
 
-// One-time: create the 3 starter cabs (with their original ids) if the fleet
-// is empty. Lets the admin start from the familiar demo cabs and edit from
-// there. Uses merge so re-running it can never wipe edits the admin has made.
-export function seedDefaultCabs() {
-  return Promise.all(
-    DEFAULT_CABS.map((c) =>
-      setDoc(
-        doc(firestore, COL, c.id),
-        {
-          cabNumber: c.cabNumber,
-          driverName: c.driverName,
-          driverPhone: c.driverPhone,
-          capacity: c.capacity || DEFAULT_CAB_CAPACITY,
-        },
-        { merge: true }
-      )
-    )
-  );
+// Detach the driver from a cab without deleting the vehicle.
+export function unlinkCabDriver(cabId) {
+  return linkCabDriver(cabId, null);
 }

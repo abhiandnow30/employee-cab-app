@@ -58,9 +58,17 @@ if (isFirebaseConfigured) {
   // On the PHONE there is no browser CORS layer and no proxy rewriting, so we
   // leave the default streaming transport in place — forcing long-polling there
   // just costs battery and adds latency to every live update.
+  //
+  // NOTE: long polling still POSTs to the same /channel endpoint, so it does NOT
+  // help against a proxy or extension that rewrites Access-Control-Allow-Origin
+  // to '*' on every response from firestore.googleapis.com. That failure mode is
+  // environmental — see the "Can't reach the server" screen in App.js, which is
+  // what the user sees when it happens.
+  // `useFetchStreams` was removed from the SDK — forcing long polling already
+  // implies the XHR transport, so it was dead config.
   firestoreInstance = initializeFirestore(
     app,
-    Platform.OS === 'web' ? { experimentalForceLongPolling: true, useFetchStreams: false } : {}
+    Platform.OS === 'web' ? { experimentalForceLongPolling: true } : {}
   );
 } else {
   console.warn(

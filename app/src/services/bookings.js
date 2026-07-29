@@ -56,6 +56,32 @@ export async function createBooking(data) {
   return addDoc(collection(firestore, COL), { ...data, createdAt: serverTimestamp() });
 }
 
+// Create several already-assigned bookings AND re-assign existing ones, as one
+// atomic commit — the desk putting a whole carpool into one cab. Doing these as
+// separate writes meant a failure halfway through left some riders assigned and
+// the rest not, with the cab's seats already counted against the ones that landed.
+//
+// Returns the ids of the newly created bookings, in the order given, so the caller
+// can link each one back to whatever it fulfilled.
+export async function createAssignedBookings(newBookings, existingIds, cabId) {
+  if (!firestore) throw new Error('Backend not configured.');
+  const batch = writeBatch(firestore);
+  const ids = [];
+  (newBookings || []).forEach((b) => {
+    const ref = doc(collection(firestore, COL));
+    ids.push(ref.id);
+    batch.set(ref, { ...b, createdAt: serverTimestamp() });
+  });
+  (existingIds || []).forEach((id) => {
+    batch.update(doc(firestore, COL, id), {
+      assignedCabId: cabId,
+      status: STATUS.ASSIGNED,
+    });
+  });
+  await batch.commit();
+  return ids;
+}
+
 // The Weekly Schedule can, in one save, drop some rides and create others (a
 // changed pickup time is a cancel + a create). Doing that as ONE batch means the
 // employee can never end up with the old ride cancelled and the new one missing.

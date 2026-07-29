@@ -1,17 +1,37 @@
 rules_version = '2';
 
 // ---------------------------------------------------------------------------
-// FIRESTORE SECURITY RULES  (Stage 4)
-// Replaces open "test mode". Access is role-scoped:
-//   • Employees  → only their OWN bookings/profile.
-//   • Drivers    → bookings assigned to THEIR cab.
-//   • Admin      → everything.
-// Unauthenticated (public internet) requests are rejected everywhere.
+// FIRESTORE SECURITY RULES
 //
-// KNOWN LIMITATION: a signed-in user can write their own profile, including the
-// `role` field, so the in-app "admin code" is not enforced server-side. For
-// production, create admins via the Firebase console and switch the employees
-// write rule to the stricter version noted below.
+// Access is role-scoped, and every write is checked FIELD BY FIELD — knowing
+// who you are is not enough, the rules also decide what you're allowed to
+// change. Unauthenticated requests are rejected everywhere.
+//
+// FOUR ROLES:
+//   • Employees   → read their own roster/bookings/profile, request a
+//                   cancellation. They can never assign a cab, change a status,
+//                   or edit their own profile. Their shifts come from the roster
+//                   HR uploads, not from anything they submit.
+//   • Drivers     → read + advance the trips of the cab they are linked to.
+//   • Coordinator → day-to-day operations: assign cabs and drivers, maintain the
+//                   fleet, correct a single roster day. Cannot upload a roster,
+//                   set policy, or touch employee identity.
+//   • Admin (HR)  → everything, including the monthly roster import and policy.
+//
+// ---------------------------------------------------------------------------
+// HOW ADMINS ARE CREATED  (read this before deploying)
+//
+// An admin is a user whose employees/<uid> document has role == 'admin'. These
+// rules DO NOT let anyone create such a document for themselves, so the app's
+// old client-side "admin code" can no longer be used to self-promote.
+//
+// To create the first admin (or a replacement):
+//   1. Firebase console → Authentication → Add user (email + password).
+//   2. Firestore → employees → add a document with that user's UID as the ID:
+//        { name: 'Transport Desk', email: '<their email>', role: 'admin',
+//          empId: '<id>', phone: '<phone>' }
+// Every later admin/employee/driver can be created in-app from the admin's
+// Employee Management screen.
 // ---------------------------------------------------------------------------
 
 service cloud.firestore {
@@ -20,36 +40,194 @@ service cloud.firestore {
     function signedIn() {
       return request.auth != null;
     }
-    // The signed-in user's own profile data (role, cabId, ...).
+    // The signed-in user's own profile data (role, cabId, ...). A user can be
+    // authenticated WITHOUT having a profile document (e.g. an account that an
+    // admin has removed), so we check exists() first and fall back to an empty
+    // map — reading `.data` off a missing document would raise an error and
+    // deny every rule that touches it, including driver sign-up.
     function myData() {
-      return get(/databases/$(database)/documents/employees/$(request.auth.uid)).data;
+      return exists(/databases/$(database)/documents/employees/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/employees/$(request.auth.uid)).data
+        : {};
     }
     function myRole() {
-      return signedIn() ? myData().role : '';
+      return signedIn() ? myData().get('role', '') : '';
     }
     function isAdmin() {
       return myRole() == 'admin';
     }
-    // True if I'm the driver of the given cab.
+    // The transport coordinator runs day-to-day operations: assigning cabs and
+    // drivers, resolving change requests, maintaining the fleet. They do NOT
+    // upload rosters or set policy — that's HR/Admin.
+    function isCoordinator() {
+      return myRole() == 'coordinator';
+    }
+    // Most operational data is readable/writable by either desk role.
+    function isDesk() {
+      return isAdmin() || isCoordinator();
+    }
+    // True if I'm the driver linked to the given cab. `cabId` must be a real
+    // cab: a driver with no cab (cabId == null) must NOT match unassigned
+    // bookings (whose assignedCabId is also null), or they'd be able to read
+    // every pending booking in the company.
     function isDriverForCab(cabId) {
-      return myRole() == 'driver' && myData().cabId == cabId;
+      return cabId != null
+        && myRole() == 'driver'
+        && myData().get('cabId', null) == cabId;
+    }
+
+    // `createdAt`-style fields must be the server's clock, never the device's —
+    // a tampered phone clock can't fake them.
+    function isServerTime(field) {
+      return request.resource.data.get(field, null) == request.time;
+    }
+    // Which keys this write is trying to change.
+    function touchedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // --- Monthly shift roster (HR-owned, the source of truth) ---------------
+    // HR uploads a month of shift codes per employee. Rides are DERIVED from
+    // these documents rather than materialised, so this collection is what the
+    // whole workflow hangs off.
+    //
+    //   read   → the employee it belongs to (their calendar), or either desk role.
+    //   write  → an admin (import, corrections), or a coordinator changing a
+    //            SINGLE day's code when they action an approved leave / shift
+    //            change. A coordinator can never rewrite a whole month.
+    match /rosters/{rosterId} {
+      function onlyDaysTouched() {
+        return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['days', 'updatedAt']);
+      }
+      allow read: if signedIn()
+        && (resource.data.employeeId == request.auth.uid || isDesk());
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (isCoordinator() && onlyDaysTouched());
+      allow delete: if isAdmin();
+    }
+
+    // --- Roster import history (audit trail) --------------------------------
+    // Who uploaded which file, when, and what was rejected. Written by the
+    // importer, never edited afterwards except to mark the run finished.
+    match /rosterImports/{importId} {
+      allow read: if isDesk();
+      allow create: if isAdmin()
+        && request.resource.data.uploadedBy == request.auth.uid
+        && isServerTime('uploadedAt');
+      allow update: if isAdmin(); // status: importing → imported
+      allow delete: if false;     // keep the history
+    }
+    // --- Change requests (the exception workflow) ---------------------------
+    // How reality differs from the roster on one day: leave, absent, a shift that
+    // ran long, an emergency ride. The employee raises it; the desk resolves it.
+    //
+    //   read   → the employee it belongs to, or either desk role.
+    //   create → an employee, only for THEMSELVES, only as "Pending", and the
+    //            ROUTING IS PINNED to the policy: leave/absent/cancel/retime/
+    //            recode go to the coordinator, a shift extension goes to HR.
+    //            Without that an employee could aim a request at whichever desk
+    //            they thought would say yes.
+    //   update → either desk role (resolve, reject, escalate).
+    //   delete → never: these are the record of why a rostered ride didn't run.
+    match /changeRequests/{reqId} {
+
+      // The one routing decision an employee is allowed to express is the one the
+      // policy already dictates for the type they picked.
+      function correctlyRouted() {
+        let d = request.resource.data;
+        return d.type == 'shift_extended'
+          ? d.routedTo == 'admin'
+          : d.routedTo == 'coordinator';
+      }
+
+      allow read: if signedIn()
+        && (resource.data.employeeId == request.auth.uid || isDesk());
+      allow create: if signedIn()
+        && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.status == 'Pending'
+        // The date must be a real ISO key. Resolving a request derives a roster
+        // document id from it (rosters/<YYYY-MM>_<uid>), so a free-text date could
+        // have the desk writing shift codes into a junk document.
+        && request.resource.data.date is string
+        && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.type is string
+        && request.resource.data.get('comments', '').size() <= 2000
+        && correctlyRouted()
+        && isServerTime('createdAt');
+      allow update: if isDesk();
+      allow delete: if false;
+    }
+
+    // --- Notifications (in-app) ---------------------------------------------
+    // Written by the desk when something happens to an employee's ride; read by
+    // that employee. The only thing an employee may change is `readAt` — marking
+    // their own notification as seen.
+    match /notifications/{noteId} {
+      allow read: if signedIn()
+        && (resource.data.employeeId == request.auth.uid || isDesk());
+      allow create: if isDesk() && isServerTime('createdAt');
+      allow update: if isDesk() || (
+        signedIn()
+        && resource.data.employeeId == request.auth.uid
+        && touchedKeys().hasOnly(['readAt'])
+      );
+      allow delete: if isDesk();
     }
 
     // --- Profiles -----------------------------------------------------------
     // Profile data is ADMIN-OWNED. An employee may only READ their own profile;
-    // they may not edit it (name, employeeId, phone, address, pickupLocation,
-    // department, shift, role, ...). Home-address changes go through the
-    // addressChangeRequests flow below, which an admin approves.
+    // they may not edit it (name, employeeId, phone, address, role, ...).
+    // Home-address changes go through addressChangeRequests below.
     //
-    //   read   → the owner, or an admin.
-    //   create → the owner at sign-up (self-registration), or an admin. This is
-    //            the ONLY self-write an employee/driver gets.
-    //   update → admin ONLY (so employees can't bypass the UI to change fields).
-    //   delete → admin ONLY (remove an employee who left the organisation).
+    //   read   → the owner, or either desk role.
+    //   create → an admin (provisioning an employee/driver/coordinator), or a
+    //            DRIVER self-registering. Self-registration can ONLY produce a
+    //            driver: role is pinned, so nobody can grant themselves admin.
+    //   update → an admin, or a coordinator setting `cabId` only.
+    //   delete → admin ONLY (someone left the organisation).
     match /employees/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow create: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow update: if isAdmin();
+
+      // The coordinator links a driver to a cab, so they may write `cabId` on a
+      // driver's profile — and nothing else. Employee identity, roster and
+      // address stay HR-owned.
+      //
+      // `cabId` is what grants a driver read access to that cab's bookings —
+      // rider names and home addresses — which is why it is never self-writable.
+      function coordinatorLinkingCab() {
+        return isCoordinator() && touchedKeys().hasOnly(['cabId']);
+      }
+
+      // The coordinator may also set an employee's PICKUP ROUTE — and only that
+      // one field inside `roster`. Route is how the day gets grouped into cabs,
+      // so an employee with none blocks the person running the day; making them
+      // wait for HR to fix it is how "No route set" becomes permanent.
+      //
+      // The nested diff is the whole safety of this: the write touches `roster`
+      // at the top level, so without checking INSIDE the map a coordinator could
+      // send a whole new roster map and wipe anything else stored there.
+      // Identity, address and the monthly shift codes remain HR-owned.
+      function coordinatorSettingRoute() {
+        let next = request.resource.data.get('roster', {});
+        return isCoordinator()
+          && touchedKeys().hasOnly(['roster'])
+          && next is map
+          && next.diff(resource.data.get('roster', {})).affectedKeys().hasOnly(['route'])
+          && (next.get('route', null) == null || (
+            next.route is string
+            && next.route.size() > 0
+            && next.route.size() <= 100
+          ));
+      }
+
+      // Either desk role can read the directory: HR to manage it, the coordinator
+      // to see which drivers exist and who is on which route.
+      allow read: if signedIn() && (request.auth.uid == uid || isDesk());
+      allow create: if signedIn() && (
+        (request.auth.uid == uid && request.resource.data.get('role', '') == 'driver') ||
+        isAdmin()
+      );
+      allow update: if isAdmin() || coordinatorLinkingCab() || coordinatorSettingRoute();
       allow delete: if isAdmin();
     }
 
@@ -57,83 +235,243 @@ service cloud.firestore {
     // Employees can't edit their address directly — they raise a request here.
     //   create → an employee, only for THEMSELVES, and only as "Pending".
     //   read   → the owner (to see status), or an admin (to review all).
-    //   update → admin ONLY (approve / reject). The approval also writes the new
-    //            address onto the employee profile, allowed by the admin rule above.
+    //   update → admin ONLY (approve / reject).
     //   delete → never (keep the history).
     match /addressChangeRequests/{reqId} {
       allow read: if signedIn()
         && (resource.data.employeeId == request.auth.uid || isAdmin());
       allow create: if signedIn()
         && request.resource.data.employeeId == request.auth.uid
-        && request.resource.data.status == 'Pending';
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.requestedAddress is string
+        && request.resource.data.requestedAddress.size() > 0
+        && request.resource.data.requestedAddress.size() <= 500
+        && isServerTime('requestedAt');
       allow update: if isAdmin();
       allow delete: if false;
     }
 
     // --- Bookings -----------------------------------------------------------
     match /bookings/{bookingId} {
-      // True when this update is transitioning the booking INTO "Cab assigned"
-      // (i.e. the admin is assigning a cab), as opposed to any other update.
+
+      // ---- CREATE -------------------------------------------------------
+      // An employee books only for themselves, and only in a pristine state:
+      // "Booked", no cab, no cancellation. Without this, an employee could
+      // create a booking that is already "Cab assigned" to a cab of their
+      // choosing and bypass the transport desk completely.
+      //
+      // `departAt` is an absolute Timestamp, so the SERVER decides whether a
+      // ride is in the future — a device with a wound-back clock can't book a
+      // past ride, and can't dodge the roster lead time either.
+      // Shape every new booking must have, whoever creates it.
+      function wellFormedBooking() {
+        let d = request.resource.data;
+        return d.employeeId is string
+          && d.employeeId.size() > 0
+          && d.date is string
+          && d.shift is string
+          && d.departAt is timestamp
+          && !('cancelStatus' in d)
+          && !('noShowAt' in d)
+          && isServerTime('createdAt');
+      }
+
+      // An EMPLOYEE booking for themselves — the ad-hoc / emergency path. Pristine
+      // state only: without this an employee could create a booking already marked
+      // "Cab assigned" to a cab of their choosing and bypass the desk entirely.
+      //
+      // `departAt` is an absolute Timestamp, so the SERVER decides whether a ride
+      // is in the future — a device with a wound-back clock can't book a past ride,
+      // and can't dodge the roster lead time either.
+      function validSelfBooking() {
+        let d = request.resource.data;
+        return d.employeeId == request.auth.uid
+          && d.status == 'Booked'
+          && d.get('assignedCabId', null) == null
+          && d.departAt > request.time
+          // Roster-derived rides keep the 9-hour lead time. One-off ("adhoc")
+          // rides are for emergencies and only have to be in the future.
+          && (d.get('source', '') != 'roster'
+              || d.departAt > request.time + duration.value(9, 'h'));
+      }
+
+      // The DESK materialising a roster-derived ride. This is the central action of
+      // the whole workflow: rides are computed from the monthly roster and only
+      // become documents when a cab is assigned, so the coordinator necessarily
+      // creates a booking that (a) belongs to someone else and (b) already carries
+      // its cab. Both are things an employee must never be able to do, which is why
+      // this is a separate branch rather than a relaxation of the one above.
+      //
+      // The desk may not create a ride into the past, and may not pre-set a
+      // cancellation or a no-show.
+      function validDeskBooking() {
+        let d = request.resource.data;
+        return isDesk()
+          && d.status in ['Booked', 'Cab assigned']
+          && d.departAt > request.time;
+      }
+
+      // ---- OWNER (employee) UPDATES -------------------------------------
+      // Two things only, and nothing else on the document may move.
+      //
+      // 1. Raise a cancellation REQUEST — allowed up to 4 hours before pickup.
+      //    The ride stays active until an admin approves it.
+      function ownerRequestingCancel() {
+        return touchedKeys().hasOnly([
+              'cancelStatus', 'cancelReason', 'cancelRequestedAt', 'cancelResolvedAt'])
+          && request.resource.data.cancelStatus == 'Requested'
+          && resource.data.status != 'Cancelled'
+          && isServerTime('cancelRequestedAt')
+          && notInsideCancelCutoff();
+      }
+      // 2. Drop a ride straight from the Weekly Schedule. Only while the ride is
+      //    outside the 4-hour cancellation window AND no cab has been sent for
+      //    it — otherwise it must go through the request flow above.
+      function ownerDroppingRosterRide() {
+        return touchedKeys().hasOnly(['status'])
+          && request.resource.data.status == 'Cancelled'
+          && resource.data.get('assignedCabId', null) == null
+          && notInsideCancelCutoff();
+      }
+      // The ride is still more than 4 hours away (legacy bookings with no
+      // `departAt` are not blocked — the app-layer guard covers those).
+      function notInsideCancelCutoff() {
+        let departAt = resource.data.get('departAt', null);
+        return departAt == null || departAt > request.time + duration.value(4, 'h');
+      }
+
+      // ---- DRIVER UPDATES ------------------------------------------------
+      // The cab's driver may only move the trip along the status lifecycle, or
+      // flag a no-show. They cannot touch the rider, the time, or the cab.
+      function driverAdvancingTrip() {
+        return isDriverForCab(resource.data.get('assignedCabId', null))
+          && touchedKeys().hasOnly(['status', 'noShowAt'])
+          && request.resource.data.status in
+               ['On the way', 'Arrived', 'Completed', 'No show']
+          && (!('noShowAt' in touchedKeys()) || isServerTime('noShowAt'));
+      }
+
+      // ---- ADMIN UPDATES -------------------------------------------------
+      // The transport desk owns this data, so they may edit it freely — except
+      // they can't move a booking to a different rider, and can't assign a cab
+      // to a ride whose time has already passed.
+      function deskEditing() {
+        return isDesk()
+          && request.resource.data.employeeId == resource.data.employeeId
+          && assignNotExpired();
+      }
+      // True when this update is transitioning the booking INTO "Cab assigned".
       function becomingAssigned() {
         return request.resource.data.status == 'Cab assigned'
           && resource.data.status != 'Cab assigned';
       }
-      // A cab may only be assigned while the ride is still in the future.
-      // `departAt` is an absolute Timestamp stored at booking time. Legacy
-      // bookings without it (null) are not blocked here — the app-layer guard
-      // in AppContext covers those. Non-assignment updates are never blocked.
       function assignNotExpired() {
-        return !becomingAssigned()
-          || resource.data.get('departAt', null) == null
-          || resource.data.get('departAt', null) > request.time;
+        let departAt = resource.data.get('departAt', null);
+        return !becomingAssigned() || departAt == null || departAt > request.time;
+      }
+
+      function isOwner() {
+        return resource.data.employeeId == request.auth.uid;
       }
 
       // Read: the owner, the admin, or the driver of the assigned cab.
       allow read: if signedIn() && (
-        resource.data.employeeId == request.auth.uid ||
-        isAdmin() ||
-        isDriverForCab(resource.data.assignedCabId)
+        isOwner() ||
+        isDesk() ||
+        isDriverForCab(resource.data.get('assignedCabId', null))
       );
-      // Create: an employee may only create bookings for themselves.
+
       allow create: if signedIn()
-        && request.resource.data.employeeId == request.auth.uid;
-      // Update: owner (cancel), admin (assign cab), or the cab's driver (status)
-      // — but a cab can NOT be assigned to a ride whose time has already passed.
+        && wellFormedBooking()
+        && (validSelfBooking() || validDeskBooking());
+
       allow update: if signedIn() && (
-        resource.data.employeeId == request.auth.uid ||
-        isAdmin() ||
-        isDriverForCab(resource.data.assignedCabId)
-      ) && assignNotExpired();
+        (isOwner() && (ownerRequestingCancel() || ownerDroppingRosterRide())) ||
+        driverAdvancingTrip() ||
+        deskEditing()
+      );
+
       allow delete: if false; // keep history — never hard-delete
     }
 
     // --- Cabs (fleet) -------------------------------------------------------
-    // Everyone signed in can read; only an admin can add/edit/remove.
+    // The COORDINATOR maintains the fleet: cab number, contact, seats, and which
+    // driver account each vehicle follows (`driverUid`). That uid is also the key
+    // the live-location feed uses, so linking a driver here is what switches on
+    // their tracking.
+    //
+    //   read   → anyone signed in (employees need the cab number + driver name
+    //            on their booking; the app needs driverUid to follow the feed).
+    //   write  → either desk role. Drivers cannot edit cab records — they were
+    //            able to briefly, but fleet data is operational, not personal.
+    //   delete → either desk role, and the app checks for upcoming rides first.
     match /cabs/{cabId} {
+
+      // Validates the cab as it will look AFTER the write. Fields are read with
+      // .get() defaults on purpose: a partial write (e.g. an admin clearing
+      // driverUid with a merge) must not be rejected just because the existing
+      // document predates a field. Requiring `capacity` outright would lock the
+      // desk out of every cab created before seat counts existed.
+      function validCab() {
+        let d = request.resource.data;
+        let seats = d.get('capacity', 1);
+        return d.get('cabNumber', '') is string
+          && d.get('cabNumber', '').size() > 0
+          && d.get('cabNumber', '').size() <= 32
+          && seats is int
+          && seats >= 1
+          && seats <= 30;
+      }
+      allow read: if signedIn();
+
+      allow create: if signedIn() && validCab() && isDesk();
+
+      allow update: if signedIn() && validCab() && isDesk();
+
+      allow delete: if isDesk();
+    }
+
+    // --- App config (admin-editable settings) -------------------------------
+    // e.g. config/timings — the Weekly Schedule pickup/drop time options and
+    // the cab routes. Everyone signed in can READ (employees need it to book);
+    // only an admin can WRITE.
+    match /config/{docId} {
       allow read: if signedIn();
       allow write: if isAdmin();
     }
 
-    // --- App config (admin-editable settings) -------------------------------
-    // e.g. config/timings — the Weekly Schedule pickup/drop time options.
-    // Everyone signed in can READ (employees need it to book); only an admin
-    // can WRITE (edit the timings from Manage Timings).
-    match /config/{docId} {
-      allow read: if signedIn();
-      allow write: if isAdmin();
+    // --- Messages (employee → transport desk) -------------------------------
+    match /messages/{docId} {
+      allow create: if signedIn()
+        && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
+        && request.resource.data.message.size() <= 2000
+        && isServerTime('createdAt');
+      allow read: if signedIn()
+        && (resource.data.employeeId == request.auth.uid || isDesk());
+      allow update, delete: if false;
     }
 
     // --- Feedback & ratings -------------------------------------------------
     // You may submit your own; only an admin can read them.
     match /feedback/{docId} {
       allow create: if signedIn()
-        && request.resource.data.employeeId == request.auth.uid;
+        && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
+        && request.resource.data.message.size() <= 2000
+        && isServerTime('createdAt');
       allow read: if isAdmin();
       allow update, delete: if false;
     }
     match /ratings/{docId} {
       allow create: if signedIn()
-        && request.resource.data.employeeId == request.auth.uid;
+        && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.stars is int
+        && request.resource.data.stars >= 1
+        && request.resource.data.stars <= 5
+        && isServerTime('createdAt');
       allow read: if isAdmin();
       allow update, delete: if false;
     }
