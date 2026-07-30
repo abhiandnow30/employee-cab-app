@@ -21,11 +21,12 @@ import {
 } from '../services/auth';
 import {
   getOrCreateProfile, setPendingProfile, subscribeProfile, adminUpdateEmployee,
-  adminCreateAccount, adminDeleteEmployee, subscribeEmployees,
-  updateEmployeeRoute, bulkSetEmployeeRoute,
+  adminCreateAccount, adminInviteEmployees, adminDeleteEmployee, subscribeEmployees,
+  updateEmployeeRoute,
 } from '../services/profile';
 import {
   createAddressChangeRequest, subscribeMyAddressRequests,
+  subscribeAllAddressRequests, REQUEST_STATUS as ADDRESS_STATUS,
 } from '../services/addressRequests';
 import { createMessage } from '../services/messages';
 import {
@@ -44,6 +45,7 @@ import {
   ridesSharingCab,
   conflictingRide,
   syncEmployeeAddress,
+  stampBookingEmpIds,
 } from '../services/bookings';
 import { addFeedbackDoc, addRatingDoc } from '../services/feedback';
 import { updateMyLocation, clearMyLocation } from '../services/tracking';
@@ -61,16 +63,15 @@ import {
 import { ridesForDate, bookingFromRide } from '../services/rides';
 import {
   createChangeRequest, subscribeMyChangeRequests, subscribeAllChangeRequests,
-  resolveCancelDay, resolveCancelRide, resolveRetime, resolveRecode,
-  resolveExtraRide, rejectRequest, escalateRequest, findOpenRequest,
-  pendingFor, awaitingCab, markRequestFulfilled,
+  resolveCancelDay, resolveCancelRide, resolveRecode, resolveNoop,
+  rejectRequest, findOpenRequest, pendingFor,
 } from '../services/changeRequests';
 import {
   notify, notifyMany, subscribeMyNotifications, markRead, markAllRead,
   NOTIFY, cabAssignedMessage, rideCancelledMessage, requestResolvedMessage,
 } from '../services/notifications';
 import {
-  REQUEST_TYPES, REQUEST_STATUS, EFFECT, ROUTE_TO, requestMeta,
+  REQUEST_STATUS, EFFECT, requestMeta,
 } from '../data/changeRequests';
 import { firestore } from '../services/firebase';
 import {
@@ -84,6 +85,10 @@ const AppContext = createContext(null);
 // unhelpful, so they get a plain-English message.
 function failure(e, fallback) {
   const raw = e?.message || '';
+  // The friendly message below deliberately hides the Firestore code, which makes
+  // "you don't have permission" indistinguishable from every other cause when
+  // something needs diagnosing. Keep the real one in the console.
+  console.warn('[action failed]', e?.code || 'no-code', raw);
   if (e?.code === 'permission-denied' || /insufficient permissions/i.test(raw)) {
     return { ok: false, message: fallback || "You don't have permission to do that." };
   }
@@ -139,6 +144,10 @@ export function AppProvider({ children }) {
   const [rosterMonth, setRosterMonth] = useState(() => todayKey().slice(0, 7));
   const [monthRosters, setMonthRosters] = useState([]);
   const [myAddressRequests, setMyAddressRequests] = useState([]); // employee's own address-change requests (live)
+  // Every address request, for HR. Held here rather than only on its screen so the
+  // menu can show a pending count — a request nobody opens is a request nobody
+  // actions, and this queue had no way of announcing itself.
+  const [addressRequests, setAddressRequests] = useState([]);
   const [myChangeRequests, setMyChangeRequests] = useState([]); // employee's own exception requests
   const [changeRequests, setChangeRequests] = useState([]); // the desk's whole queue
   const [notifications, setNotifications] = useState([]); // employee's in-app feed
@@ -363,6 +372,59 @@ export function AppProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.uid, currentUser?.role]);
 
+  // --- Repair: employee IDs on upcoming bookings --------------------------
+  //
+  // The driver's trip list names riders by EMPLOYEE ID, which therefore has to be
+  // stored on the booking — a driver may not read employee profiles. Bookings
+  // written before that was true have no `empId` and would read "not on record"
+  // for ever, so the desk stamps them from the directory it can already see.
+  //
+  // Runs once per desk session, only for upcoming still-live rides, and only for
+  // riders it can actually resolve. Past rides are left as they were recorded.
+  const empIdRepairDone = useRef(false);
+  useEffect(() => {
+    if (!firestore || !isDeskRole(currentUser?.role) || empIdRepairDone.current) return;
+    if (!bookings.length || !employees.length) return;
+
+    const idOf = new Map(employees.map((e) => [e.uid, (e.empId || '').trim()]));
+    const today = todayKey();
+    const pairs = bookings
+      .filter(
+        (b) =>
+          !b.empId &&
+          String(b.date || '') >= today &&
+          b.status !== STATUS.CANCELLED &&
+          b.status !== STATUS.COMPLETED &&
+          b.status !== STATUS.NO_SHOW &&
+          idOf.get(b.employeeId)
+      )
+      .map((b) => ({ id: b.id, empId: idOf.get(b.employeeId) }));
+    if (!pairs.length) return;
+
+    // Set before awaiting: the live subscription fires again as the writes land,
+    // and without this the effect would re-enter and repeat the batch.
+    empIdRepairDone.current = true;
+    stampBookingEmpIds(pairs)
+      .then((n) => console.log(`[bookings] stamped employee id on ${n} upcoming ride(s)`))
+      .catch((e) => {
+        empIdRepairDone.current = false; // let a later render retry
+        console.warn('[bookings] could not stamp employee ids:', e?.message);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role, bookings.length, employees.length]);
+
+  // --- Address change requests (HR's queue, live) -------------------------
+  // Admin only: the rules restrict reading all of them to an admin, so a
+  // coordinator would just get a permissions error.
+  useEffect(() => {
+    if (!firestore || currentUser?.role !== 'admin') {
+      setAddressRequests([]);
+      return;
+    }
+    return subscribeAllAddressRequests(setAddressRequests, onSubError('address requests'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid, currentUser?.role]);
+
   // --- Timings config (admin-editable pickup/drop options, live) ----------
   // Global config, so we subscribe once Firebase is configured. Falls back to
   // DEFAULT_TIMINGS until the admin saves anything.
@@ -561,6 +623,8 @@ export function AppProvider({ children }) {
     return {
       employeeId: currentUser.uid,
       employeeName: currentUser.name,
+      // Carried so the driver's trip list can identify the rider by ID.
+      empId: currentUser.empId || '',
       employeeHome: currentUser.home || null, // { latitude, longitude, displayName, ... }
       employeeAddress: currentUser.address || null,
       status: STATUS.BOOKED,
@@ -624,6 +688,18 @@ export function AppProvider({ children }) {
   function cabAssignmentProblem(cabId, rides) {
     const cab = getCabById(cabId);
     if (!cab) return 'That cab is no longer in the fleet.';
+
+    // A CAB WITH NO DRIVER ACCOUNT IS NOT A CAB ANYONE CAN DRIVE.
+    // The driver's trip list is scoped by the two-sided link
+    // (cabs/<id>.driverUid ←→ employees/<uid>.cabId), so assigning a cab that
+    // nothing points at produced a ride NO driver account could see — while the
+    // rider was told "cab assigned, track it live" and got a notification naming
+    // "A cab · Your driver". A typed-in `driverName` is not enough: it grants
+    // nobody access and shows nobody the trip.
+    if (!cab.driverUid) {
+      return `${cab.cabNumber} has no driver linked, so no driver would see this trip. Link one on the Fleet screen first.`;
+    }
+
     const ids = rides.map((r) => r.id);
 
     for (const ride of rides) {
@@ -869,15 +945,97 @@ export function AppProvider({ children }) {
     }
   }
 
-  // Add a vehicle to the fleet. Returns { ok, message? }.
+  // Add a vehicle to the fleet. Returns { ok, id?, message? }.
   async function createCab(fields) {
     const problem = cabDetailsProblem(fields);
     if (problem) return { ok: false, message: problem };
     try {
-      await addCab(fields);
-      return { ok: true };
+      const id = await addCab(fields);
+      return { ok: true, id };
     } catch (e) {
       return failure(e, 'Could not add the cab.');
+    }
+  }
+
+  // --- Drivers (desk) ------------------------------------------------------
+  // Add a driver. A driver is a LOGIN, not just a name on a cab: they sign in to
+  // see their trips and to broadcast the cab's position, which is why this
+  // creates an account rather than a text field somewhere.
+  //
+  // No password is invented or shared — the account is created with a throwaway
+  // one and Firebase emails them a link to set their own.
+  async function addDriverAccount({ name, email, phone }) {
+    if (!isDeskRole(currentUser?.role)) {
+      return { ok: false, message: 'Only the transport desk can add a driver.' };
+    }
+    const person = {
+      name: (name || '').trim(),
+      email: (email || '').trim().toLowerCase(),
+      phone: (phone || '').trim(),
+    };
+    if (!person.name) return { ok: false, message: "Enter the driver's name." };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(person.email)) {
+      return { ok: false, message: 'Enter a valid email address — it is their login.' };
+    }
+    if (person.phone && person.phone.replace(/[^0-9]/g, '').length !== 10) {
+      return { ok: false, message: 'Phone must be a 10-digit number.' };
+    }
+    try {
+      const res = await adminInviteEmployees([person], { role: 'driver' });
+      if (res.failedCount) {
+        return { ok: false, message: res.failed[0]?.reason || 'Could not create that account.' };
+      }
+      // The account exists either way; say so when the set-password email didn't
+      // send, rather than reporting a failure that didn't happen.
+      return { ok: true, emailed: res.notInvited.length === 0 };
+    } catch (e) {
+      return failure(e, 'Could not create that driver account.');
+    }
+  }
+
+  // Remove a driver who has left. Deletes their PROFILE (which locks the account
+  // out of the app — see UnprovisionedScreen) and detaches their cab.
+  //
+  // Refused while their cab still has upcoming rides, for the same reason removing
+  // a cab is: the driver's account is the only one that can see those trips, so
+  // deleting them would leave riders with a cab that nobody is driving. The desk
+  // links a replacement first — one tap on the Fleet screen.
+  //
+  // The Firebase Auth login survives; only the Admin SDK can delete that. It is
+  // harmless (no profile = locked out), but it must be removed in the console for
+  // sign-in to be revoked outright.
+  async function removeDriver(uid) {
+    if (!isDeskRole(currentUser?.role)) {
+      return { ok: false, message: 'Only the transport desk can remove a driver.' };
+    }
+    if (!uid) return { ok: false, message: 'Missing driver.' };
+
+    const cab = fleetCabs.find((c) => c.driverUid === uid) || null;
+    if (cab) {
+      const today = todayKey();
+      const stranded = bookings.filter(
+        (b) =>
+          b.assignedCabId === cab.id &&
+          b.status !== STATUS.CANCELLED &&
+          b.status !== STATUS.COMPLETED &&
+          b.status !== STATUS.NO_SHOW &&
+          String(b.date || '') >= today
+      ).length;
+      if (stranded) {
+        return {
+          ok: false,
+          message: `${cab.cabNumber} has ${stranded} upcoming ride${
+            stranded === 1 ? '' : 's'
+          } on this driver. Link another driver to ${cab.cabNumber}, or re-assign those rides, then remove them.`,
+        };
+      }
+    }
+
+    try {
+      await adminDeleteEmployee(uid);
+      return { ok: true, unlinkedCab: cab?.cabNumber || null };
+    } catch (e) {
+      return failure(e, 'Could not remove that driver.');
     }
   }
 
@@ -915,11 +1073,10 @@ export function AppProvider({ children }) {
   }
 
   // Shared validation for the cab form, matching what the security rules accept.
-  function cabDetailsProblem({ cabNumber, driverPhone, capacity }) {
+  // Vehicle fields only — the driver's name and phone come from their account.
+  function cabDetailsProblem({ cabNumber, capacity }) {
     if (!(cabNumber || '').trim()) return 'Enter the cab number.';
     if ((cabNumber || '').trim().length > 32) return 'That cab number is too long.';
-    const phone = (driverPhone || '').trim();
-    if (phone && phone.length !== 10) return 'Phone must be a 10-digit number.';
     const seats = Number(capacity);
     if (!Number.isInteger(seats) || seats < 1 || seats > 30) {
       return 'Seats must be a whole number between 1 and 30.';
@@ -1121,17 +1278,18 @@ export function AppProvider({ children }) {
   // the day by route is what turns 200 individual rides into ~15 decisions, so an
   // unrouted employee is real friction, not a cosmetic gap.
   //
-  // HR owns routes (Employee Routes screen), but the coordinator may set one too —
-  // they're the one who finds out at 9 PM that somebody isn't on any route, and
-  // the rules allow them this single field. See firestore.rules > employees.
+  // WHERE A ROUTE GETS SET. There is no dedicated routing screen — a route is one
+  // field of an employee's record, so it is set wherever that record is already in
+  // front of someone:
+  //   • Employee Management — on the create dialog and on each employee's card
+  //   • the roster upload   — a "Route" column writes it onto profiles at import
+  //   • the coordinator's board — for a rider who turns up unrouted at 9 PM
+  // The rules let HR write it, and let a coordinator write THIS FIELD ONLY.
+  // See firestore.rules > employees.
 
   // The route list HR maintains in Routes & Timings, with the built-in list as a
   // fallback for a company that hasn't customised it yet.
   const routeOptions = timings.routes?.length ? timings.routes : CAB_ROUTES;
-
-  // Everyone the desk still has to route. Drives the coverage count on both the
-  // Employee Routes screen and the coordinator's dashboard.
-  const unroutedEmployees = employees.filter((e) => !e.roster?.route);
 
   async function setEmployeeRoute(uid, route) {
     if (!isDeskRole(currentUser?.role)) {
@@ -1145,35 +1303,15 @@ export function AppProvider({ children }) {
     }
   }
 
-  // One route onto many people at once — how a fresh company gets routed at all.
-  async function setRouteForEmployees(uids, route) {
-    if (!isDeskRole(currentUser?.role)) {
-      return { ok: false, message: 'Only the transport desk can set a route.' };
-    }
-    if (!uids?.length) return { ok: false, message: 'Select at least one employee.' };
-    try {
-      const count = await bulkSetEmployeeRoute(uids, route);
-      return { ok: true, count };
-    } catch (e) {
-      return failure(e, 'Could not save those routes.');
-    }
-  }
-
   // --- Derived rides (coordinator) ----------------------------------------
   // Today's (or any day's) rides, computed from the roster + policy and married
   // up with any bookings that already exist. Nothing is written until a cab is
   // assigned — see services/rides.js for why.
   function ridesOn(dateKey) {
-    // Rostered rides PLUS any approved shift extension / emergency ride for that
-    // day. Without the second half, an approved request was a dead end: the
-    // employee was told "Approved" and no cab could ever be put on it.
-    const rides = ridesForDate(
-      dateKey,
-      monthRosters,
-      shiftPolicy,
-      bookings,
-      awaitingCab(changeRequests)
-    );
+    // Purely roster-driven. There is no "extra ride" path any more: the company
+    // runs the two scheduled rides and nothing else, so nothing an employee can
+    // request adds a ride to this list — requests only remove or re-code them.
+    const rides = ridesForDate(dateKey, monthRosters, shiftPolicy, bookings);
 
     // ROUTE COMES FROM THE PROFILE, NOT THE ROSTER SNAPSHOT.
     //
@@ -1228,17 +1366,7 @@ export function AppProvider({ children }) {
         cabId
       );
 
-      // An extra ride exists because a request was approved — now that it has a
-      // cab, close the request so it stops showing as outstanding.
-      fresh.forEach((ride, i) => {
-        if (ride.requestId) {
-          markRequestFulfilled(ride.requestId, created[i] || null).catch((e) =>
-            console.warn('[requests] could not close request:', e?.message)
-          );
-        }
-      });
-
-      // Step 6: tell every rider on this cab. Best-effort — a failed notification
+      // Tell every rider on this cab. Best-effort — a failed notification
       // must not undo a completed assignment, so it's logged, not thrown.
       const cab = getCabById(cabId);
       notifyMany(
@@ -1270,9 +1398,6 @@ export function AppProvider({ children }) {
     if (!meta) return { ok: false, message: 'Pick a request type.' };
     if (!data.date) return { ok: false, message: 'Pick the date it applies to.' };
     if (!(data.reason || '').trim()) return { ok: false, message: 'Choose a reason.' };
-    if (meta.form.includes('time') && !data.requestedTime) {
-      return { ok: false, message: 'Enter the time you need.' };
-    }
     if (meta.form.includes('shiftCode') && !data.requestedShiftCode) {
       return { ok: false, message: 'Pick the shift you are actually working.' };
     }
@@ -1307,23 +1432,17 @@ export function AppProvider({ children }) {
     if (!isDeskRole(currentUser?.role)) {
       return { ok: false, message: 'Only the transport desk can resolve a request.' };
     }
-    const { note, newTime, departAt, code } = opts;
+    const { note, code } = opts;
     const actor = { uid: currentUser.uid, name: currentUser.name, email: currentUser.email };
     const meta = requestMeta(req.type);
     try {
-      let outcome = 'Resolved';
+      // Three effects, all of which either stop a ride or move the day to another
+      // shift code. Nothing here can create a ride.
+      const outcome = 'Resolved';
       if (meta?.effect === EFFECT.CANCEL_DAY) {
         await resolveCancelDay(req, { actor, bookings, note, recode: meta.recodeTo });
       } else if (meta?.effect === EFFECT.CANCEL_RIDE) {
         await resolveCancelRide(req, { actor, note });
-      } else if (meta?.effect === EFFECT.RETIME) {
-        const time = newTime || req.requestedTime;
-        await resolveRetime(req, {
-          actor,
-          note,
-          newTime: time,
-          departAt: departAt || toDateTime(req.date, time),
-        });
       } else if (meta?.effect === EFFECT.RECODE) {
         await resolveRecode(req, {
           actor,
@@ -1331,13 +1450,11 @@ export function AppProvider({ children }) {
           note,
           code: code || req.requestedShiftCode,
         });
-      } else if (meta?.effect === EFFECT.EXTRA_RIDE) {
-        // HR approving a shift extension doesn't finish the job — the coordinator
-        // still has to put a cab on it, so it stays Approved, not Resolved.
-        await resolveExtraRide(req, { actor, note, status: REQUEST_STATUS.APPROVED });
-        outcome = 'Approved';
       } else {
-        await resolveExtraRide(req, { actor, note, status: REQUEST_STATUS.RESOLVED });
+        // An unrecognised type — most likely a request raised by an older build,
+        // for something the company no longer offers. Close it rather than leaving
+        // it in the queue for ever.
+        await resolveNoop(req, { actor, note, status: REQUEST_STATUS.RESOLVED });
       }
 
       const msg = requestResolvedMessage(req, outcome, note);
@@ -1378,21 +1495,17 @@ export function AppProvider({ children }) {
     }
   }
 
-  // No vehicle free → push an emergency ride up to HR.
-  async function escalateChangeRequest(req, note) {
-    if (currentUser?.role !== 'coordinator') {
-      return { ok: false, message: 'Only the coordinator escalates a request.' };
-    }
-    try {
-      await escalateRequest(req, {
-        actor: { uid: currentUser.uid, name: currentUser.name },
-        note,
-      });
-      return { ok: true };
-    } catch (e) {
-      return failure(e, 'Could not escalate that request.');
-    }
-  }
+  // --- Menu counts (desk) -------------------------------------------------
+  // What is waiting on the signed-in desk user, keyed by SCREEN NAME so the drawer
+  // can badge the right row. Both of these queues were previously invisible until
+  // somebody thought to open them.
+  const menuCounts = isDeskRole(currentUser?.role)
+    ? {
+        AddressRequests: addressRequests.filter((r) => r.status === ADDRESS_STATUS.PENDING)
+          .length,
+        ChangeRequests: pendingFor(changeRequests, currentUser.role).length,
+      }
+    : {};
 
   // --- Notifications ------------------------------------------------------
   const unreadCount = notifications.filter((n) => !n.readAt).length;
@@ -1463,9 +1576,7 @@ export function AppProvider({ children }) {
     // Pickup routes — what the coordinator groups the day by
     employees,
     routeOptions,
-    unroutedEmployees,
     setEmployeeRoute,
-    setRouteForEmployees,
     // Derived rides (roster-driven workflow)
     ridesOn,
     assignCabToRides,
@@ -1476,7 +1587,6 @@ export function AppProvider({ children }) {
     raiseChangeRequest,
     resolveChangeRequest,
     declineChangeRequest,
-    escalateChangeRequest,
     // Notifications
     notifications,
     unreadCount,
@@ -1503,8 +1613,13 @@ export function AppProvider({ children }) {
     deleteCab,
     assignDriverToCab,
     unlinkDriverFromCab,
+    // Drivers (desk)
+    addDriverAccount,
+    removeDriver,
     homeAddressOf,
     myAddressRequests,
+    addressRequests,
+    menuCounts,
     requestAddressChange,
     sendMessage,
     adminSaveEmployee,

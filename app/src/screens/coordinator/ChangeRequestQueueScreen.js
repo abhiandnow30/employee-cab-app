@@ -1,14 +1,11 @@
 // ---------------------------------------------------------------------------
-// CHANGE REQUEST QUEUE  (coordinator and HR/Admin) — Step 8
+// CHANGE REQUEST QUEUE  (coordinator)
 //
-// One screen, two audiences, because the work is identical — only the routing
-// differs, and the routing is policy:
-//
-//   • COORDINATOR sees leave, absent, cancel-a-ride, retime, shift-changed and
-//     emergency rides. They resolve them as part of running the day. No approval
-//     from anyone.
-//   • HR/ADMIN sees shift EXTENSIONS (an extra cab outside the rostered shift)
-//     and any emergency ride the coordinator had no vehicle for.
+// The four things an employee can raise, all of which land here: leave, absent
+// today, drop one ride, and "I'm working a different shift". The coordinator
+// resolves them as part of running the day — there is no HR sign-off, because
+// none of them commits a cab beyond the two scheduled rides. (HR had a queue once,
+// for shift extensions and emergency rides; those requests no longer exist.)
 //
 // Resolving carries out the effect on the day's rides AND stamps the request in a
 // single batch — see services/changeRequests.js. The employee is notified either
@@ -42,11 +39,8 @@ function formatWhen(ts) {
 
 export default function ChangeRequestQueueScreen() {
   const {
-    currentUser, changeRequests, myQueue,
-    resolveChangeRequest, declineChangeRequest, escalateChangeRequest,
+    changeRequests, myQueue, resolveChangeRequest, declineChangeRequest,
   } = useApp();
-
-  const isCoordinator = currentUser?.role === 'coordinator';
 
   const [tab, setTab] = useState('pending'); // pending | all
   const [acting, setActing] = useState(null); // { request, mode }
@@ -67,19 +61,17 @@ export default function ChangeRequestQueueScreen() {
   async function confirm() {
     const { request, mode } = acting;
     setBusy(true);
-    let res;
-    if (mode === 'resolve') res = await resolveChangeRequest(request, { note });
-    else if (mode === 'reject') res = await declineChangeRequest(request, note);
-    else res = await escalateChangeRequest(request, note);
+    const res =
+      mode === 'resolve'
+        ? await resolveChangeRequest(request, { note })
+        : await declineChangeRequest(request, note);
     setBusy(false);
     if (res?.ok) {
       setActing(null);
       setSnack(
         mode === 'resolve'
           ? `${res.outcome || 'Resolved'} — the employee has been notified.`
-          : mode === 'reject'
-          ? 'Rejected — the employee has been notified.'
-          : 'Escalated to HR.'
+          : 'Rejected — the employee has been notified.'
       );
     } else {
       setError(res?.message || 'Could not update that request.');
@@ -96,14 +88,8 @@ export default function ChangeRequestQueueScreen() {
         return "Cancel today's cabs";
       case REQUEST_TYPES.CANCEL_RIDE:
         return 'Release the seat';
-      case REQUEST_TYPES.PICKUP_TIME_CHANGE:
-        return `Move pickup to ${request.requestedTime || 'the new time'}`;
       case REQUEST_TYPES.SHIFT_CHANGED:
         return `Set roster to ${request.requestedShiftCode || 'the new shift'}`;
-      case REQUEST_TYPES.SHIFT_EXTENDED:
-        return 'Approve extra cab';
-      case REQUEST_TYPES.EMERGENCY_RIDE:
-        return 'Approve emergency ride';
       default:
         return meta?.label || 'Resolve';
     }
@@ -118,14 +104,8 @@ export default function ChangeRequestQueueScreen() {
         return `Every cab for ${request.employeeName} on ${prettyDate(request.date)} is cancelled. The roster is left as it is.`;
       case REQUEST_TYPES.CANCEL_RIDE:
         return 'That one ride is cancelled and the seat is released for someone else.';
-      case REQUEST_TYPES.PICKUP_TIME_CHANGE:
-        return `The booking's pickup time moves to ${request.requestedTime}. Check the cab can still make it.`;
       case REQUEST_TYPES.SHIFT_CHANGED:
         return `The roster day becomes ${request.requestedShiftCode}, so the rides regenerate at that shift's times. Any cab already assigned at the old time is cancelled.`;
-      case REQUEST_TYPES.SHIFT_EXTENDED:
-        return "Approving adds a return cab to the coordinator's list for that day, flagged as an approved extension. They assign a vehicle to it from Today's Rides.";
-      case REQUEST_TYPES.EMERGENCY_RIDE:
-        return "Approving adds this ride to Today's Rides for that date, flagged as an emergency. Assign a vehicle to it there.";
       default:
         return '';
     }
@@ -134,8 +114,6 @@ export default function ChangeRequestQueueScreen() {
   function renderRequest({ item }) {
     const st = STATUS_STYLE[item.status] || STATUS_STYLE[REQUEST_STATUS.PENDING];
     const open_ = item.status === REQUEST_STATUS.PENDING;
-    const canEscalate =
-      isCoordinator && open_ && item.type === REQUEST_TYPES.EMERGENCY_RIDE && !item.escalated;
 
     return (
       <Card style={styles.card} mode="elevated">
@@ -169,35 +147,15 @@ export default function ChangeRequestQueueScreen() {
                 “{item.comments}”
               </Text>
             ) : null}
-            {item.requestedTime ? (
-              <Text variant="bodySmall" style={styles.detail}>
-                Time asked for: {item.requestedTime}
-              </Text>
-            ) : null}
             {item.requestedShiftCode ? (
               <Text variant="bodySmall" style={styles.detail}>
                 New shift: {item.requestedShiftCode}
-              </Text>
-            ) : null}
-            {item.direction ? (
-              <Text variant="bodySmall" style={styles.detail}>
-                Direction: {item.direction}
               </Text>
             ) : null}
             <Text variant="bodySmall" style={styles.raised}>
               Raised {formatWhen(item.createdAt)}
             </Text>
           </View>
-
-          {item.escalated ? (
-            <View style={styles.escalatedBox}>
-              <MaterialCommunityIcons name="arrow-up-bold-circle" size={15} color="#B26A00" />
-              <Text variant="bodySmall" style={styles.escalatedText}>
-                Escalated to HR — no vehicle was free
-                {item.escalationNote ? `: ${item.escalationNote}` : '.'}
-              </Text>
-            </View>
-          ) : null}
 
           {item.resolutionNote ? (
             <Text variant="bodySmall" style={styles.resolution}>
@@ -227,16 +185,6 @@ export default function ChangeRequestQueueScreen() {
                 >
                   Reject
                 </Button>
-                {canEscalate ? (
-                  <Button
-                    mode="text"
-                    compact
-                    icon="arrow-up-bold"
-                    onPress={() => open(item, 'escalate')}
-                  >
-                    No cab — escalate
-                  </Button>
-                ) : null}
               </View>
             </>
           ) : null}
@@ -284,26 +232,17 @@ export default function ChangeRequestQueueScreen() {
       <Portal>
         <Dialog visible={!!acting} onDismiss={() => !busy && setActing(null)} style={styles.dialog}>
           <Dialog.Title>
-            {acting?.mode === 'resolve'
-              ? actionLabel(acting.request)
-              : acting?.mode === 'reject'
-              ? 'Reject this request?'
-              : 'Escalate to HR?'}
+            {acting?.mode === 'resolve' ? actionLabel(acting.request) : 'Reject this request?'}
           </Dialog.Title>
           <Dialog.Content>
             {acting?.mode === 'resolve' ? (
               <Text variant="bodyMedium" style={styles.dialogText}>
                 {consequence(acting.request)}
               </Text>
-            ) : acting?.mode === 'reject' ? (
+            ) : (
               <Text variant="bodyMedium" style={styles.dialogText}>
                 Nothing changes on the roster or the rides. {acting.request.employeeName} is
                 notified, so give them a reason.
-              </Text>
-            ) : (
-              <Text variant="bodyMedium" style={styles.dialogText}>
-                The request stays open and moves to HR's queue. Use this when you have
-                no vehicle available.
               </Text>
             )}
             <TextInput
@@ -364,16 +303,6 @@ const styles = StyleSheet.create({
   detail: { color: colors.text, marginTop: 2 },
   comments: { color: colors.text, marginTop: 4, fontStyle: 'italic' },
   raised: { color: colors.muted, marginTop: 6 },
-  escalatedBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FFF6E5',
-    borderRadius: 8,
-    padding: 8,
-    marginTop: 10,
-  },
-  escalatedText: { color: '#B26A00', flex: 1, lineHeight: 18 },
   resolution: { color: colors.text, marginTop: 8, fontStyle: 'italic' },
   divider: { marginVertical: 12 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },

@@ -112,8 +112,14 @@ export async function adminDeleteEmployee(uid) {
   const snap = await getDoc(doc(firestore, 'employees', uid));
   const cabId = snap.exists() ? snap.data().cabId : null;
   const batch = writeBatch(firestore);
-  // A departing driver must not stay linked to a cab.
-  if (cabId) batch.set(doc(firestore, 'cabs', cabId), { driverUid: null }, { merge: true });
+  // A departing driver must not stay linked to a cab — but only detach a cab that
+  // still exists. set(merge) on a cab that has already been removed would CREATE
+  // it, and the rules reject a cab with no number, so a stale cabId on the profile
+  // would have blocked the removal entirely.
+  if (cabId) {
+    const cab = await getDoc(doc(firestore, 'cabs', cabId));
+    if (cab.exists()) batch.update(cab.ref, { driverUid: null });
+  }
   batch.delete(doc(firestore, 'employees', uid));
   return batch.commit();
 }
@@ -145,15 +151,32 @@ export async function adminCreateAccount({ email, password, role = 'employee', p
   try {
     const cred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, password);
     const uid = cred.user.uid;
-    await setDoc(doc(firestore, 'employees', uid), {
-      ...profile,
-      email: cleanEmail,
-      role,
-      // A driver starts with no cab — the admin links one from Manage Drivers.
-      ...(role === 'driver' ? { cabId: null } : {}),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+    try {
+      await setDoc(doc(firestore, 'employees', uid), {
+        ...profile,
+        email: cleanEmail,
+        role,
+        // A driver starts with no cab — the desk links one from the Fleet screen.
+        ...(role === 'driver' ? { cabId: null } : {}),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      // THE LOGIN EXISTS BUT THE PROFILE DOESN'T — undo the login.
+      //
+      // Two steps, two systems: the account is created in Firebase Auth, then the
+      // profile is written to Firestore. When the second half failed (most often
+      // rules that hadn't been deployed yet) the login survived, invisible in the
+      // app but very much there in Auth — so every retry came back "That email
+      // already has an account" and the only cure was deleting the user in the
+      // console. The secondary app is still signed in as this brand-new user, so
+      // it can delete itself; if even that fails there is nothing more we can do
+      // from the client, and the original error is the one worth reporting.
+      await cred.user.delete().catch((delErr) =>
+        console.warn('[provision] could not roll back the new login:', delErr?.message)
+      );
+      throw e;
+    }
     return uid;
   } finally {
     // Always drop the secondary session, even if the profile write failed.
@@ -205,7 +228,10 @@ function throwawayPassword() {
 function inviteError(e) {
   switch (e?.code) {
     case 'auth/email-already-in-use':
-      return 'That email already has an account';
+      // Say where to look: the account exists in Firebase Auth, which is not the
+      // same thing as appearing in this list — it may have been created with a
+      // different role, or left behind by an attempt that failed halfway.
+      return "That email already has an account. If they're not in this list, it was created with a different role — ask HR to check, or use another address";
     case 'auth/invalid-email':
       return 'That email address is not valid';
     case 'auth/weak-password':
@@ -325,25 +351,6 @@ export function updateEmployeeRoute(uid, route) {
   return updateDoc(doc(firestore, 'employees', uid), { 'roster.route': value });
 }
 
-// Set one route on many employees at once — the fast path for a fresh company or
-// a re-drawn route map, where doing it one card at a time is what stops it from
-// happening at all. Chunked because Firestore commits at most 500 writes a batch.
-export async function bulkSetEmployeeRoute(uids, route) {
-  if (!firestore) throw new Error('Backend not configured.');
-  const list = (uids || []).filter(Boolean);
-  if (!list.length) return 0;
-  const value = route ? String(route).trim() : null;
-
-  const LIMIT = 450;
-  for (let i = 0; i < list.length; i += LIMIT) {
-    const batch = writeBatch(firestore);
-    list.slice(i, i + LIMIT).forEach((uid) => {
-      batch.update(doc(firestore, 'employees', uid), { 'roster.route': value });
-    });
-    await batch.commit();
-  }
-  return list.length;
-}
 
 // Live view of ONE user's own profile document. Used to keep the signed-in
 // employee's roster up to date after the admin edits it — no re-login needed.

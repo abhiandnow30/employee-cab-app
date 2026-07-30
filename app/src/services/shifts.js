@@ -33,6 +33,16 @@ function normalize(stored) {
       // Keep the default (or skip an unknown code) rather than a broken shift.
       return;
     }
+    // WHICH LEGS RUN. A stored policy saved before these fields existed carries
+    // neither, and inferring them from the service window is not the same policy:
+    // the night shift ends at 06:00, which IS inside cab hours, yet no drop is
+    // provided. So a missing flag inherits the company default for that code, and
+    // only a code with no default at all falls back to the window (undefined,
+    // which is what legsForShift treats as "ask the window").
+    const fallback = DEFAULT_SHIFT_POLICY[code];
+    const leg = (key) =>
+      typeof s[key] === 'boolean' ? s[key] : fallback?.[key];
+
     out[code] = {
       label: String(s.label || code),
       working,
@@ -42,6 +52,8 @@ function normalize(stored) {
             end: s.end,
             pickupLeadMin: Number(s.pickupLeadMin) || 0,
             dropDelayMin: Number(s.dropDelayMin) || 0,
+            providePickup: leg('providePickup'),
+            provideDrop: leg('provideDrop'),
           }
         : {}),
     };
@@ -83,6 +95,12 @@ export async function saveShiftPolicy(policy) {
         end: s.end,
         pickupLeadMin: Math.max(0, Number(s.pickupLeadMin) || 0),
         dropDelayMin: Math.max(0, Number(s.dropDelayMin) || 0),
+        // Which legs a cab actually runs. Written explicitly (never left to the
+        // service window) so the saved document says what the company provides —
+        // these used to be stripped here, which is why the screen had no way to
+        // express "night shift: pickup only".
+        providePickup: s.providePickup === true,
+        provideDrop: s.provideDrop === true,
       };
     } else {
       clean[code] = { label: String(s.label || code).trim() || code, working: false };

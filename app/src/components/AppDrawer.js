@@ -19,20 +19,18 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COMPANY_NAME, companyLogo } from '../branding';
 
 // Each menu item → which screen it opens.
+//
+// My Shift Calendar, Change Request and Feedback are deliberately NOT here: the
+// Home screen already puts them front and centre as tiles, and listing them in
+// both places made the menu longer without making anything reachable that wasn't
+// already one tap away. Home is the first item, so the tiles are never far.
 export const DRAWER_ITEMS = [
   { label: 'Home', icon: 'home', screen: 'EmployeeHome' },
-  // The employee's shifts now come from the roster HR uploads, so their calendar
-  // sits near the top — it's the thing they check most.
-  { label: 'My Shift Calendar', icon: 'calendar-month', screen: 'MySchedule' },
   { label: 'Profile', icon: 'account', screen: 'Profile' },
   { label: 'My Rides', icon: 'calendar-search', screen: 'MyRides' },
   { label: 'Notifications', icon: 'bell', screen: 'Notifications' },
-  // Replaces self-booking: the employee raises an exception to the roster
-  // instead of creating rides.
-  { label: 'Change Request', icon: 'calendar-edit', screen: 'ChangeRequest' },
   { label: 'Ride History', icon: 'history', screen: 'RosterHistory' },
   { label: 'Track Cab', icon: 'map-marker-radius', screen: 'TrackCab' },
-  { label: 'Feedback', icon: 'message-text', screen: 'Feedback' },
   { label: 'Rate Us', icon: 'star', screen: 'RateUs' },
 ];
 
@@ -52,14 +50,19 @@ export const ADMIN_DRAWER_ITEMS = [
   { label: 'Upload Roster', icon: 'file-upload-outline', screen: 'RosterUpload' },
   { label: 'Shift Policy', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
-  // Each employee's pickup route. The coordinator groups carpools by this, so
-  // without it everyone lands under "No route set" and has to be grouped by hand.
-  { label: 'Employee Routes', icon: 'map-marker-account', screen: 'EmployeeRoutes' },
-  // Only two things reach HR: shift extensions, and emergency rides the
-  // coordinator had no vehicle for.
-  { label: 'Exception Approvals', icon: 'clipboard-alert-outline', screen: 'ExceptionApprovals' },
+  // No "Exception Approvals" here. Nothing routes to HR any more: the company runs
+  // two scheduled rides and nothing else, so the requests that needed HR's
+  // sign-off (a cab after an extended shift, an emergency ride) no longer exist.
+  // What remains — leave, absent, drop a ride, shift changed — only ever cancels or
+  // re-codes a ride, which is the coordinator's job as they run the day.
   { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
   { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
+  // HR needs to SEE who is driving what — which cab a ride was given to, and which
+  // driver account is behind it — without owning the fleet. These three screens
+  // render read-only for the admin role; the coordinator keeps the controls.
+  { label: 'Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
+  { label: 'Fleet', icon: 'car-multiple', screen: 'ManageCabs' },
+  { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
   { label: 'Routes & Timings', icon: 'map-marker-path', screen: 'ManageTimings' },
   { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
   { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
@@ -237,8 +240,12 @@ function UserCard({ user, onChangePassword }) {
 }
 
 // The brand strip + nav list + user card. Shared by both modes.
+// `counts` is { [screenName]: number } — how much is waiting on this person for
+// that screen. Rendered as a pill on the row, because a desk queue that only
+// announces itself once you open it is a queue that gets left.
 function DrawerBody({
-  user, items = DRAWER_ITEMS, onNavigate, onClose, onChangePassword, onLogout, activeScreen, permanent,
+  user, items = DRAWER_ITEMS, onNavigate, onClose, onChangePassword, onLogout,
+  activeScreen, permanent, counts = {},
 }) {
   return (
     <View style={styles.body}>
@@ -259,12 +266,16 @@ function DrawerBody({
       <ScrollView style={styles.menu}>
         {items.map((item) => {
           const active = item.screen === activeScreen;
+          const waiting = counts[item.screen] || 0;
           return (
             <Pressable
               key={item.label}
               style={[styles.item, active && styles.itemActive]}
               onPress={() => onNavigate(item)}
               android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
+              accessibilityLabel={
+                waiting ? `${item.label}, ${waiting} waiting` : item.label
+              }
             >
               <MaterialCommunityIcons
                 name={item.icon}
@@ -275,6 +286,11 @@ function DrawerBody({
               <Text style={[styles.itemText, active && styles.itemTextActive]}>
                 {item.label}
               </Text>
+              {waiting ? (
+                <View style={styles.countPill}>
+                  <Text style={styles.countText}>{waiting > 99 ? '99+' : waiting}</Text>
+                </View>
+              ) : null}
             </Pressable>
           );
         })}
@@ -307,6 +323,7 @@ export default function AppDrawer({
   onChangePassword,
   onLogout,
   activeScreen,
+  counts,
   permanent = false,
 }) {
   // Permanent sidebar: a static left column, always on screen.
@@ -320,6 +337,7 @@ export default function AppDrawer({
           onChangePassword={onChangePassword}
           onLogout={onLogout}
           activeScreen={activeScreen}
+          counts={counts}
           permanent
         />
       </View>
@@ -340,6 +358,7 @@ export default function AppDrawer({
             onLogout={onLogout}
             onClose={onClose}
             activeScreen={activeScreen}
+            counts={counts}
           />
         </View>
         {/* Tapping outside the panel closes it */}
@@ -400,8 +419,18 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(255,255,255,0.15)',
   },
   itemIcon: { width: 30 },
-  itemText: { color: '#FFFFFF', fontSize: 16 },
+  itemText: { color: '#FFFFFF', fontSize: 16, flex: 1 },
   itemTextActive: { fontWeight: 'bold' },
+  countPill: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countText: { color: '#0D47A1', fontSize: 12, fontWeight: 'bold' },
   userBox: {
     backgroundColor: '#1E88E5',
     paddingHorizontal: 16,

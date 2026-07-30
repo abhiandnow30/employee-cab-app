@@ -21,7 +21,7 @@ import { useApp } from '../../context/AppContext';
 import useSyncedDraft from '../../utils/useSyncedDraft';
 import {
   ALL_SHIFT_CODES, SHIFT_COLORS, legsForShift, hhmmToMinutes, minutesToDisplay,
-  SERVICE_WINDOW,
+  SERVICE_WINDOW, withinServiceWindow,
 } from '../../data/shifts';
 import { colors } from '../../theme';
 
@@ -53,9 +53,11 @@ export default function ShiftPolicyScreen() {
     <ScrollView contentContainerStyle={styles.scroll}>
       <View style={styles.col}>
         <Text variant="bodySmall" style={styles.hint}>
-          These codes are what HR types in the monthly roster. A working shift
-          generates two rides a day — in before it starts, out after it ends. Week
-          Off, Holiday and Leave generate none.
+          These codes are what HR types in the monthly roster. Times decide WHEN a
+          cab runs; the two switches decide WHETHER it runs — a shift can provide a
+          pickup, a drop, both, or neither. Today the company runs two rides: the
+          Afternoon shift's 10:00 PM drop home, and the Night shift's 8:00 PM pickup.
+          Week Off, Holiday and Leave never generate a ride.
         </Text>
 
         {ALL_SHIFT_CODES.map((code) => {
@@ -130,7 +132,7 @@ export default function ShiftPolicyScreen() {
                         onChangeText={setField(code, 'end')}
                         mode="outlined"
                         dense
-                        placeholder="01:30"
+                        placeholder="01:00"
                         error={endBad}
                         style={styles.cell}
                       />
@@ -152,6 +154,34 @@ export default function ShiftPolicyScreen() {
                         keyboardType="number-pad"
                         style={styles.cell}
                       />
+                    </View>
+
+                    {/* WHICH LEGS THE COMPANY ACTUALLY PAYS FOR. This is a business
+                        decision, not something to read off the clock: the night
+                        shift ends at 6:00 AM — well inside cab hours — and still
+                        gets no drop. Before these switches existed the times were
+                        editable but the legs weren't, so "pickup only" could not be
+                        expressed at all. Turning both off keeps the shift on
+                        everyone's calendar while running no cab for it. */}
+                    <View style={styles.legRow}>
+                      <View style={styles.legToggle}>
+                        <Switch
+                          value={s.providePickup === true}
+                          onValueChange={setField(code, 'providePickup')}
+                        />
+                        <Text variant="bodySmall" style={styles.legLabel}>
+                          Cab picks up from home
+                        </Text>
+                      </View>
+                      <View style={styles.legToggle}>
+                        <Switch
+                          value={s.provideDrop === true}
+                          onValueChange={setField(code, 'provideDrop')}
+                        />
+                        <Text variant="bodySmall" style={styles.legLabel}>
+                          Cab drops home
+                        </Text>
+                      </View>
                     </View>
 
                     {/* Show the derived result, so the effect of an edit is visible
@@ -177,9 +207,11 @@ export default function ShiftPolicyScreen() {
                               </>
                             ) : (
                               <>
-                                No pickup — {legs.pickup} is outside cab hours (
-                                {SERVICE_WINDOW.from}–{SERVICE_WINDOW.to}), so they
+                                No pickup — nothing runs at {legs.pickup}, so they
                                 travel in themselves
+                                {withinServiceWindow(hhmmToMinutes(s.start) - (Number(s.pickupLeadMin) || 0))
+                                  ? ''
+                                  : ` (it is outside cab hours, ${SERVICE_WINDOW.from}–${SERVICE_WINDOW.to})`}
                               </>
                             )}
                           </Text>
@@ -199,16 +231,19 @@ export default function ShiftPolicyScreen() {
                               </>
                             ) : (
                               <>
-                                No drop — {legs.drop} is outside cab hours (
-                                {SERVICE_WINDOW.from}–{SERVICE_WINDOW.to})
+                                No drop — nothing runs at {legs.drop}
+                                {withinServiceWindow(hhmmToMinutes(s.end) + (Number(s.dropDelayMin) || 0))
+                                  ? ''
+                                  : ` (it is outside cab hours, ${SERVICE_WINDOW.from}–${SERVICE_WINDOW.to})`}
                               </>
                             )}
                           </Text>
                         </View>
                         {!legs.providePickup && !legs.provideDrop ? (
                           <HelperText type="info" visible>
-                            This shift generates no rides at all — both legs fall
-                            outside cab hours.
+                            This shift generates no rides at all. It still appears on
+                            the roster and on the employee's calendar as a shift they
+                            work — turn a leg on when a cab starts running for it.
                           </HelperText>
                         ) : null}
                       </>
@@ -276,6 +311,9 @@ const styles = StyleSheet.create({
   divider: { marginVertical: 12 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   cell: { flexGrow: 1, flexBasis: 140, backgroundColor: colors.surface },
+  legRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 20, marginTop: 12 },
+  legToggle: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legLabel: { color: colors.text },
   preview: {
     flexDirection: 'row',
     alignItems: 'center',

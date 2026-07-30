@@ -430,10 +430,17 @@ export default function BookingsScreen({ navigation }) {
           <Dialog.Content>
             <RadioButton.Group onValueChange={setChosenCab} value={chosenCab}>
               {cabs.map((c) => (
+                // Unlinked cabs are disabled: the driver's trip list follows the
+                // cab↔driver link, so assigning one hides the trip from everybody.
                 <RadioButton.Item
                   key={c.id}
-                  label={`${c.cabNumber} · ${c.driverName} · ${cabCapacity(c)} seats`}
+                  label={
+                    c.driverUid
+                      ? `${c.cabNumber} · ${c.driverName || 'driver'} · ${cabCapacity(c)} seats`
+                      : `${c.cabNumber} · no driver linked`
+                  }
                   value={c.id}
+                  disabled={!c.driverUid}
                 />
               ))}
             </RadioButton.Group>

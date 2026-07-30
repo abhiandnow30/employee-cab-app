@@ -325,7 +325,7 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
                 />
                 <HelperText type="info" visible style={styles.pwHint}>
                   The coordinator groups the day's cabs by route. You can change it
-                  later on Employee Routes.
+                  later on this employee's card below.
                 </HelperText>
               </>
             ) : null}
@@ -354,11 +354,36 @@ export default function EmployeeManagementScreen() {
   const [addOpen, setAddOpen] = useState(false);
   const [deleteFor, setDeleteFor] = useState(null); // employee pending deletion
   const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     const unsub = subscribeEmployees(setEmployees, (e) => setError(e.message));
     return unsub;
   }, []);
+
+  // Find one person in a list of a few hundred. Matches name, employee ID, email,
+  // phone, route and address, because "which of these is Bhuvana" is only one of
+  // the questions the desk arrives with — "who is on the JNTU route" and "whose
+  // number is this" are the others.
+  //
+  // Each card holds its own unsaved edits, so filtering has to leave the cards
+  // themselves alone: FlatList keys on `uid`, so a card that stays in the list
+  // keeps its draft while the search narrows around it.
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return employees;
+    // Every word must match somewhere, so "bhuvana jntu" narrows rather than widens.
+    const words = q.split(/\s+/);
+    return employees.filter((e) => {
+      const haystack = [
+        e.name, e.empId, e.email, e.phone, e.roster?.route, e.address, e.department,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return words.every((w) => haystack.includes(w));
+    });
+  }, [employees, search]);
 
   async function handleSave(uid, fields) {
     setError('');
@@ -406,9 +431,30 @@ export default function EmployeeManagementScreen() {
             Add Employee / Driver
           </Button>
         </View>
+        <View style={styles.searchRow}>
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            mode="outlined"
+            dense
+            placeholder="Search name, ID, email, phone or route"
+            left={<TextInput.Icon icon="magnify" />}
+            right={
+              search ? (
+                <TextInput.Icon icon="close" onPress={() => setSearch('')} />
+              ) : null
+            }
+            style={styles.searchInput}
+          />
+          {search ? (
+            <Text variant="bodySmall" style={styles.searchCount}>
+              {shown.length} of {employees.length}
+            </Text>
+          ) : null}
+        </View>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <FlatList
-          data={employees}
+          data={shown}
           keyExtractor={(item) => item.uid}
           renderItem={({ item }) => (
             <EmployeeCard
@@ -422,10 +468,21 @@ export default function EmployeeManagementScreen() {
           contentContainerStyle={styles.list}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <MaterialCommunityIcons name="account-group" size={44} color={colors.muted} />
+              <MaterialCommunityIcons
+                name={search ? 'account-search' : 'account-group'}
+                size={44}
+                color={colors.muted}
+              />
               <Text variant="bodyMedium" style={styles.emptyText}>
-                No employees yet. Tap “Add Employee” to create one.
+                {search
+                  ? `Nobody matches “${search}”.`
+                  : 'No employees yet. Tap “Add Employee” to create one.'}
               </Text>
+              {search ? (
+                <Button mode="text" onPress={() => setSearch('')}>
+                  Clear search
+                </Button>
+              ) : null}
             </View>
           }
         />
@@ -485,6 +542,15 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   hint: { opacity: 0.7, flex: 1, minWidth: 200 },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+  },
+  searchInput: { flex: 1, backgroundColor: colors.surface },
+  searchCount: { color: colors.muted },
   list: { padding: 12 },
   card: { marginBottom: 12 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },

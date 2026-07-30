@@ -2,13 +2,22 @@
 // FLEET  (coordinator)
 //
 // The coordinator maintains the vehicles they assign every day: add a cab, keep
-// its number/contact/seats current, link the driver account it follows, and
+// its number and seat count current, link the driver account it follows, and
 // retire it when it leaves service.
 //
-// Linking a driver here is what switches on that cab's LIVE TRACKING — the
-// location feed is keyed by driver id, and the cab record is what tells the app
-// (and the riders) which feed to follow. A cab with no driver linked can still be
-// assigned trips, but nobody can watch it move.
+// THREE SEPARATE THINGS, THREE PLACES. A cab is a vehicle (here). A driver is an
+// account (the Drivers screen). Which driver is on which cab is the LINK — the
+// dropdown on each card below, and nowhere else. The add-cab form used to also ask
+// for a driver name and phone, which read as a fourth way of doing the third
+// thing: it granted nobody access, showed nobody the trip, and was overwritten
+// the moment a real driver was linked.
+//
+// LINKING A DRIVER IS WHAT MAKES A CAB USABLE. The driver's trip list is scoped
+// by that link (cabs/<id>.driverUid ←→ employees/<uid>.cabId), and live tracking
+// is keyed off the driver's id, so an unlinked cab has nobody to drive it and no
+// feed to follow. Assignment refuses such a cab outright — it used to accept it,
+// which produced rides no driver account could see while the rider had already
+// been told a cab was on the way. A typed-in driver NAME is not a link.
 //
 // Removing a vehicle is refused while it still has upcoming rides, so no rider
 // silently loses their cab.
@@ -25,13 +34,18 @@ import { useApp } from '../../context/AppContext';
 import Dropdown from '../../components/Dropdown';
 import { subscribeCabs, cabCapacity } from '../../services/cabs';
 import { subscribeDrivers } from '../../services/profile';
-import { DEFAULT_CAB_CAPACITY } from '../../data/mockData';
+import { DEFAULT_CAB_CAPACITY, STATUS } from '../../data/mockData';
+import { todayKey } from '../../utils/datetime';
 import { colors } from '../../theme';
 
+// A ride in one of these states is over, whatever its date says.
+const FINISHED = [STATUS.CANCELLED, STATUS.COMPLETED, STATUS.NO_SHOW];
+
+// The form describes the VEHICLE only. Driver name and number are not asked for
+// here — they belong to the driver's account and are copied onto the cab when one
+// is linked, so there is a single source for them.
 const EMPTY = {
   cabNumber: '',
-  driverName: '',
-  driverPhone: '',
   capacity: String(DEFAULT_CAB_CAPACITY),
 };
 
@@ -39,7 +53,15 @@ const EMPTY = {
 const NO_DRIVER = '__none__';
 
 export default function ManageCabsScreen() {
-  const { createCab, editCab, deleteCab, assignDriverToCab } = useApp();
+  const {
+    createCab, editCab, deleteCab, assignDriverToCab, bookings, currentUser,
+  } = useApp();
+
+  // HR/Admin can see the fleet and who is driving what, but the vehicles and the
+  // driver links belong to the coordinator who runs the day. Read-only rather than
+  // hidden: "which cab took that ride, and who was driving" is a question HR has to
+  // be able to answer.
+  const readOnly = currentUser?.role === 'admin';
 
   const [cabs, setCabs] = useState([]);
   const [drivers, setDrivers] = useState([]);
@@ -53,6 +75,8 @@ export default function ManageCabsScreen() {
   const [formError, setFormError] = useState('');
   const [busy, setBusy] = useState(false);
   const [deleteFor, setDeleteFor] = useState(null);
+  // Set when the driver being picked is already on another cab: { cabId, uid, from }.
+  const [moveFor, setMoveFor] = useState(null);
 
   useEffect(() => {
     const unsub = subscribeCabs(
@@ -98,8 +122,6 @@ export default function ManageCabsScreen() {
     setEditingId(cab.id);
     setForm({
       cabNumber: cab.cabNumber || '',
-      driverName: cab.driverName || '',
-      driverPhone: cab.driverPhone || '',
       capacity: String(cabCapacity(cab)),
     });
     setFormError('');
@@ -119,11 +141,42 @@ export default function ManageCabsScreen() {
     }
   }
 
-  async function handleLink(cabId, uid) {
+  // Rides already assigned to a cab that haven't run yet. If that cab is about to
+  // lose its driver, these are the trips no driver account would be able to see.
+  function upcomingRidesOn(cabId) {
+    const today = todayKey();
+    return bookings.filter(
+      (b) =>
+        b.assignedCabId === cabId &&
+        !FINISHED.includes(b.status) &&
+        String(b.date || '') >= today
+    ).length;
+  }
+
+  // Make the link. Split out from handleLink so the confirmation below can call it.
+  async function doLink(cabId, uid) {
     setError('');
+    setBusy(true);
     const res = await assignDriverToCab(cabId, uid === NO_DRIVER ? null : uid);
+    setBusy(false);
+    setMoveFor(null);
     if (res?.ok) setSnack(uid === NO_DRIVER ? 'Driver detached.' : 'Driver linked — live tracking on.');
     else setError(res?.message || 'Could not link that driver.');
+  }
+
+  // A driver drives one cab at a time, so putting them on this one TAKES THEM OFF
+  // whatever they were on. That cab loses its live tracking, and any rides already
+  // assigned to it lose the only account that can see them — far too much to happen
+  // on one tap of a dropdown, so ask first.
+  function handleLink(cabId, uid) {
+    setError('');
+    const heldElsewhere =
+      uid !== NO_DRIVER ? cabs.find((c) => c.driverUid === uid && c.id !== cabId) : null;
+    if (heldElsewhere) {
+      setMoveFor({ cabId, uid, from: heldElsewhere });
+      return;
+    }
+    doLink(cabId, uid);
   }
 
   async function confirmDelete() {
@@ -144,6 +197,12 @@ export default function ManageCabsScreen() {
     }
   }
 
+  // Everything the "move this driver" confirmation needs to state plainly what
+  // will happen: who, from where, to where, and what it costs the old cab.
+  const moveDriver = moveFor ? drivers.find((d) => d.uid === moveFor.uid) : null;
+  const moveToCab = moveFor ? cabs.find((c) => c.id === moveFor.cabId) : null;
+  const strandedRides = moveFor ? upcomingRidesOn(moveFor.from.id) : 0;
+
   function renderCab({ item }) {
     const linked = !!item.driverUid;
     return (
@@ -153,7 +212,11 @@ export default function ManageCabsScreen() {
             <View style={styles.headText}>
               <Text variant="titleMedium">{item.cabNumber || 'Unnamed cab'}</Text>
               <Text variant="bodySmall" style={styles.detail}>
-                {cabCapacity(item)} seats · {item.driverPhone || 'no phone'}
+                {cabCapacity(item)} seats
+                {/* The phone belongs to the linked driver, so it is only shown
+                    when there is one — a number with no driver behind it is what
+                    made an unlinked cab look ready to use. */}
+                {linked && item.driverPhone ? ` · ${item.driverPhone}` : ''}
               </Text>
             </View>
             <Chip
@@ -164,13 +227,17 @@ export default function ManageCabsScreen() {
             >
               {linked ? 'Tracking on' : 'No driver'}
             </Chip>
-            <IconButton icon="pencil" size={20} onPress={() => openEdit(item)} />
-            <IconButton
-              icon="delete"
-              size={20}
-              iconColor={colors.danger}
-              onPress={() => setDeleteFor(item)}
-            />
+            {readOnly ? null : (
+              <>
+                <IconButton icon="pencil" size={20} onPress={() => openEdit(item)} />
+                <IconButton
+                  icon="delete"
+                  size={20}
+                  iconColor={colors.danger}
+                  onPress={() => setDeleteFor(item)}
+                />
+              </>
+            )}
           </View>
 
           <Divider style={styles.divider} />
@@ -179,20 +246,29 @@ export default function ManageCabsScreen() {
             <Text variant="labelLarge" style={styles.linkLabel}>
               Driver
             </Text>
-            <View style={styles.linkPicker}>
-              <Dropdown
-                compact
-                value={item.driverUid || NO_DRIVER}
-                options={driverOptions}
-                onSelect={(uid) => handleLink(item.id, uid)}
-                format={driverLabel}
-                placeholder="Choose"
-              />
-            </View>
+            {readOnly ? (
+              // The same fact, stated rather than editable.
+              <Text variant="bodyMedium" style={styles.linkStatic}>
+                {linked ? item.driverName || 'Linked driver' : 'No driver linked'}
+              </Text>
+            ) : (
+              <View style={styles.linkPicker}>
+                <Dropdown
+                  compact
+                  value={item.driverUid || NO_DRIVER}
+                  options={driverOptions}
+                  onSelect={(uid) => handleLink(item.id, uid)}
+                  format={driverLabel}
+                  placeholder="Choose"
+                />
+              </View>
+            )}
           </View>
           {!linked ? (
             <Text variant="bodySmall" style={styles.warn}>
-              Link a driver so employees can follow this cab on the map.
+              {readOnly
+                ? 'No driver linked, so no rides can be assigned to this cab and employees cannot follow it. The coordinator links one on the Fleet screen.'
+                : 'Link a driver so employees can follow this cab on the map.'}
             </Text>
           ) : null}
         </Card.Content>
@@ -205,12 +281,15 @@ export default function ManageCabsScreen() {
       <View style={styles.centerCol}>
         <View style={styles.topBar}>
           <Text variant="bodySmall" style={styles.hint}>
-            The vehicles you assign each day. Linking a driver switches on that
-            cab's live tracking.
+            {readOnly
+              ? "The fleet and who is driving each vehicle. The coordinator maintains this — you're seeing it as it stands."
+              : "The vehicles you assign each day. Linking a driver switches on that cab's live tracking."}
           </Text>
-          <Button mode="contained" icon="car-plus" onPress={openAdd}>
-            Add cab
-          </Button>
+          {readOnly ? null : (
+            <Button mode="contained" icon="plus" onPress={openAdd}>
+              Add cab
+            </Button>
+          )}
         </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -227,9 +306,15 @@ export default function ManageCabsScreen() {
                 <Text variant="bodyMedium" style={styles.emptyText}>
                   No cabs in the fleet yet.
                 </Text>
-                <Button mode="contained" icon="car-plus" onPress={openAdd}>
-                  Add your first cab
-                </Button>
+                {readOnly ? (
+                  <Text variant="bodySmall" style={styles.emptyText}>
+                    The coordinator adds vehicles on this screen.
+                  </Text>
+                ) : (
+                  <Button mode="contained" icon="plus" onPress={openAdd}>
+                    Add your first cab
+                  </Button>
+                )}
               </View>
             ) : null
           }
@@ -252,24 +337,6 @@ export default function ManageCabsScreen() {
               style={styles.input}
             />
             <TextInput
-              label="Driver name"
-              value={form.driverName}
-              onChangeText={(t) => setForm((f) => ({ ...f, driverName: t }))}
-              mode="outlined"
-              style={styles.input}
-            />
-            <TextInput
-              label="Contact number"
-              value={form.driverPhone}
-              onChangeText={(t) =>
-                setForm((f) => ({ ...f, driverPhone: t.replace(/[^0-9]/g, '').slice(0, 10) }))
-              }
-              mode="outlined"
-              keyboardType="phone-pad"
-              maxLength={10}
-              style={styles.input}
-            />
-            <TextInput
               label="Seats"
               value={form.capacity}
               onChangeText={(t) =>
@@ -280,7 +347,9 @@ export default function ManageCabsScreen() {
               style={styles.input}
             />
             <HelperText type="info" visible style={styles.seatHint}>
-              Carpool assignments stop once a cab is full for a time slot.
+              Carpool assignments stop once a cab is full for a time slot. The
+              driver is chosen on the cab's card after saving — their name and
+              number come from their own account.
             </HelperText>
             {formError ? <HelperText type="error" visible>{formError}</HelperText> : null}
           </Dialog.Content>
@@ -290,6 +359,46 @@ export default function ManageCabsScreen() {
             </Button>
             <Button mode="contained" onPress={saveForm} loading={busy} disabled={busy}>
               Save
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+
+        {/* Moving a driver who is already on another cab */}
+        <Dialog visible={!!moveFor} onDismiss={() => !busy && setMoveFor(null)} style={styles.dialog}>
+          <Dialog.Title>
+            Move {moveDriver?.name || 'this driver'} to {moveToCab?.cabNumber || 'this cab'}?
+          </Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium">
+              {moveDriver?.name || 'This driver'} is currently driving{' '}
+              <Text style={styles.strong}>{moveFor?.from?.cabNumber}</Text>. A driver
+              can only be on one cab, so {moveFor?.from?.cabNumber} will be left with
+              no driver and its live tracking will switch off until you link someone
+              else.
+            </Text>
+            {strandedRides > 0 ? (
+              <View style={styles.moveWarn}>
+                <MaterialCommunityIcons name="alert" size={16} color="#B26A00" />
+                <Text variant="bodySmall" style={styles.moveWarnText}>
+                  {moveFor?.from?.cabNumber} has {strandedRides} upcoming ride
+                  {strandedRides === 1 ? '' : 's'} assigned. Nobody will be able to see
+                  {strandedRides === 1 ? ' it' : ' them'} until that cab has a driver
+                  again — link one, or re-assign those rides to another cab.
+                </Text>
+              </View>
+            ) : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setMoveFor(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              onPress={() => doLink(moveFor.cabId, moveFor.uid)}
+              loading={busy}
+              disabled={busy}
+            >
+              Move driver
             </Button>
           </Dialog.Actions>
         </Dialog>
@@ -341,6 +450,18 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   hint: { opacity: 0.7, flex: 1, minWidth: 200, lineHeight: 18 },
+  linkStatic: { color: colors.text, fontWeight: '600', flex: 1 },
+  strong: { fontWeight: 'bold' },
+  moveWarn: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 12,
+    backgroundColor: '#FFF6E5',
+    borderRadius: 8,
+    padding: 10,
+  },
+  moveWarnText: { color: '#B26A00', flex: 1, lineHeight: 18 },
   list: { padding: 12 },
   card: { marginBottom: 12 },
   rowBetween: { flexDirection: 'row', alignItems: 'center', gap: 6 },

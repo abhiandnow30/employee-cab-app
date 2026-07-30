@@ -18,13 +18,17 @@
 // ---------------------------------------------------------------------------
 // THE OVERNIGHT PROBLEM
 //
-// An Evening shift on the 5th runs 4:00 PM → 1:30 AM, so it produces:
-//   • an inbound  ride on the 5th (pickup 3:00 PM)
-//   • an outbound ride on the 6th (drop 1:45 AM)
-// The two legs are on different calendar days. "Rides on the 6th" therefore has
-// to read TWO roster days: the 6th (for shifts starting that day) and the 5th
-// (for overnight shifts ending that morning). Getting this wrong is how a night
+// An Evening shift on the 5th runs 4:00 PM → 1:00 AM, so its two legs are:
+//   • inbound  on the 5th, before the shift starts
+//   • outbound on the 6th, when the shift ends
+// They fall on different calendar days. "Rides on the 6th" therefore has to read
+// TWO roster days: the 6th (for shifts starting that day) and the 5th (for
+// overnight shifts ending that morning). Getting this wrong is how an overnight
 // shift silently loses its ride home.
+//
+// Which of those legs a cab actually runs is policy — today the evening shift gets
+// neither and the night shift only its inbound — but the two-day read is what
+// makes the outbound land on the right day whenever one is provided.
 // ---------------------------------------------------------------------------
 
 import { legsForShift, isWorkingCode } from '../data/shifts';
@@ -77,22 +81,20 @@ function makeRide({ roster, shiftDate, travelDate, leg, code, time, policy }) {
 
 // Every ride that runs on `travelDate`.
 //
-//   rosters       — roster docs covering travelDate AND the day before (see above)
-//   policy        — the shift policy (config/shifts)
-//   bookings      — existing booking docs, used to attach live state
-//   extraRequests — APPROVED change requests that call for an additional ride
-//                   (a shift extension, or an emergency ride the desk agreed to)
+//   rosters  — roster docs covering travelDate AND the day before (see above)
+//   policy   — the shift policy (config/shifts)
+//   bookings — existing booking docs, used to attach live state
 //
-// The roster is the source of most rides, but not all of them: an approved shift
-// extension or emergency ride is a ride that the roster knows nothing about. Those
-// used to go nowhere — HR approved them and no cab could ever be assigned, because
-// nothing put them in front of the coordinator. They're folded in here so they
-// appear in the day's list and can be assigned exactly like a rostered ride.
+// THE ROSTER IS THE ONLY SOURCE OF RIDES. The company runs the two scheduled rides
+// and nothing else, so there is no path that adds one: no shift-extension cab, no
+// emergency ride. A change request can only cancel a ride or re-code the day, both
+// of which are already reflected here (cancelled rides drop out below; a re-coded
+// day derives different rides).
 //
 // Returns rides sorted by pickup time, each carrying its booking when it has one.
-export function ridesForDate(travelDate, rosters, policy, bookings = [], extraRequests = []) {
+export function ridesForDate(travelDate, rosters, policy, bookings = []) {
   if (!travelDate) return [];
-  if (!rosters?.length && !extraRequests?.length) return [];
+  if (!rosters?.length) return [];
 
   const prevDate = shiftDateKey(travelDate, -1);
   const byKey = new Map();
@@ -134,40 +136,6 @@ export function ridesForDate(travelDate, rosters, policy, bookings = [], extraRe
     consider(roster, prevDate); // overnight shifts ending today
   });
 
-  // Approved extra rides for this day. The request carries the employee and the
-  // time; the address comes from any roster row we hold for them, since a request
-  // doesn't duplicate it.
-  (extraRequests || [])
-    .filter((r) => r.date === travelDate && !r.fulfilledBookingId)
-    .forEach((r) => {
-      const known = (rosters || []).find((x) => x.employeeId === r.employeeId);
-      const leg = r.direction === DIRECTION.IN ? 'in' : 'out';
-      rides.push({
-        // Keyed by the request, not by a shift — there is no shift behind it.
-        key: `req_${r.id}`,
-        employeeId: r.employeeId,
-        employeeName: r.employeeName || known?.employeeName || 'Employee',
-        empId: r.empId || known?.empId || '',
-        route: r.route || known?.route || null,
-        employeeAddress: known?.address || '',
-        shiftCode: r.type === 'shift_extended' ? 'EXT' : 'SOS',
-        shiftLabel: r.typeLabel || 'Extra ride',
-        shiftDate: travelDate,
-        date: travelDate,
-        leg,
-        direction: r.direction || DIRECTION.OUT,
-        shift: r.requestedTime || '',
-        pickup: leg === 'in' ? 'Home' : 'Office',
-        // Marks it out in the UI, and lets the assign action close the request.
-        isExtra: true,
-        requestId: r.id,
-        requestType: r.type,
-        booking: null,
-        status: 'Pending',
-        assignedCabId: null,
-      });
-    });
-
   // Attach live state from any booking that already exists for the ride.
   rides.forEach((ride) => {
     const booking = byKey.get(ride.key);
@@ -203,10 +171,12 @@ export function ridesForDate(travelDate, rosters, policy, bookings = [], extraRe
 export function bookingFromRide(ride, departAt) {
   return {
     rideKey: ride.key,
-    // Set for a ride that came from an approved request rather than the roster.
-    ...(ride.requestId ? { changeRequestId: ride.requestId } : {}),
     employeeId: ride.employeeId,
     employeeName: ride.employeeName,
+    // The company employee ID, carried onto the booking because the DRIVER'S trip
+    // list identifies riders by ID rather than by name, and the rules (rightly) do
+    // not let a driver read employee profiles to look one up.
+    empId: ride.empId || '',
     employeeAddress: ride.employeeAddress || null,
     employeeHome: null,
     date: ride.date,

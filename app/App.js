@@ -37,7 +37,6 @@ import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
 import ManageDriversScreen from './src/screens/admin/ManageDriversScreen';
 import ManageCabsScreen from './src/screens/admin/ManageCabsScreen';
-import EmployeeRoutesScreen from './src/screens/admin/EmployeeRoutesScreen';
 import ManageTimingsScreen from './src/screens/admin/ManageTimingsScreen';
 import CancelledRidesScreen from './src/screens/admin/CancelledRidesScreen';
 import NoShowsScreen from './src/screens/admin/NoShowsScreen';
@@ -92,7 +91,6 @@ const linking = {
       Bookings: 'bookings',
       ManageDrivers: 'drivers',
       ManageCabs: 'cabs',
-      EmployeeRoutes: 'employee-routes',
       ManageTimings: 'manage-timings',
       CancelledRides: 'cancelled-rides',
       NoShows: 'no-shows',
@@ -101,7 +99,6 @@ const linking = {
       EmployeeManagement: 'employees',
       AddressRequests: 'address-requests',
       Messages: 'messages',
-      ExceptionApprovals: 'exception-approvals',
       // Coordinator
       CoordinatorHome: 'coordinator',
       ChangeRequests: 'change-requests',
@@ -115,7 +112,9 @@ const linking = {
 // A custom header that shows the screen title and a Log out action on the right.
 // We use Paper's Appbar so the header matches the app's look.
 function AppHeader({ navigation, route, options, back }) {
-  const { logout, currentUser, changePassword, sendMessage, unreadCount } = useApp();
+  const {
+    logout, currentUser, changePassword, sendMessage, unreadCount, menuCounts,
+  } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { width } = useWindowDimensions();
 
@@ -253,6 +252,7 @@ function AppHeader({ navigation, route, options, back }) {
         onChangePassword={changePassword}
         onLogout={isAdmin || isCoordinator ? logout : undefined}
         activeScreen={route.name}
+        counts={menuCounts}
         onNavigate={(item) => {
           setDrawerOpen(false);
           navigation.navigate(item.screen, item.params);
@@ -373,6 +373,7 @@ function DataErrorBanner() {
 function RootNavigator() {
   const {
     currentUser, authReady, profileMissing, profileError, changePassword, logout,
+    menuCounts,
   } = useApp();
   const { width } = useWindowDimensions();
   const navRef = useNavigationContainerRef();
@@ -424,6 +425,7 @@ function RootNavigator() {
             onChangePassword={changePassword}
             onLogout={isAdmin || isCoordinator ? logout : undefined}
             activeScreen={activeRoute}
+            counts={menuCounts}
             onNavigate={(item) => navRef.navigate(item.screen, item.params)}
           />
         ) : null}
@@ -548,19 +550,9 @@ function RootNavigator() {
                   options={{ title: 'Employee Management' }}
                 />
                 <Stack.Screen
-                  name="ExceptionApprovals"
-                  component={ChangeRequestQueueScreen}
-                  options={{ title: 'Exception Approvals' }}
-                />
-                <Stack.Screen
                   name="AddressRequests"
                   component={AddressChangeRequestsScreen}
                   options={{ title: 'Address Change Requests' }}
-                />
-                <Stack.Screen
-                  name="EmployeeRoutes"
-                  component={EmployeeRoutesScreen}
-                  options={{ title: 'Employee Routes' }}
                 />
                 <Stack.Screen
                   name="ManageTimings"

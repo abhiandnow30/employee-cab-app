@@ -1,31 +1,29 @@
 // ---------------------------------------------------------------------------
-// CHANGE REQUESTS — the seven exceptions, and who resolves each
+// CHANGE REQUESTS — the four exceptions an employee can raise
 //
 // The roster says who travels. A change request is how reality differs from the
-// roster on one particular day: someone takes leave, a shift runs long, a cab is
-// needed at short notice.
+// roster on one particular day: someone takes leave, someone can't come in,
+// someone doesn't need one of their two cabs, someone is working a different
+// shift from the one HR rostered.
 //
-// The ROUTING TABLE below is the whole of the approval policy, held as data so it
-// can be read in one place and changed without hunting through screens:
+// WHAT IS DELIBERATELY NOT HERE. The company runs exactly two rides — the 8:00 PM
+// pickup for the Night shift and the 10:00 PM drop for the Afternoon shift — and
+// nothing else, ever. So there is no request for a later cab after a shift ran
+// long, no emergency ride, and no "collect me at a different time": every one of
+// those asks for a ride outside the two, which is not a thing the desk can grant.
+// Removing them is why nothing routes to HR any more (see ROUTE_TO) and why the
+// coordinator's board is purely roster-driven. Anyone genuinely stranded phones
+// the transport desk — the call button in the app header.
 //
-//   • Most requests go to the COORDINATOR, who resolves them as part of running
-//     the day. No admin sign-off — that was the point of the redesign.
-//   • Only two things reach HR/Admin: a shift EXTENSION (it commits an extra cab
-//     outside the rostered shift) and an emergency ride the coordinator has no
-//     vehicle for (it needs someone who can authorise an exception).
-//
-// `effect` describes what resolving the request actually does to the day's rides,
-// and services/changeRequests.js is what carries it out.
+// Every request that remains only ever CANCELS or CORRECTS one of the two rides,
+// so `effect` has no "add a ride" case at all.
 // ---------------------------------------------------------------------------
 
 export const REQUEST_TYPES = {
   LEAVE: 'leave',
   ABSENT: 'absent',
-  SHIFT_EXTENDED: 'shift_extended',
   SHIFT_CHANGED: 'shift_changed',
   CANCEL_RIDE: 'cancel_ride',
-  EMERGENCY_RIDE: 'emergency_ride',
-  PICKUP_TIME_CHANGE: 'pickup_time_change',
 };
 
 export const REQUEST_STATUS = {
@@ -35,19 +33,19 @@ export const REQUEST_STATUS = {
   RESOLVED: 'Resolved',
 };
 
-// Who a request lands with.
+// Who a request lands with. Everything goes to the coordinator, who resolves it as
+// part of running the day — there is no HR sign-off, because nothing an employee
+// can ask for commits a cab outside the two scheduled rides.
 export const ROUTE_TO = {
   COORDINATOR: 'coordinator',
-  ADMIN: 'admin',
 };
 
-// What resolving a request does to the roster / rides.
+// What resolving a request does to the roster / rides. All three either stop a
+// ride or move the day to a different shift code; none of them create one.
 export const EFFECT = {
   CANCEL_DAY: 'cancel_day',       // drop every ride that day
   CANCEL_RIDE: 'cancel_ride',     // drop one leg
-  RETIME: 'retime',               // move a pickup time
   RECODE: 'recode',               // change the roster's shift code for that day
-  EXTRA_RIDE: 'extra_ride',       // create an additional ride
   NONE: 'none',
 };
 
@@ -84,15 +82,6 @@ export const REQUEST_CATALOGUE = [
     form: ['ride'],
   },
   {
-    type: REQUEST_TYPES.PICKUP_TIME_CHANGE,
-    label: 'Change pickup time',
-    icon: 'clock-edit-outline',
-    blurb: 'I need collecting at a different time.',
-    routeTo: ROUTE_TO.COORDINATOR,
-    effect: EFFECT.RETIME,
-    form: ['ride', 'time'],
-  },
-  {
     type: REQUEST_TYPES.SHIFT_CHANGED,
     label: 'Shift changed',
     icon: 'swap-horizontal',
@@ -100,27 +89,6 @@ export const REQUEST_CATALOGUE = [
     routeTo: ROUTE_TO.COORDINATOR,
     effect: EFFECT.RECODE,
     form: ['shiftCode'],
-  },
-  {
-    type: REQUEST_TYPES.SHIFT_EXTENDED,
-    label: 'Shift extended',
-    icon: 'clock-plus-outline',
-    // Goes to HR because it commits a cab outside the rostered shift.
-    blurb: "I'm working past my shift and need a later cab home.",
-    routeTo: ROUTE_TO.ADMIN,
-    effect: EFFECT.EXTRA_RIDE,
-    form: ['time'],
-  },
-  {
-    type: REQUEST_TYPES.EMERGENCY_RIDE,
-    label: 'Emergency ride',
-    icon: 'car-emergency',
-    blurb: 'I need a cab at short notice.',
-    // The coordinator tries first; if no vehicle is free they escalate.
-    routeTo: ROUTE_TO.COORDINATOR,
-    effect: EFFECT.EXTRA_RIDE,
-    escalatable: true,
-    form: ['time', 'direction'],
   },
 ];
 

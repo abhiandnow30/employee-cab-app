@@ -30,6 +30,7 @@ export const NOTIFY = {
   RIDE_CANCELLED: 'ride_cancelled',
   PICKUP_CHANGED: 'pickup_changed',
   REQUEST_RESOLVED: 'request_resolved',
+  ADDRESS_RESOLVED: 'address_resolved',
   ROSTER_PUBLISHED: 'roster_published',
 };
 
@@ -141,6 +142,28 @@ export function pickupChangedMessage(ride, oldTime) {
   return {
     title: `New pickup time — ${ride.date}`,
     body: `Your ${ride.direction} pickup has moved from ${oldTime} to ${ride.shift}.`,
+  };
+}
+
+// The outcome of a home-address change. Worth telling them either way: an
+// approved move changes where the cab collects them tomorrow, and a rejected one
+// means it doesn't — and until this existed both were silent, discoverable only by
+// opening Profile and noticing the chip had changed.
+export function addressDecisionMessage({ approved, address, route, reason }) {
+  if (approved) {
+    return {
+      title: 'Address change approved',
+      body:
+        `Your home address is now:\n${address}` +
+        (route ? `\nYou are on the ${route} pickup route.` : '') +
+        '\nUpcoming rides have been updated.',
+    };
+  }
+  return {
+    title: 'Address change rejected',
+    body:
+      'Your home address is unchanged.' +
+      (reason ? `\n${reason}` : '\nContact the transport desk for details.'),
   };
 }
 

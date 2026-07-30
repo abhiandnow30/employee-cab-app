@@ -247,21 +247,9 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   </Button>
                 </View>
               ) : null}
-              {/* A ride that exists because a request was approved, not because
-                  the roster says so. Worth calling out — the desk should know it
-                  is extra capacity, not a scheduled trip. */}
-              {item.isExtra ? (
-                <View style={styles.extraBox}>
-                  <MaterialCommunityIcons
-                    name={item.requestType === 'shift_extended' ? 'clock-plus-outline' : 'car-emergency'}
-                    size={14}
-                    color="#B26A00"
-                  />
-                  <Text variant="bodySmall" style={styles.extraText}>
-                    {item.shiftLabel} — approved request, not on the roster
-                  </Text>
-                </View>
-              ) : null}
+              {/* Every ride on this board comes from the roster. There is no
+                  "approved extra ride" badge because there are no extra rides —
+                  the company runs the 8 PM pickup and the 10 PM drop, full stop. */}
 
               {/* An overnight shift's drop runs the morning after the shift date —
                   say so, or the desk reads it as the wrong day. */}
@@ -402,17 +390,27 @@ export default function CoordinatorDashboardScreen({ navigation }) {
               ) : (
                 <RadioButton.Group onValueChange={setChosenCab} value={chosenCab}>
                   {cabs.map((c) => (
+                    // A cab with no driver ACCOUNT linked can't be assigned: the
+                    // driver's trip list is scoped by that link, so the ride would
+                    // be invisible to everyone while the rider was told a cab was
+                    // coming. Greyed out here rather than rejected after the tap.
                     <RadioButton.Item
                       key={c.id}
-                      label={`${c.cabNumber} · ${c.driverName || 'no driver'} · ${cabCapacity(c)} seats`}
+                      label={
+                        c.driverUid
+                          ? `${c.cabNumber} · ${c.driverName || 'driver'} · ${cabCapacity(c)} seats`
+                          : `${c.cabNumber} · no driver linked`
+                      }
                       value={c.id}
+                      disabled={!c.driverUid}
                     />
                   ))}
                 </RadioButton.Group>
               )}
               <Text variant="bodySmall" style={styles.dialogHint}>
                 A cab can't take more riders than it has seats, or run two trips in
-                opposite directions at the same time.
+                opposite directions at the same time. A cab with no driver linked
+                can't be assigned at all — link one on the Fleet screen.
               </Text>
             </View>
           </Dialog.ScrollArea>
@@ -577,17 +575,6 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginTop: 4 },
   meta: { color: colors.muted, flex: 1 },
   overnight: { color: '#4527A0', marginTop: 4, fontStyle: 'italic' },
-  extraBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#FFF6E5',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    marginTop: 6,
-  },
-  extraText: { color: '#B26A00', flex: 1 },
   noRouteRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   noRouteText: { color: '#B26A00' },
   assignedText: { color: colors.success, fontWeight: 'bold', marginTop: 6 },

@@ -48,22 +48,28 @@ export function subscribeCabs(cb, onError) {
 
 // --- Fleet CRUD (coordinator) -----------------------------------------------
 
-export function addCab({ cabNumber, driverName, driverPhone, capacity }) {
-  return addDoc(collection(firestore, COL), {
+// A cab record describes the VEHICLE only — its number and how many it seats.
+// `driverName` / `driverPhone` are NOT typed in here: they are copied off the
+// linked driver's account by linkCabDriver() below, so there is exactly one
+// source for them. (They used to be form fields, which meant a name could be
+// typed, saved, shown to riders, and then silently replaced the moment a real
+// driver was linked — while granting that name's owner nothing at all.)
+// Returns the new cab's id.
+export async function addCab({ cabNumber, capacity }) {
+  const ref = await addDoc(collection(firestore, COL), {
     cabNumber: (cabNumber || '').trim(),
-    driverName: (driverName || '').trim(),
-    driverPhone: (driverPhone || '').trim(),
     capacity: Number(capacity) || DEFAULT_CAB_CAPACITY,
     driverUid: null,
     createdAt: serverTimestamp(),
   });
+  return ref.id;
 }
 
-export function updateCab(id, { cabNumber, driverName, driverPhone, capacity }) {
+// Edit the vehicle. Deliberately does not mention the driver fields, so changing
+// a cab's seat count can't wipe the linked driver's name off it.
+export function updateCab(id, { cabNumber, capacity }) {
   return updateDoc(doc(firestore, COL, id), {
     cabNumber: (cabNumber || '').trim(),
-    driverName: (driverName || '').trim(),
-    driverPhone: (driverPhone || '').trim(),
     capacity: Number(capacity) || DEFAULT_CAB_CAPACITY,
     updatedAt: serverTimestamp(),
   });
@@ -96,17 +102,24 @@ export async function linkCabDriver(cabId, driverUid) {
     .filter((d) => d.id !== driverUid)
     .forEach((d) => batch.update(d.ref, { cabId: null }));
 
-  // If this driver was on another cab, that cab loses its driver.
+  // If this driver was on another cab, that cab loses its driver — but only if
+  // that cab is still in the fleet. A driver whose profile points at a cab that
+  // has since been removed is common (an old fleet cleared out), and
+  // set(..., { merge: true }) on a MISSING document is a create, not an update:
+  // the rules reject it for having no cab number, and the whole link failed with
+  // nothing more informative than "Could not link that driver".
   if (driverUid && driver.cabId && driver.cabId !== cabId) {
-    batch.set(doc(firestore, COL, driver.cabId), { driverUid: null }, { merge: true });
+    const previous = await getDoc(doc(firestore, COL, driver.cabId));
+    if (previous.exists()) batch.update(previous.ref, { driverUid: null });
   }
 
-  batch.set(
+  // update(), not set(merge) — a cab must already exist to be linked, and if it
+  // doesn't, "no document to update" says so instead of failing a rule check.
+  batch.update(
     doc(firestore, COL, cabId),
     driverUid
       ? { driverUid, driverName: driver.name || '', driverPhone: driver.phone || '' }
-      : { driverUid: null },
-    { merge: true }
+      : { driverUid: null }
   );
   if (driverUid) batch.update(doc(firestore, 'employees', driverUid), { cabId });
 

@@ -5,6 +5,12 @@
 // reads as "Stop 2 of 4" rather than an unordered list. The driver advances
 // each trip's status: Cab assigned → On the way → Arrived → Completed.
 // A "Share Live Location" button broadcasts the driver's GPS for the cab.
+//
+// RIDERS ARE IDENTIFIED BY EMPLOYEE ID HERE, NOT BY NAME. The driver needs to know
+// who to collect and where; a name on a screen a driver carries around adds nothing
+// operationally and is more of the rider's identity than the job requires. The ID
+// is on the booking (`empId`) because the security rules don't let a driver read
+// employee profiles to look one up.
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from 'react';
@@ -22,6 +28,14 @@ import { openDirections, callNumber } from '../../utils/externalLinks';
 // details (Google/Apple Maps app vs. web tab) live in utils/externalLinks.
 function navigateToPickup(booking) {
   openDirections(tripPickupPoint(booking));
+}
+
+// How a rider appears on the driver's screen. Bookings created before the ID was
+// carried onto them have no `empId`, and falling back to the name would quietly
+// undo the point of this — so those read as an unknown ID instead.
+function riderLabel(booking) {
+  const id = String(booking?.empId || '').trim();
+  return id ? `Employee ID ${id}` : 'Employee ID not on record';
 }
 
 // What the driver can do next, per current status.
@@ -95,7 +109,8 @@ export default function DriverHomeScreen({ navigation }) {
       if (byDate) return byDate;
       const byTime = (timeToMinutes(a.shift) ?? 0) - (timeToMinutes(b.shift) ?? 0);
       if (byTime) return byTime;
-      return String(a.employeeName || '').localeCompare(String(b.employeeName || ''));
+      // Same date and time (a carpool) — keep the order stable and predictable.
+      return String(a.empId || '').localeCompare(String(b.empId || ''));
     });
     // Number the stops within each run (same date + time + direction).
     // How many stops each run has, so a card can say "of 4".
@@ -127,7 +142,7 @@ export default function DriverHomeScreen({ navigation }) {
                 </View>
               ) : null}
               <View style={styles.nameCol}>
-                <Text variant="titleMedium">{item.employeeName}</Text>
+                <Text variant="titleMedium">{riderLabel(item)}</Text>
                 {item.stopCount > 1 ? (
                   <Text variant="bodySmall" style={styles.stopText}>
                     Stop {item.stopNumber} of {item.stopCount}
@@ -305,7 +320,7 @@ export default function DriverHomeScreen({ navigation }) {
           <Dialog.Title>Flag a no-show?</Dialog.Title>
           <Dialog.Content>
             <Text variant="bodyMedium">
-              This ends the trip for {noShowFor?.employeeName || 'this rider'} and
+              This ends the trip for {noShowFor ? riderLabel(noShowFor) : 'this rider'} and
               tells the transport desk they weren't at the pickup.
             </Text>
           </Dialog.Content>

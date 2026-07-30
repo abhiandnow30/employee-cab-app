@@ -65,7 +65,7 @@ function formatWhen(ts) {
 }
 
 export default function RosterUploadScreen({ navigation }) {
-  const { shiftPolicy, importRoster, subscribeImportHistory } = useApp();
+  const { shiftPolicy, importRoster, subscribeImportHistory, routeOptions } = useApp();
 
   const [employees, setEmployees] = useState([]);
   // Validation is meaningless until the employee directory has arrived — against
@@ -178,12 +178,14 @@ export default function RosterUploadScreen({ navigation }) {
   const report = useMemo(() => {
     if (!parsed || !employeesLoaded) return null;
     try {
-      return validateRoster(parsed, employees, shiftPolicy);
+      // routeOptions is passed so a sheet's route spelling can be snapped onto the
+      // configured one — "Jntu Cab" must not become a second JNTU group.
+      return validateRoster(parsed, employees, shiftPolicy, routeOptions);
     } catch (e) {
       console.warn('[roster] validate failed:', e?.message);
       return null;
     }
-  }, [parsed, employees, employeesLoaded, shiftPolicy]);
+  }, [parsed, employees, employeesLoaded, shiftPolicy, routeOptions]);
 
   // Forget the sheet on screen — including the stashed copy, or it would come
   // straight back on the next reload.
@@ -890,15 +892,36 @@ export default function RosterUploadScreen({ navigation }) {
               {/* "No pickup route" is the one warning with a specific next step, and
                   it is worth spelling out: those people import fine and then sit
                   ungroupable on the coordinator's board for the whole month. */}
+              {/* A route the sheet named that isn't configured. Spelled out, because
+                  "fix it" is only actionable if HR can see which value was rejected —
+                  and because the fix might be to add the route rather than edit the
+                  sheet. Capitalisation alone never lands here: those are matched. */}
+              {report.unknownRoutes?.length ? (
+                <View style={styles.warnBox}>
+                  <MaterialCommunityIcons name="map-marker-question" size={15} color="#B26A00" />
+                  <Text variant="bodySmall" style={styles.warnText}>
+                    {report.unknownRoutes.length === 1 ? 'This route is' : 'These routes are'}{' '}
+                    not in your list, so {report.unknownRoutes.length === 1 ? 'it was' : 'they were'}{' '}
+                    not applied:{' '}
+                    <Text style={styles.warnStrong}>{report.unknownRoutes.join(', ')}</Text>. Correct
+                    the spelling in the sheet, or add{' '}
+                    {report.unknownRoutes.length === 1 ? 'it' : 'them'} under{' '}
+                    <Text style={styles.warnStrong}>Routes &amp; Timings</Text> — this screen
+                    re-checks itself, no re-upload needed. (Capitalisation is matched for you.)
+                  </Text>
+                </View>
+              ) : null}
+
               {report.byWarning?.[ERROR_KINDS.NO_ROUTE] ? (
                 <View style={styles.warnBox}>
                   <MaterialCommunityIcons name="map-marker-alert" size={15} color="#B26A00" />
                   <Text variant="bodySmall" style={styles.warnText}>
                     {report.byWarning[ERROR_KINDS.NO_ROUTE]} of them are on no pickup
                     route. Their shifts still import, but the coordinator groups each
-                    day's cabs by route — route them in bulk on{' '}
-                    <Text style={styles.warnStrong}>Employee Routes</Text>, or add a
-                    "Route" column to this sheet and re-upload.
+                    day's cabs by route — add a{' '}
+                    <Text style={styles.warnStrong}>Route</Text> column to this sheet
+                    and re-upload, or set it on each person in{' '}
+                    <Text style={styles.warnStrong}>Employees</Text>.
                   </Text>
                 </View>
               ) : null}

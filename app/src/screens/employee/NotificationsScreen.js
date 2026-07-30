@@ -37,6 +37,7 @@ const ICON = {
   [NOTIFY.RIDE_CANCELLED]: { icon: 'car-off', color: colors.danger },
   [NOTIFY.PICKUP_CHANGED]: { icon: 'clock-edit-outline', color: '#B26A00' },
   [NOTIFY.REQUEST_RESOLVED]: { icon: 'clipboard-check-outline', color: colors.primary },
+  [NOTIFY.ADDRESS_RESOLVED]: { icon: 'home-edit', color: colors.primary },
   [NOTIFY.ROSTER_PUBLISHED]: { icon: 'calendar-month', color: colors.primary },
 };
 

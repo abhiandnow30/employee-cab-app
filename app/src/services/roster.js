@@ -492,7 +492,35 @@ export const ERROR_KINDS = {
   // board until somebody routes them. Silent, this is the gap that made the
   // coordinator group people by hand — so HR gets told before they import.
   NO_ROUTE: 'No pickup route',
+  // The sheet named a route that isn't in Routes & Timings. Also a warning: the
+  // shifts are fine, but the route isn't written, because inventing one from a
+  // spreadsheet is how an area ends up with three spellings.
+  UNKNOWN_ROUTE: 'Route not in your list',
 };
+
+// --- Pickup routes: one spelling, whatever the sheet says --------------------
+//
+// A route is stored as plain text on the employee and the coordinator's board
+// groups rides by that exact string, so "JNTU Cab" and "Jntu Cab" are two groups
+// to the code and one pickup area to a human — the JNTU carpool silently splits in
+// two and asks for a cab that shouldn't exist.
+//
+// The in-app dropdown can't produce a variant (you pick from the list), so the
+// spreadsheet is the only source of drift. Fixed HERE, at the point of writing,
+// rather than by comparing case-insensitively everywhere: normalise once and every
+// consumer downstream — grouping, the dropdown, search — keeps working on an exact
+// match, because only one spelling ever reaches the database.
+function routeKey(value) {
+  return String(value ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+}
+
+// "jntu  cab" → "JNTU Cab" (the configured spelling), or null if it matches none.
+export function canonicalRoute(value, routeOptions) {
+  const key = routeKey(value);
+  if (!key) return null;
+  const match = (routeOptions || []).find((r) => routeKey(r) === key);
+  return match || null;
+}
 
 // Check the parsed rows against the real employee list and the shift policy.
 // Nothing is written. Returns a report HR can act on:
@@ -506,10 +534,13 @@ export const ERROR_KINDS = {
 // perfectly normal export from a lot of HR systems, and if "Employee ID missing"
 // were fatal such a file would import nobody at all. So a row whose NAME resolves
 // to exactly one employee imports, with a warning; only an unresolvable row fails.
-export function validateRoster(parsed, employees, policy) {
+export function validateRoster(parsed, employees, policy, routeOptions = []) {
   const validCodes = new Set(
     Object.keys(policy || {}).length ? Object.keys(policy) : ALL_SHIFT_CODES
   );
+  // Distinct route names the sheet used that aren't configured — reported once for
+  // the whole file rather than as the same warning on twenty rows.
+  const unknownRoutes = new Set();
 
   // Match on employee id first (stable), then on name as a fallback for desks
   // whose sheet has no id column.
@@ -616,16 +647,29 @@ export function validateRoster(parsed, employees, policy) {
     }
 
     // -- pickup route --
+    // Whatever the sheet spelled it, store the CONFIGURED spelling, so a stray
+    // capital can't split a carpool. A value matching nothing in Routes & Timings
+    // is reported and then ignored — better an unrouted rider HR can see than a
+    // second spelling of an area nobody notices.
+    const sheetRoute = canonicalRoute(row.sheetRoute, routeOptions);
+    if (row.sheetRoute && !sheetRoute) {
+      unknownRoutes.add(String(row.sheetRoute).trim());
+      warnings.push(`${ERROR_KINDS.UNKNOWN_ROUTE} ("${String(row.sheetRoute).trim()}")`);
+    }
     // Prefer what the app already holds; fall back to the sheet, which is all we
     // have for someone who doesn't exist yet.
     const profileRoute = employee?.roster?.route || null;
-    const route = profileRoute || row.sheetRoute || null;
+    const route = profileRoute || sheetRoute || null;
     // Never fatal — the shifts are still worth importing — but say it, because a
     // rider with no route can't be grouped into a cab with their neighbours.
     if (!route) warnings.push(ERROR_KINDS.NO_ROUTE);
 
     return {
       ...row,
+      // The canonical spelling (or '' when it matched nothing), so nothing
+      // downstream can write the raw text from the sheet.
+      sheetRoute: sheetRoute || '',
+      rawSheetRoute: row.sheetRoute || '',
       employeeId: employee?.uid || null,
       matchedName: employee?.name || null,
       matchedEmpId: employee?.empId || null,
@@ -707,6 +751,10 @@ export function validateRoster(parsed, employees, policy) {
     fileErrors,
     byKind,
     byWarning,
+    // Route names the sheet used that aren't in Routes & Timings, so the summary can
+    // name them — "fix the sheet, or add the route" is only actionable if HR can see
+    // which spelling was rejected.
+    unknownRoutes: [...unknownRoutes],
     creatable,
     creatableCount: creatable.length,
     uncreatable,

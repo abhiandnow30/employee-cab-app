@@ -235,3 +235,30 @@ export async function syncEmployeeAddress(employeeId, address, batch = null) {
   if (own) await b.commit();
   return stale.length;
 }
+
+// --- Repair: employee IDs on existing bookings -------------------------------
+//
+// The driver's trip list identifies riders by EMPLOYEE ID, and a driver may not
+// read employee profiles (the rules see to that), so the id has to travel on the
+// booking. Bookings written before `empId` was carried have none, and would read
+// "Employee ID not on record" for ever.
+//
+// So the desk repairs them: it can read both the bookings and the employee
+// directory, and it is allowed to update a booking. Only UPCOMING, still-live
+// rides are touched — history is left exactly as it was recorded.
+//
+// `pairs` = [{ id, empId }]. Returns how many were stamped.
+export async function stampBookingEmpIds(pairs) {
+  if (!firestore || !pairs?.length) return 0;
+  const CHUNK = 400; // under Firestore's 500-write batch limit
+  let written = 0;
+  for (let i = 0; i < pairs.length; i += CHUNK) {
+    const batch = writeBatch(firestore);
+    pairs.slice(i, i + CHUNK).forEach(({ id, empId }) => {
+      batch.update(doc(firestore, COL, id), { empId });
+    });
+    await batch.commit();
+    written += Math.min(CHUNK, pairs.length - i);
+  }
+  return written;
+}

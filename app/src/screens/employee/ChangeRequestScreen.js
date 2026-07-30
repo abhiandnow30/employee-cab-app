@@ -26,7 +26,6 @@ import Dropdown from '../../components/Dropdown';
 import {
   REQUEST_CATALOGUE, REASONS, STATUS_STYLE, REQUEST_STATUS, requestMeta,
 } from '../../data/changeRequests';
-import { DIRECTION } from '../../services/rides';
 import { WORKING_CODES, shiftSummary } from '../../data/shifts';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
 import { colors } from '../../theme';
@@ -54,9 +53,7 @@ export default function ChangeRequestScreen({ navigation }) {
   const [reason, setReason] = useState('');
   const [comments, setComments] = useState('');
   const [rideKey, setRideKey] = useState(null);
-  const [requestedTime, setRequestedTime] = useState('');
   const [requestedShiftCode, setRequestedShiftCode] = useState(null);
-  const [direction, setDirection] = useState(DIRECTION.OUT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [snack, setSnack] = useState('');
@@ -87,7 +84,6 @@ export default function ChangeRequestScreen({ navigation }) {
     setReason('');
     setComments('');
     setRideKey(null);
-    setRequestedTime('');
     setRequestedShiftCode(null);
   }
 
@@ -102,17 +98,11 @@ export default function ChangeRequestScreen({ navigation }) {
       comments,
       rideKey: rideKey || null,
       bookingId: chosen?.id || null,
-      requestedTime: requestedTime || null,
       requestedShiftCode,
-      direction: needs('direction') ? direction : null,
     });
     setBusy(false);
     if (res?.ok) {
-      setSnack(
-        res.routedTo === 'admin'
-          ? 'Sent to HR for approval — you\'ll be notified.'
-          : 'Sent to the transport desk — you\'ll be notified.'
-      );
+      setSnack("Sent to the transport desk — you'll be notified.");
       reset();
     } else {
       setError(res?.message || 'Could not send your request.');
@@ -234,40 +224,9 @@ export default function ChangeRequestScreen({ navigation }) {
                   </>
                 ) : null}
 
-                {/* Direction — for an emergency ride. */}
-                {needs('direction') ? (
-                  <>
-                    <Text variant="labelLarge" style={styles.label}>
-                      Which way
-                    </Text>
-                    <Dropdown
-                      value={direction}
-                      options={[DIRECTION.IN, DIRECTION.OUT]}
-                      onSelect={setDirection}
-                      compact={false}
-                      leadingIcon="swap-horizontal"
-                    />
-                  </>
-                ) : null}
-
-                {/* Time — for retime, shift extension, emergency. */}
-                {needs('time') ? (
-                  <>
-                    <Text variant="labelLarge" style={styles.label}>
-                      Time you need the cab
-                    </Text>
-                    <TextInput
-                      value={requestedTime}
-                      onChangeText={setRequestedTime}
-                      mode="outlined"
-                      placeholder="e.g. 11:30 PM"
-                      left={<TextInput.Icon icon="clock-outline" />}
-                    />
-                    <HelperText type="info" visible>
-                      Use the same format as your calendar, like 11:30 PM.
-                    </HelperText>
-                  </>
-                ) : null}
+                {/* No "time you need the cab" and no direction picker: every
+                    request here concerns one of the two scheduled rides, so there
+                    is no time to choose and no extra leg to ask for. */}
 
                 <Text variant="labelLarge" style={styles.label}>
                   Reason
@@ -294,18 +253,11 @@ export default function ChangeRequestScreen({ navigation }) {
                   maxLength={500}
                 />
 
-                {/* Tell them where it goes — a shift extension needs HR, and
-                    silence would read as the request going nowhere. */}
+                {/* Say where it goes — silence reads as the request going nowhere. */}
                 <View style={styles.routeNote}>
-                  <MaterialCommunityIcons
-                    name={meta.routeTo === 'admin' ? 'account-tie' : 'headset'}
-                    size={16}
-                    color={colors.muted}
-                  />
+                  <MaterialCommunityIcons name="headset" size={16} color={colors.muted} />
                   <Text variant="bodySmall" style={styles.routeText}>
-                    {meta.routeTo === 'admin'
-                      ? 'Goes to HR for approval, then the desk arranges the cab.'
-                      : 'Goes straight to the transport desk — no approval needed.'}
+                    Goes straight to the transport desk — no approval needed.
                   </Text>
                 </View>
 
@@ -361,11 +313,6 @@ export default function ChangeRequestScreen({ navigation }) {
                       For {prettyDate(r.date)} · raised {formatWhen(r.createdAt)}
                       {r.reason ? ` · ${r.reason}` : ''}
                     </Text>
-                    {r.escalated && r.status === REQUEST_STATUS.PENDING ? (
-                      <Text variant="bodySmall" style={styles.reqEscalated}>
-                        No cab was free — escalated to HR.
-                      </Text>
-                    ) : null}
                     {r.resolutionNote ? (
                       <Text variant="bodySmall" style={styles.reqNote}>
                         Desk: {r.resolutionNote}
@@ -435,6 +382,5 @@ const styles = StyleSheet.create({
   reqTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   reqType: { fontWeight: '600', flex: 1 },
   reqMeta: { color: colors.muted, marginTop: 3 },
-  reqEscalated: { color: '#B26A00', marginTop: 4 },
   reqNote: { color: colors.text, marginTop: 4, fontStyle: 'italic' },
 });

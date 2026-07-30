@@ -13,10 +13,10 @@
 //   • drop    — office → home, when it ends (which for an Evening or Night shift
 //               is the NEXT morning, and the card says so)
 //
-// ONLY the legs the company actually provides are shown. Cabs run during unsafe
-// hours only (see SERVICE_WINDOW), so an afternoon shift starting at 13:00 gets a
-// drop home and no pickup. Listing a pickup nobody was going to make would have
-// people waiting outside their homes for a cab that does not exist.
+// ONLY the legs the company actually provides are shown, per shift, from the
+// Shift Policy: the Afternoon shift gets a drop home and no pickup, the Night
+// shift a pickup and no drop. Listing a pickup nobody was going to make would
+// have people waiting outside their homes for a cab that does not exist.
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from 'react';
@@ -25,7 +25,7 @@ import { Text, Card, Chip, IconButton, Divider, Button } from 'react-native-pape
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import {
-  SHIFT_COLORS, legsForShift, isWorkingCode, shiftSummary, SERVICE_WINDOW,
+  SHIFT_COLORS, legsForShift, isWorkingCode, shiftSummary,
 } from '../../data/shifts';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
 import { colors } from '../../theme';
@@ -245,13 +245,19 @@ export default function MyScheduleScreen({ navigation }) {
                           }
                         />
                       ) : null}
+                      {/* Say plainly which legs the company runs for this shift.
+                          It used to blame the service window for every missing leg,
+                          which reads as wrong the moment a leg inside cab hours
+                          isn't provided — the night shift ends at 6:00 AM and still
+                          has no drop. Which legs run is policy, and the employee
+                          only needs to know what to expect. */}
                       {!selectedLegs.providePickup || !selectedLegs.provideDrop ? (
                         <Text variant="bodySmall" style={styles.oneWayNote}>
                           {!selectedLegs.providePickup && !selectedLegs.provideDrop
-                            ? 'No company cab runs for this shift — both legs fall outside cab hours.'
+                            ? 'No company cab runs for this shift — please make your own way both ways.'
                             : !selectedLegs.providePickup
-                            ? `Cabs run ${SERVICE_WINDOW.from}–${SERVICE_WINDOW.to}, so there is no pickup for this shift — please make your own way in. The drop home is provided.`
-                            : `Cabs run ${SERVICE_WINDOW.from}–${SERVICE_WINDOW.to}, so there is no drop for this shift — the pickup is provided.`}
+                            ? 'Only the drop home is provided for this shift — please make your own way in.'
+                            : 'Only the pickup from home is provided for this shift — please make your own way back.'}
                         </Text>
                       ) : null}
                       <Text variant="bodySmall" style={styles.detailHint}>

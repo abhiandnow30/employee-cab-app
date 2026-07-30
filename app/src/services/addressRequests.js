@@ -20,6 +20,7 @@ import {
 } from 'firebase/firestore';
 import { firestore } from './firebase';
 import { syncEmployeeAddress } from './bookings';
+import { notify, NOTIFY, addressDecisionMessage } from './notifications';
 
 export const REQUEST_STATUS = {
   PENDING: 'Pending',
@@ -79,45 +80,81 @@ export function subscribeMyAddressRequests(employeeId, cb, onError) {
   return onSnapshot(q, (snap) => cb(toList(snap)), onError);
 }
 
-// Admin approves: write the new address onto the employee's profile, push it
-// onto their upcoming rides, AND mark the request approved — all in a single
-// atomic batch so the three never drift apart.
+// Admin approves. Four things move together, in ONE atomic batch:
 //
-// The ride update matters: every booking carries a COPY of the rider's address
-// (a driver may read the booking but not the profile), so without this the
-// driver would keep navigating to the old house for rides that were already in
-// the system when the move was approved.
+//   1. the employee's profile address
+//   2. their PICKUP ROUTE, when the admin changed it — a move is very often a
+//      route change, and leaving it alone was a real hole: the driver navigated to
+//      the new house while the rider stayed grouped with their old neighbours, so
+//      a cab from the wrong side of the city collected them every day until
+//      somebody noticed
+//   3. the address COPY carried on their upcoming rides (a driver may read the
+//      booking but not the profile, so without this the driver keeps going to the
+//      old house for rides already in the system)
+//   4. the request itself, marked Approved
 //
-// Returns { syncedRides } — how many upcoming rides were corrected.
-export async function approveAddressRequest(request, adminName) {
+// `edits.address` is what the admin actually approved — they may have tidied the
+// wording — so it, not the raw request text, is what gets written everywhere.
+//
+// Returns { syncedRides, address, route }.
+export async function approveAddressRequest(request, adminName, edits = {}) {
   if (!firestore) throw new Error('Backend not configured.');
+
+  const address = (edits.address ?? request.requestedAddress ?? '').trim();
+  if (!address) throw new Error('The approved address cannot be empty.');
+  // undefined = "leave the route alone"; a string = set it.
+  const route = typeof edits.route === 'string' ? edits.route.trim() : undefined;
+
   const batch = writeBatch(firestore);
   batch.update(doc(firestore, 'employees', request.employeeId), {
-    address: request.requestedAddress,
+    address,
+    ...(route !== undefined ? { 'roster.route': route || null } : {}),
     updatedAt: serverTimestamp(),
   });
   batch.update(doc(firestore, 'addressChangeRequests', request.id), {
     status: REQUEST_STATUS.APPROVED,
+    // What was approved, which can differ from what was asked for.
+    approvedAddress: address,
+    ...(route !== undefined ? { approvedRoute: route || null } : {}),
     reviewedBy: adminName || 'Admin',
     reviewedAt: serverTimestamp(),
     rejectionReason: '',
   });
-  const syncedRides = await syncEmployeeAddress(
-    request.employeeId,
-    request.requestedAddress,
-    batch
-  );
+  const syncedRides = await syncEmployeeAddress(request.employeeId, address, batch);
   await batch.commit();
-  return { syncedRides };
+
+  // Tell them. Best-effort: the move is already saved, and a failed notification
+  // must not read as a failed approval.
+  const msg = addressDecisionMessage({ approved: true, address, route });
+  notify({
+    employeeId: request.employeeId,
+    type: NOTIFY.ADDRESS_RESOLVED,
+    title: msg.title,
+    body: msg.body,
+    payload: { requestId: request.id },
+  }).catch((e) => console.warn('[notify] address approval notice failed:', e?.message));
+
+  return { syncedRides, address, route };
 }
 
-// Admin rejects: the address stays unchanged; store an optional reason.
+// Admin rejects: the address stays unchanged; store an optional reason and tell
+// the employee, so a rejection isn't something they discover by chance.
 export async function rejectAddressRequest(request, adminName, rejectionReason) {
   if (!firestore) throw new Error('Backend not configured.');
-  return updateDoc(doc(firestore, 'addressChangeRequests', request.id), {
+  const reason = (rejectionReason || '').trim();
+  await updateDoc(doc(firestore, 'addressChangeRequests', request.id), {
     status: REQUEST_STATUS.REJECTED,
-    rejectionReason: (rejectionReason || '').trim(),
+    rejectionReason: reason,
     reviewedBy: adminName || 'Admin',
     reviewedAt: serverTimestamp(),
   });
+
+  const msg = addressDecisionMessage({ approved: false, reason });
+  notify({
+    employeeId: request.employeeId,
+    type: NOTIFY.ADDRESS_RESOLVED,
+    title: msg.title,
+    body: msg.body,
+    payload: { requestId: request.id },
+  }).catch((e) => console.warn('[notify] address rejection notice failed:', e?.message));
 }

@@ -6,23 +6,32 @@
 // which direction) is derived from these codes plus the policy below, so adding
 // or retiming a shift is a CONFIG change, not a code change.
 //
-//   E  Evening    4:00 PM – 1:30 AM     → rides
-//   A  Afternoon  1:00 PM – 10:00 PM    → rides
-//   N  Night      9:00 PM – 6:00 AM     → rides
+//   A  Afternoon  1:00 PM – 10:00 PM    → DROP home at 10:00 PM. No pickup.
+//   E  Evening    4:00 PM – 1:00 AM     → no cab today (see DEFAULT_SHIFT_POLICY)
+//   N  Night      9:00 PM – 6:00 AM     → PICKUP from home at 8:00 PM. No drop.
 //   WO Week Off                         → no ride
 //   H  Holiday                          → no ride
 //   L  Leave                            → no ride
 //
-// OVERNIGHT SHIFTS ARE THE TRICKY PART. An Evening shift starting on the 5th
-// ends at 1:30 AM on the 6th, so its two rides fall on DIFFERENT calendar days:
+// So the company runs exactly TWO rides. A shift being "working" means the person
+// is at work, NOT that a cab runs both ways — which leg is provided is a separate,
+// admin-editable decision per shift (providePickup / provideDrop).
+//
+// OVERNIGHT SHIFTS ARE THE TRICKY PART. A shift starting on the 5th and ending at
+// 1:00 AM ends on the 6th, so its two legs fall on DIFFERENT calendar days:
 //   • inbound  (home → office) on the 5th, an hour before the shift starts
 //   • outbound (office → home) on the 6th, when the shift ends
 // `endsNextDay` below is what makes that explicit, and it's why the coordinator's
 // "today" list is built from two roster days, not one (see services/rides.js).
+// This still matters with the current policy: the Night shift's inbound leg is
+// on the shift's own day, and any evening drop introduced later lands next day.
 // ---------------------------------------------------------------------------
 
-// The codes that mean "this person travels today".
-export const WORKING_CODES = ['E', 'A', 'N'];
+// The codes that mean "this person travels today". Ordered as the desk reads
+// them — by when the shift starts (afternoon, evening, night) — because this
+// order is what the Shift Policy screen, the roster legend and the employee's
+// shift dropdown all render in.
+export const WORKING_CODES = ['A', 'E', 'N'];
 // The codes that mean "no ride" — kept as data so the reason can be displayed.
 export const NON_WORKING_CODES = ['WO', 'H', 'L'];
 
@@ -83,24 +92,51 @@ export function isWeekdayRow(cells) {
   return hits >= Math.max(3, Math.ceil(words.length * 0.6));
 }
 
-// The company's starting transport policy. The admin edits this in Shift Policy
-// and it lives in Firestore at config/shifts, so a retimed shift takes effect
-// for everyone without a redeploy.
+// The company's transport policy. The admin edits this in Shift Policy and it
+// lives in Firestore at config/shifts, so a retimed shift takes effect for
+// everyone without a redeploy.
 //
 //   start / end     — 24h "HH:MM". `end` before `start` means it runs past midnight.
 //   pickupLeadMin   — how long before the shift starts the cab collects them.
 //                     Derived, not a fixed list, so it adapts to every shift.
 //   dropDelayMin    — how long after the shift ends the cab leaves the office.
 //   providePickup / provideDrop
-//                   — optional. Omitted, the SERVICE_WINDOW below decides whether
-//                     a cab runs for that leg. Set explicitly to override it.
+//                   — whether a cab actually RUNS for that leg. Set explicitly
+//                     here, because which legs the company pays for is a business
+//                     decision, not something to infer from the clock. Omitted,
+//                     SERVICE_WINDOW decides (that's the fallback for older
+//                     stored policies that predate these two fields).
+//
+// THE COMPANY RUNS EXACTLY TWO RIDES:
+//   1. Afternoon shift — DROP home at 22:00, when the shift ends. No pickup;
+//      it starts at 13:00 and people make their own way in.
+//   2. Night shift — PICKUP from home at 20:00, an hour before the 21:00 start.
+//      No drop: nothing is provided at 06:00 when the shift ends.
+//
+// The Evening shift is deliberately BOTH legs off. It stays a real working code —
+// HR can roster it, and it shows on the employee's calendar as a shift they work —
+// but no cab runs for it today. When the evening drop is introduced, flip
+// `provideDrop` to true on the Shift Policy screen: the 1:00 AM drop is already
+// derived and needs no code change.
 //
 // dropDelayMin is 0 because the desk's stated policy is a drop AT the end of the
 // shift — the 22:00 shift is dropped at 22:00, not 22:15.
 export const DEFAULT_SHIFT_POLICY = {
-  E: { label: 'Evening', start: '16:00', end: '01:30', pickupLeadMin: 60, dropDelayMin: 0, working: true },
-  A: { label: 'Afternoon', start: '13:00', end: '22:00', pickupLeadMin: 60, dropDelayMin: 0, working: true },
-  N: { label: 'Night', start: '21:00', end: '06:00', pickupLeadMin: 60, dropDelayMin: 0, working: true },
+  E: {
+    label: 'Evening', start: '16:00', end: '01:00',
+    pickupLeadMin: 60, dropDelayMin: 0, working: true,
+    providePickup: false, provideDrop: false,
+  },
+  A: {
+    label: 'Afternoon', start: '13:00', end: '22:00',
+    pickupLeadMin: 60, dropDelayMin: 0, working: true,
+    providePickup: false, provideDrop: true, // 10:00 PM drop home
+  },
+  N: {
+    label: 'Night', start: '21:00', end: '06:00',
+    pickupLeadMin: 60, dropDelayMin: 0, working: true,
+    providePickup: true, provideDrop: false, // 8:00 PM pickup from home
+  },
   WO: { label: 'Week Off', working: false },
   H: { label: 'Holiday', working: false },
   L: { label: 'Leave', working: false },
@@ -174,19 +210,14 @@ export function isWorkingCode(policy, code) {
 //
 // For this company: cabs run 20:00 → 06:00. Which means:
 //
-//   A  Afternoon 13:00–22:00   pickup 12:00  ✗ outside the window — no cab
-//                              drop   22:00  ✓ provided
-//   N  Night     21:00–06:00   pickup 20:00  ✓ provided
-//                              drop   06:00  ✓ provided
-//   E  Evening   16:00–01:30   pickup 15:00  ✗ outside the window — no cab
-//                              drop   01:30  ✓ provided
+// For this company cabs run 20:00 → 06:00, which is why a midday pickup is never
+// generated: ten afternoon employees would otherwise produce ten 12:00 pickups
+// that no cab was ever going to make.
 //
-// Before this existed, every working shift produced both legs, so ten afternoon
-// employees generated ten midday pickups that no cab was ever going to make.
-//
-// A shift can override the window explicitly with `providePickup` /
-// `provideDrop` booleans — set those on the Shift Policy screen when a shift
-// doesn't follow the general rule.
+// THE WINDOW IS ONLY THE FALLBACK, though. What the company actually provides is
+// set per shift on the Shift Policy screen (`providePickup` / `provideDrop`), and
+// an explicit setting always wins — the Night shift ends at 06:00, inside the
+// window, and still gets no drop. See DEFAULT_SHIFT_POLICY for the live policy.
 export const SERVICE_WINDOW = { from: '20:00', to: '06:00' };
 
 // Is this time inside the service window? The window wraps midnight, so
@@ -229,7 +260,7 @@ export function legsForShift(policy, code) {
   };
 }
 
-// A human summary of a shift, for chips and dropdowns: "Evening · 4:00 PM–1:30 AM".
+// A human summary of a shift, for chips and dropdowns: "Evening · 4:00 PM–1:00 AM".
 export function shiftSummary(policy, code) {
   const s = policy?.[code];
   if (!s) return code;
