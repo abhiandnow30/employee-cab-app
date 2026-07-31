@@ -3,15 +3,18 @@
 //
 // The employee's view of the roster HR uploaded. They don't book anything here —
 // their shifts are given, and the cab follows automatically. What this screen
-// answers is "when am I working, and when does my cab come?".
+// answers is "when am I working, and by when do I need to be at the office?".
 //
 // Reads exactly ONE Firestore document per month (rosters/<month>_<uid>), so it
 // stays cheap no matter how much history builds up.
 //
 // Each working day shows both legs derived from the shift policy:
-//   • pickup  — home → office, an hour before the shift starts
-//   • drop    — office → home, when it ends (which for an Evening or Night shift
-//               is the NEXT morning, and the card says so)
+//   • pickup  — home → office, by the time the shift starts
+//   • drop    — office → home, no earlier than when it ends (which for an
+//               Evening or Night shift is the NEXT morning, and the card says so)
+// These are deadlines/earliest-bounds on the EMPLOYEE'S schedule, never a
+// promised cab instant — the driver/transport desk decide the actual pickup
+// and drop timing on the day.
 //
 // ONLY the legs the company actually provides are shown, per shift, from the
 // Shift Policy: the Afternoon shift gets a drop home and no pickup, the Night
@@ -228,7 +231,7 @@ export default function MyScheduleScreen({ navigation }) {
                       {selectedLegs.providePickup ? (
                         <Leg
                           icon="home-export-outline"
-                          title="Pickup — Home to Office"
+                          title="Reach office by"
                           time={selectedLegs.pickup}
                           note={`${parseInt(selectedDay, 10)} ${MONTHS[monthIndex]}`}
                         />
@@ -236,7 +239,7 @@ export default function MyScheduleScreen({ navigation }) {
                       {selectedLegs.provideDrop ? (
                         <Leg
                           icon="home-import-outline"
-                          title="Drop — Office to Home"
+                          title="Cab leaves after"
                           time={selectedLegs.drop}
                           note={
                             selectedLegs.dropNextDay
@@ -290,7 +293,7 @@ export default function MyScheduleScreen({ navigation }) {
               </Card>
             ) : (
               <Text variant="bodySmall" style={styles.tapHint}>
-                Tap a day to see its pickup and drop times.
+                Tap a day to see its shift schedule.
               </Text>
             )}
           </>

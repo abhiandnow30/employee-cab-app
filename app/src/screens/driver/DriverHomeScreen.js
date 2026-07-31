@@ -162,7 +162,9 @@ export default function DriverHomeScreen({ navigation }) {
             {item.direction}
           </Text>
           <Text variant="bodyMedium" style={styles.detail}>
-            {item.date} · {item.shift}
+            {/* The shift's own start/end — a deadline (pickup) or
+                earliest-bound (drop). Exact departure timing is your call. */}
+            {item.date} · {item.direction === 'Home → Office' ? 'by' : 'after'} {item.shift}
           </Text>
           <Text variant="bodyMedium" style={styles.detail}>
             Pickup: {places.pickup}

@@ -205,7 +205,12 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   color={colors.muted}
                 />
                 <Text variant="bodySmall" style={styles.meta}>
-                  {item.direction} · {item.shift}
+                  {/* The shift's own start/end — a deadline (pickup) or
+                      earliest-bound (drop) on the employee's schedule, never a
+                      promised cab instant. The driver/desk decide the actual
+                      timing on the day. */}
+                  {item.direction} · {item.direction === 'Home → Office' ? 'by' : 'after'}{' '}
+                  {item.shift}
                 </Text>
               </View>
               {item.employeeAddress ? (

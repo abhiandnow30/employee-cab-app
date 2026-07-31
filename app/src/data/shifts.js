@@ -97,9 +97,6 @@ export function isWeekdayRow(cells) {
 // everyone without a redeploy.
 //
 //   start / end     — 24h "HH:MM". `end` before `start` means it runs past midnight.
-//   pickupLeadMin   — how long before the shift starts the cab collects them.
-//                     Derived, not a fixed list, so it adapts to every shift.
-//   dropDelayMin    — how long after the shift ends the cab leaves the office.
 //   providePickup / provideDrop
 //                   — whether a cab actually RUNS for that leg. Set explicitly
 //                     here, because which legs the company pays for is a business
@@ -108,10 +105,10 @@ export function isWeekdayRow(cells) {
 //                     stored policies that predate these two fields).
 //
 // THE COMPANY RUNS EXACTLY TWO RIDES:
-//   1. Afternoon shift — DROP home at 22:00, when the shift ends. No pickup;
+//   1. Afternoon shift — DROP home when the shift ends at 22:00. No pickup;
 //      it starts at 13:00 and people make their own way in.
-//   2. Night shift — PICKUP from home at 20:00, an hour before the 21:00 start.
-//      No drop: nothing is provided at 06:00 when the shift ends.
+//   2. Night shift — PICKUP from home, in time for the 21:00 start. No drop:
+//      nothing is provided at 06:00 when the shift ends.
 //
 // The Evening shift is deliberately BOTH legs off. It stays a real working code —
 // HR can roster it, and it shows on the employee's calendar as a shift they work —
@@ -119,23 +116,26 @@ export function isWeekdayRow(cells) {
 // `provideDrop` to true on the Shift Policy screen: the 1:00 AM drop is already
 // derived and needs no code change.
 //
-// dropDelayMin is 0 because the desk's stated policy is a drop AT the end of the
-// shift — the 22:00 shift is dropped at 22:00, not 22:15.
+// DELIBERATELY NO "how many minutes before/after" FIELD. The app tracks the
+// EMPLOYEE'S schedule — when their shift starts and ends — and nothing more.
+// Exactly when a cab actually leaves for a pickup or a drop is the driver's
+// and the transport desk's call, made on the day against real traffic, route
+// and weather; the app must never predetermine or promise a specific instant
+// for that. `legsForShift()` below uses the shift's own start/end as the
+// scheduling deadline (an employee must be at the office by shift start), not
+// as a claimed cab departure time.
 export const DEFAULT_SHIFT_POLICY = {
   E: {
-    label: 'Evening', start: '16:00', end: '01:00',
-    pickupLeadMin: 60, dropDelayMin: 0, working: true,
+    label: 'Evening', start: '16:00', end: '01:00', working: true,
     providePickup: false, provideDrop: false,
   },
   A: {
-    label: 'Afternoon', start: '13:00', end: '22:00',
-    pickupLeadMin: 60, dropDelayMin: 0, working: true,
-    providePickup: false, provideDrop: true, // 10:00 PM drop home
+    label: 'Afternoon', start: '13:00', end: '22:00', working: true,
+    providePickup: false, provideDrop: true, // drop home when the shift ends
   },
   N: {
-    label: 'Night', start: '21:00', end: '06:00',
-    pickupLeadMin: 60, dropDelayMin: 0, working: true,
-    providePickup: true, provideDrop: false, // 8:00 PM pickup from home
+    label: 'Night', start: '21:00', end: '06:00', working: true,
+    providePickup: true, provideDrop: false, // pickup from home before the shift starts
   },
   WO: { label: 'Week Off', working: false },
   H: { label: 'Holiday', working: false },
@@ -232,31 +232,32 @@ export function withinServiceWindow(minutes, window = SERVICE_WINDOW) {
   return from <= to ? t >= from && t <= to : t >= from || t <= to;
 }
 
-// The two ride legs a working shift produces, as display times.
-// Returns { pickup, drop, dropNextDay, providePickup, provideDrop } — or null for
-// a non-working code. The times are always computed; the flags say whether a cab
-// is actually sent, so a screen can show "no cab at 12:00 PM" rather than nothing.
+// The two ride legs a working shift produces. Returns
+// { pickup, drop, dropNextDay, providePickup, provideDrop } — or null for a
+// non-working code.
+//
+// `pickup`/`drop` are the shift's own start/end, not a computed cab time: the
+// app's job is to know the employee must be at the office by shift start
+// (pickup deadline) and that the cab home leaves no earlier than shift end
+// (drop earliest-bound) — never to predetermine or display the actual instant
+// the cab moves, which is the driver's/coordinator's call on the day. The
+// `provide*` flags say whether a cab runs for that leg at all, so a screen can
+// show "no cab, reach the office yourself" rather than nothing.
 export function legsForShift(policy, code) {
   const s = policy?.[code];
   if (!s || s.working !== true) return null;
   const start = hhmmToMinutes(s.start);
   const end = hhmmToMinutes(s.end);
   if (start == null || end == null) return null;
-  // Home → Office: collected `pickupLeadMin` before the shift starts.
-  const pickupMins = start - (Number(s.pickupLeadMin) || 0);
-  // Office → Home: leaves `dropDelayMin` after it ends.
-  const dropMins = end + (Number(s.dropDelayMin) || 0);
   return {
-    pickup: minutesToDisplay(pickupMins),
-    drop: minutesToDisplay(dropMins),
+    pickup: minutesToDisplay(start),
+    drop: minutesToDisplay(end),
     dropNextDay: endsNextDay(s),
     // An explicit setting always wins; otherwise the service window decides.
     providePickup:
-      typeof s.providePickup === 'boolean'
-        ? s.providePickup
-        : withinServiceWindow(pickupMins),
+      typeof s.providePickup === 'boolean' ? s.providePickup : withinServiceWindow(start),
     provideDrop:
-      typeof s.provideDrop === 'boolean' ? s.provideDrop : withinServiceWindow(dropMins),
+      typeof s.provideDrop === 'boolean' ? s.provideDrop : withinServiceWindow(end),
   };
 }
 

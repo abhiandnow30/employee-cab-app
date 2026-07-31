@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // NOTIFICATIONS  (employee) — Step 6
 //
-// What the employee is told, and when. Written by the desk: a cab assigned (with
-// driver, phone, cab number, pickup time and place), a ride cancelled, a pickup
-// time moved, a change request resolved.
+// What the employee is told, and when. Written by the desk: a cab assigned
+// (with driver, phone, cab number and place — never a promised pickup instant,
+// the driver coordinates that directly), a ride cancelled, a change request
+// resolved.
 //
 // These are IN-APP notices with an unread badge in the header. A banner on a
 // locked phone needs push infrastructure the project doesn't have yet — see the

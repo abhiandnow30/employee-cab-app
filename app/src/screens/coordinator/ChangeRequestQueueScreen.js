@@ -197,9 +197,7 @@ export default function ChangeRequestQueueScreen() {
     <View style={styles.container}>
       <View style={styles.col}>
         <Text variant="bodySmall" style={styles.hint}>
-          {isCoordinator
-            ? "Exceptions to today's roster. You resolve these yourself — no approval needed. Escalate an emergency only when no vehicle is free."
-            : 'Exceptions that need HR: shift extensions, and emergency rides the coordinator had no cab for.'}
+          Exceptions to today's roster. You resolve these yourself — no approval needed.
         </Text>
 
         <SegmentedButtons
@@ -241,7 +239,7 @@ export default function ChangeRequestQueueScreen() {
               </Text>
             ) : (
               <Text variant="bodyMedium" style={styles.dialogText}>
-                Nothing changes on the roster or the rides. {acting.request.employeeName} is
+                Nothing changes on the roster or the rides. {acting?.request?.employeeName} is
                 notified, so give them a reason.
               </Text>
             )}

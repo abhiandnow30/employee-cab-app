@@ -1,29 +1,52 @@
 // ---------------------------------------------------------------------------
 // SHIFT POLICY  (HR / Admin)
 //
-// The transport policy: what each shift code means, when it runs, and how long
-// before/after the cab collects and returns. Everything downstream reads this —
-// which roster codes generate rides, what time each ride is, and what the
-// employee's calendar shows. Retiming the Evening shift here retimes every
-// Evening ride in the system.
+// The transport policy: what each shift code means, when it runs, and which
+// legs a cab actually provides. Everything downstream reads this — which
+// roster codes generate rides and what the employee's calendar shows.
+// Retiming the Evening shift here retimes every Evening ride in the system.
 //
-// Pickup and drop are DERIVED (start − lead, end + delay) rather than typed as
-// fixed times, so one edit covers every day of the month.
+// DELIBERATELY NO "cab time" field here. This screen sets the EMPLOYEE'S
+// schedule (shift start/end) and whether a leg runs at all — never a specific
+// instant the cab departs. Exactly when the cab leaves for a pickup or a drop
+// is the driver's/transport desk's call on the day, not something this app
+// predetermines or promises.
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, ScrollView } from 'react-native';
-import {
-  Text, Card, TextInput, Button, HelperText, Snackbar, Chip, Divider, Switch,
-} from 'react-native-paper';
+import { Text, Card, TextInput, Button, HelperText, Snackbar, Switch } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import useSyncedDraft from '../../utils/useSyncedDraft';
-import {
-  ALL_SHIFT_CODES, SHIFT_COLORS, legsForShift, hhmmToMinutes, minutesToDisplay,
-  SERVICE_WINDOW, withinServiceWindow,
-} from '../../data/shifts';
+import { WORKING_CODES, NON_WORKING_CODES, legsForShift, hhmmToMinutes } from '../../data/shifts';
 import { colors } from '../../theme';
+
+// One glance-icon per shift code — purely a display touch, no meaning any
+// other screen depends on. Neutral (one tint for all) rather than
+// per-shift-colored, to keep the page reading as one system.
+const SHIFT_ICONS = {
+  A: 'weather-sunny',
+  E: 'weather-sunset',
+  N: 'weather-night',
+  WO: 'calendar-weekend-outline',
+  H: 'calendar-star',
+  L: 'calendar-remove-outline',
+};
+
+const bigSwitch = { transform: [{ scale: 1.2 }] };
+
+// One line in the status panel: an icon + a short fact, colored by tone.
+function StatusLine({ icon, label, tone }) {
+  const color =
+    tone === 'on' ? colors.success : tone === 'info' ? colors.primary : colors.muted;
+  return (
+    <View style={styles.statusRow}>
+      <MaterialCommunityIcons name={icon} size={16} color={color} />
+      <Text style={[styles.statusText, { color }]}>{label}</Text>
+    </View>
+  );
+}
 
 export default function ShiftPolicyScreen() {
   const { shiftPolicy, saveShifts } = useApp();
@@ -49,285 +72,282 @@ export default function ShiftPolicyScreen() {
     else setError(res?.message || 'Could not save the policy.');
   }
 
-  return (
-    <ScrollView contentContainerStyle={styles.scroll}>
-      <View style={styles.col}>
-        <Text variant="bodySmall" style={styles.hint}>
-          These codes are what HR types in the monthly roster. Times decide WHEN a
-          cab runs; the two switches decide WHETHER it runs — a shift can provide a
-          pickup, a drop, both, or neither. Today the company runs two rides: the
-          Afternoon shift's 10:00 PM drop home, and the Night shift's 8:00 PM pickup.
-          Week Off, Holiday and Leave never generate a ride.
-        </Text>
+  function renderCard(code, compact) {
+    const s = draft[code] || {};
+    const working = s.working === true;
+    const legs = working ? legsForShift(draft, code) : null;
+    const startBad = working && hhmmToMinutes(s.start) == null;
+    const endBad = working && hhmmToMinutes(s.end) == null;
 
-        {ALL_SHIFT_CODES.map((code) => {
-          const s = draft[code] || {};
-          const working = s.working === true;
-          const c = SHIFT_COLORS[code] || { bg: '#EEE', fg: colors.text };
-          const legs = working ? legsForShift(draft, code) : null;
-          const startBad = working && hhmmToMinutes(s.start) == null;
-          const endBad = working && hhmmToMinutes(s.end) == null;
+    return (
+      <Card key={code} mode="elevated" style={[styles.card, compact && styles.cardCompact]}>
+        <Card.Content style={styles.cardContent}>
+          <View style={styles.headerRow}>
+            <View style={styles.identity}>
+              <View style={[styles.iconWrap, compact && styles.iconWrapCompact]}>
+                <MaterialCommunityIcons
+                  name={SHIFT_ICONS[code] || 'clock-outline'}
+                  size={compact ? 20 : 24}
+                  color={colors.primary}
+                />
+              </View>
+              <TextInput
+                value={s.label || ''}
+                onChangeText={setField(code, 'label')}
+                mode="flat"
+                dense
+                underlineColor="transparent"
+                activeUnderlineColor={colors.primary}
+                style={styles.nameInput}
+                contentStyle={styles.nameInputContent}
+              />
+            </View>
+            <View style={styles.generatesCol}>
+              <Text style={styles.generatesLabel}>Generates rides</Text>
+              <Switch
+                value={working}
+                color={colors.primary}
+                style={bigSwitch}
+                onValueChange={(v) =>
+                  setDraft((d) => ({
+                    ...d,
+                    [code]: v
+                      ? {
+                          label: d[code]?.label || code,
+                          working: true,
+                          start: d[code]?.start || '09:00',
+                          end: d[code]?.end || '18:00',
+                        }
+                      : { label: d[code]?.label || code, working: false },
+                  }))
+                }
+              />
+            </View>
+          </View>
 
-          return (
-            <Card key={code} mode="outlined" style={styles.card}>
-              <Card.Content>
-                <View style={styles.head}>
-                  <Chip
-                    compact
-                    style={{ backgroundColor: c.bg }}
-                    textStyle={{ color: c.fg, fontWeight: 'bold' }}
-                  >
-                    {code}
-                  </Chip>
-                  <TextInput
-                    label="Name"
-                    value={s.label || ''}
-                    onChangeText={setField(code, 'label')}
-                    mode="outlined"
-                    dense
-                    style={styles.labelInput}
-                  />
-                  <View style={styles.workingToggle}>
-                    <Text variant="bodySmall" style={styles.toggleLabel}>
-                      Generates rides
-                    </Text>
+          {!working ? (
+            <StatusLine icon="calendar-blank-outline" label="No Rides" tone="off" />
+          ) : (
+            <>
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Shift Timing</Text>
+                <View style={styles.box}>
+                  <View style={styles.timingRow}>
+                    <TextInput
+                      label="Start"
+                      value={s.start || ''}
+                      onChangeText={setField(code, 'start')}
+                      mode="outlined"
+                      placeholder="16:00"
+                      error={startBad}
+                      style={styles.timeInput}
+                    />
+                    <MaterialCommunityIcons
+                      name="arrow-right-thin"
+                      size={26}
+                      color={colors.muted}
+                      style={styles.timingArrow}
+                    />
+                    <TextInput
+                      label="End"
+                      value={s.end || ''}
+                      onChangeText={setField(code, 'end')}
+                      mode="outlined"
+                      placeholder="01:00"
+                      error={endBad}
+                      style={styles.timeInput}
+                    />
+                  </View>
+                  {startBad || endBad ? (
+                    <HelperText type="error" visible style={{ color: colors.warning }}>
+                      Use 24h HH:MM, e.g. 16:00
+                    </HelperText>
+                  ) : null}
+                </View>
+              </View>
+
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Cab Service</Text>
+                <View style={styles.box}>
+                  <View style={styles.cabRow}>
+                    <Text style={styles.cabLabel}>Pickup</Text>
                     <Switch
-                      value={working}
-                      onValueChange={(v) =>
-                        setDraft((d) => ({
-                          ...d,
-                          [code]: v
-                            ? {
-                                label: d[code]?.label || code,
-                                working: true,
-                                start: d[code]?.start || '09:00',
-                                end: d[code]?.end || '18:00',
-                                pickupLeadMin: d[code]?.pickupLeadMin ?? 60,
-                                dropDelayMin: d[code]?.dropDelayMin ?? 15,
-                              }
-                            : { label: d[code]?.label || code, working: false },
-                        }))
-                      }
+                      value={s.providePickup === true}
+                      color={colors.primary}
+                      style={bigSwitch}
+                      onValueChange={setField(code, 'providePickup')}
+                    />
+                  </View>
+                  <View style={styles.cabDivider} />
+                  <View style={styles.cabRow}>
+                    <Text style={styles.cabLabel}>Drop</Text>
+                    <Switch
+                      value={s.provideDrop === true}
+                      color={colors.primary}
+                      style={bigSwitch}
+                      onValueChange={setField(code, 'provideDrop')}
                     />
                   </View>
                 </View>
+              </View>
 
-                {working ? (
-                  <>
-                    <Divider style={styles.divider} />
-                    <View style={styles.grid}>
-                      <TextInput
-                        label="Starts (HH:MM)"
-                        value={s.start || ''}
-                        onChangeText={setField(code, 'start')}
-                        mode="outlined"
-                        dense
-                        placeholder="16:00"
-                        error={startBad}
-                        style={styles.cell}
-                      />
-                      <TextInput
-                        label="Ends (HH:MM)"
-                        value={s.end || ''}
-                        onChangeText={setField(code, 'end')}
-                        mode="outlined"
-                        dense
-                        placeholder="01:00"
-                        error={endBad}
-                        style={styles.cell}
-                      />
-                      <TextInput
-                        label="Pickup lead (min)"
-                        value={String(s.pickupLeadMin ?? '')}
-                        onChangeText={(t) => setField(code, 'pickupLeadMin')(t.replace(/[^0-9]/g, ''))}
-                        mode="outlined"
-                        dense
-                        keyboardType="number-pad"
-                        style={styles.cell}
-                      />
-                      <TextInput
-                        label="Drop delay (min)"
-                        value={String(s.dropDelayMin ?? '')}
-                        onChangeText={(t) => setField(code, 'dropDelayMin')(t.replace(/[^0-9]/g, ''))}
-                        mode="outlined"
-                        dense
-                        keyboardType="number-pad"
-                        style={styles.cell}
-                      />
-                    </View>
+              {legs ? (
+                <View style={styles.statusPanel}>
+                  <StatusLine
+                    icon={legs.providePickup ? 'check-circle' : 'close-circle-outline'}
+                    label={`Pickup ${legs.providePickup ? 'Enabled' : 'Disabled'}`}
+                    tone={legs.providePickup ? 'on' : 'off'}
+                  />
+                  <StatusLine
+                    icon={legs.provideDrop ? 'check-circle' : 'close-circle-outline'}
+                    label={`Drop ${legs.provideDrop ? 'Enabled' : 'Disabled'}`}
+                    tone={legs.provideDrop ? 'on' : 'off'}
+                  />
+                  {legs.dropNextDay ? (
+                    <StatusLine icon="weather-night" label="Overnight Shift" tone="info" />
+                  ) : null}
+                </View>
+              ) : null}
+            </>
+          )}
+        </Card.Content>
+      </Card>
+    );
+  }
 
-                    {/* WHICH LEGS THE COMPANY ACTUALLY PAYS FOR. This is a business
-                        decision, not something to read off the clock: the night
-                        shift ends at 6:00 AM — well inside cab hours — and still
-                        gets no drop. Before these switches existed the times were
-                        editable but the legs weren't, so "pickup only" could not be
-                        expressed at all. Turning both off keeps the shift on
-                        everyone's calendar while running no cab for it. */}
-                    <View style={styles.legRow}>
-                      <View style={styles.legToggle}>
-                        <Switch
-                          value={s.providePickup === true}
-                          onValueChange={setField(code, 'providePickup')}
-                        />
-                        <Text variant="bodySmall" style={styles.legLabel}>
-                          Cab picks up from home
-                        </Text>
-                      </View>
-                      <View style={styles.legToggle}>
-                        <Switch
-                          value={s.provideDrop === true}
-                          onValueChange={setField(code, 'provideDrop')}
-                        />
-                        <Text variant="bodySmall" style={styles.legLabel}>
-                          Cab drops home
-                        </Text>
-                      </View>
-                    </View>
+  return (
+    <View style={styles.screen}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.col}>
+          <View style={styles.row}>{WORKING_CODES.map((code) => renderCard(code, false))}</View>
+          <View style={styles.rowCompact}>
+            {NON_WORKING_CODES.map((code) => renderCard(code, true))}
+          </View>
+        </View>
+      </ScrollView>
 
-                    {/* Show the derived result, so the effect of an edit is visible
-                        before it's saved. */}
-                    {legs ? (
-                      <>
-                        {/* Each leg is stated separately, because a shift very often
-                            gets only one. An afternoon shift starts in daylight, so
-                            no cab collects it — saying "collects at 12:00 PM" put ten
-                            midday pickups on the coordinator's board that were never
-                            going to happen. */}
-                        <View style={styles.preview}>
-                          <MaterialCommunityIcons
-                            name={legs.providePickup ? 'arrow-right-bold' : 'close-circle-outline'}
-                            size={15}
-                            color={legs.providePickup ? colors.primary : colors.muted}
-                          />
-                          <Text variant="bodySmall" style={styles.previewText}>
-                            {legs.providePickup ? (
-                              <>
-                                Cab collects from home at{' '}
-                                <Text style={styles.strong}>{legs.pickup}</Text>
-                              </>
-                            ) : (
-                              <>
-                                No pickup — nothing runs at {legs.pickup}, so they
-                                travel in themselves
-                                {withinServiceWindow(hhmmToMinutes(s.start) - (Number(s.pickupLeadMin) || 0))
-                                  ? ''
-                                  : ` (it is outside cab hours, ${SERVICE_WINDOW.from}–${SERVICE_WINDOW.to})`}
-                              </>
-                            )}
-                          </Text>
-                        </View>
-                        <View style={styles.preview}>
-                          <MaterialCommunityIcons
-                            name={legs.provideDrop ? 'arrow-left-bold' : 'close-circle-outline'}
-                            size={15}
-                            color={legs.provideDrop ? colors.primary : colors.muted}
-                          />
-                          <Text variant="bodySmall" style={styles.previewText}>
-                            {legs.provideDrop ? (
-                              <>
-                                Cab drops home at{' '}
-                                <Text style={styles.strong}>{legs.drop}</Text>
-                                {legs.dropNextDay ? ' the next morning' : ''}
-                              </>
-                            ) : (
-                              <>
-                                No drop — nothing runs at {legs.drop}
-                                {withinServiceWindow(hhmmToMinutes(s.end) + (Number(s.dropDelayMin) || 0))
-                                  ? ''
-                                  : ` (it is outside cab hours, ${SERVICE_WINDOW.from}–${SERVICE_WINDOW.to})`}
-                              </>
-                            )}
-                          </Text>
-                        </View>
-                        {!legs.providePickup && !legs.provideDrop ? (
-                          <HelperText type="info" visible>
-                            This shift generates no rides at all. It still appears on
-                            the roster and on the employee's calendar as a shift they
-                            work — turn a leg on when a cab starts running for it.
-                          </HelperText>
-                        ) : null}
-                      </>
-                    ) : (
-                      <HelperText type="error" visible>
-                        Start and end must look like 16:00.
-                      </HelperText>
-                    )}
-                    {legs?.dropNextDay ? (
-                      <HelperText type="info" visible style={styles.overnightNote}>
-                        Overnight shift — the return ride falls on the following
-                        calendar day, and the coordinator's list shows it there.
-                      </HelperText>
-                    ) : null}
-                  </>
-                ) : (
-                  <Text variant="bodySmall" style={styles.noRide}>
-                    No cab runs on a {s.label || code} day.
-                  </Text>
-                )}
-              </Card.Content>
-            </Card>
-          );
-        })}
-
-        {error ? <HelperText type="error" visible>{error}</HelperText> : null}
-
-        <View style={styles.footer}>
-          <Button
-            mode="outlined"
-            onPress={draftState.reset}
-            disabled={!draftState.dirty || saving}
-            style={styles.footerBtn}
-          >
-            Reset
-          </Button>
-          <Button
-            mode="contained"
-            onPress={handleSave}
-            loading={saving}
-            disabled={!draftState.dirty || saving}
-            style={styles.footerBtn}
-          >
-            Save policy
-          </Button>
+      <View style={styles.footerBar}>
+        <View style={styles.footerInner}>
+          {error ? (
+            <HelperText type="error" visible style={styles.footerError}>
+              {error}
+            </HelperText>
+          ) : null}
+          <View style={styles.footerButtons}>
+            <Button
+              mode="outlined"
+              onPress={draftState.reset}
+              disabled={!draftState.dirty || saving}
+              style={styles.footerBtn}
+            >
+              Reset
+            </Button>
+            <Button
+              mode="contained"
+              onPress={handleSave}
+              loading={saving}
+              disabled={!draftState.dirty || saving}
+              style={styles.footerBtn}
+            >
+              Save policy
+            </Button>
+          </View>
         </View>
       </View>
 
       <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={2500}>
         {snack}
       </Snackbar>
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { padding: 12, alignItems: 'center' },
-  col: { width: '100%', maxWidth: 700 },
-  hint: { color: colors.muted, marginBottom: 12, lineHeight: 18 },
-  card: { marginBottom: 12 },
-  head: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  labelInput: { flex: 1, minWidth: 140, backgroundColor: colors.surface },
-  workingToggle: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  toggleLabel: { color: colors.muted },
-  divider: { marginVertical: 12 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  cell: { flexGrow: 1, flexBasis: 140, backgroundColor: colors.surface },
-  legRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 20, marginTop: 12 },
-  legToggle: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legLabel: { color: colors.text },
-  preview: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#EAF2FE',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginTop: 12,
+  screen: { flex: 1 },
+  scroll: { flex: 1 },
+  scrollContent: { padding: 28, alignItems: 'center' },
+  col: { width: '100%', maxWidth: 1180 },
+
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 28 },
+  rowCompact: { flexDirection: 'row', flexWrap: 'wrap', gap: 28, marginTop: 28 },
+
+  card: {
+    flexGrow: 1,
+    flexBasis: 340,
+    minWidth: 300,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
-  previewText: { color: colors.primaryDark, flex: 1, lineHeight: 18 },
-  strong: { fontWeight: 'bold' },
-  overnightNote: { marginTop: 2 },
-  noRide: { color: colors.muted, marginTop: 10, fontStyle: 'italic' },
-  footer: { flexDirection: 'row', gap: 12, marginTop: 4, marginBottom: 28 },
+  cardCompact: { flexBasis: 340 },
+  cardContent: { padding: 22 },
+
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+  iconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#EAF2FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconWrapCompact: { width: 36, height: 36, borderRadius: 10 },
+  nameInput: { flex: 1, backgroundColor: 'transparent', height: 40 },
+  nameInputContent: { fontSize: 18, fontWeight: '700', color: colors.text, paddingHorizontal: 0 },
+
+  generatesCol: { alignItems: 'flex-end', gap: 2 },
+  generatesLabel: { color: colors.muted, fontSize: 11, fontWeight: '500' },
+
+  section: { marginTop: 20 },
+  sectionTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  box: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: 14,
+  },
+  timingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  timingArrow: { marginTop: 4 },
+  timeInput: { flex: 1, backgroundColor: colors.surface },
+
+  cabRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
+  cabLabel: { fontSize: 15, fontWeight: '600', color: colors.text },
+  cabDivider: { height: 1, backgroundColor: colors.border },
+
+  statusPanel: {
+    marginTop: 20,
+    borderRadius: 12,
+    backgroundColor: '#F7F9FC',
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    gap: 8,
+  },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  statusText: { fontSize: 13, fontWeight: '600' },
+
+  footerBar: {
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  footerInner: {
+    width: '100%',
+    maxWidth: 1180,
+    alignSelf: 'center',
+    paddingHorizontal: 28,
+    paddingVertical: 16,
+  },
+  footerError: { marginBottom: 4 },
+  footerButtons: { flexDirection: 'row', gap: 12 },
   footerBtn: { flex: 1 },
 });

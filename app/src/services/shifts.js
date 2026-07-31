@@ -1,11 +1,17 @@
 // ---------------------------------------------------------------------------
 // SHIFT POLICY SERVICE
-// The transport policy — which shift codes exist, when each runs, and how long
-// before/after the cab collects and returns — lives in ONE Firestore document at
-// config/shifts. HR/Admin edits it from the Shift Policy screen.
+// The transport policy — which shift codes exist, when each runs, and which
+// legs a cab provides — lives in ONE Firestore document at config/shifts.
+// HR/Admin edits it from the Shift Policy screen.
 //
-// Everyone signed in can READ it (the coordinator needs it to work out pickup
-// times, employees to read their calendar); only an admin can WRITE it.
+// Deliberately holds no "cab time" field — only the shift's own start/end
+// (the employee's schedule) and whether a leg runs at all. The app never
+// computes or stores a predetermined cab departure instant; that's the
+// driver's/transport desk's call on the day.
+//
+// Everyone signed in can READ it (the coordinator needs it to work out the
+// day's deadlines, employees to read their calendar); only an admin can
+// WRITE it.
 //
 // Falls back to DEFAULT_SHIFT_POLICY when the document is missing or Firebase
 // isn't configured, so a fresh project behaves sensibly on first run.
@@ -50,8 +56,6 @@ function normalize(stored) {
         ? {
             start: s.start,
             end: s.end,
-            pickupLeadMin: Number(s.pickupLeadMin) || 0,
-            dropDelayMin: Number(s.dropDelayMin) || 0,
             providePickup: leg('providePickup'),
             provideDrop: leg('provideDrop'),
           }
@@ -93,8 +97,6 @@ export async function saveShiftPolicy(policy) {
         working: true,
         start: s.start,
         end: s.end,
-        pickupLeadMin: Math.max(0, Number(s.pickupLeadMin) || 0),
-        dropDelayMin: Math.max(0, Number(s.dropDelayMin) || 0),
         // Which legs a cab actually runs. Written explicitly (never left to the
         // service window) so the saved document says what the company provides —
         // these used to be stripped here, which is why the screen had no way to

@@ -18,6 +18,7 @@ export const colors = {
   muted: '#667085',
   danger: '#C62828',
   success: '#2E7D32',
+  warning: '#B26A00', // matches the "pending" amber used on change-request status chips
 };
 
 export const theme = {

@@ -256,7 +256,9 @@ export default function BookingsScreen({ navigation }) {
                 {item.direction}
               </Text>
               <Text variant="bodyMedium" style={styles.detail}>
-                {item.date} · {item.shift}
+                {/* The shift's own start/end — a deadline (pickup) or
+                    earliest-bound (drop), never a promised cab instant. */}
+                {item.date} · {item.direction === 'Home → Office' ? 'by' : 'after'} {item.shift}
               </Text>
               {/* Where to pick them up: the real address from their roster if we
                   have it, otherwise the generic pickup label on the booking. */}

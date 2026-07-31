@@ -2,7 +2,8 @@
 // NOTIFICATIONS  (in-app)
 //
 // Step 6 of the workflow: once a cab is assigned, tell the employee — driver,
-// cab number, pickup time and place, and a link to follow it live.
+// cab number and place, and a link to follow it live. Never a promised pickup
+// instant — the driver coordinates that directly with the rider.
 //
 // These are IN-APP notifications: a document per employee event, read by the
 // employee's Notifications screen with an unread badge in the header. That needs
@@ -114,17 +115,24 @@ export async function markAllRead(employeeId) {
 // Kept here so the wording of an assignment notification lives in one place
 // rather than being retyped at each call site.
 
-// Everything Step 6 asks for: driver, phone, cab, time, place, and the tracking
+// Everything Step 6 asks for: driver, phone, cab, place, and the tracking
 // link. The "link" is the app's own Track Cab route — a real URL on web.
+//
+// Deliberately does NOT promise a specific pickup/drop instant — the shift's
+// own start/end is a deadline (pickup) or earliest-bound (drop) on the
+// employee's schedule, not a cab departure time the app predetermines. The
+// driver/transport desk coordinate the exact timing on the day.
 export function cabAssignedMessage(ride, cab) {
   const driver = cab?.driverName || 'Your driver';
   const phone = cab?.driverPhone ? ` (${cab.driverPhone})` : '';
   const where = ride.leg === 'in' ? ride.employeeAddress || 'your home' : 'the office';
+  const bound = ride.leg === 'in' ? `reach office by ${ride.shift}` : `leaves after ${ride.shift}`;
   return {
-    title: `Cab assigned — ${ride.shift}`,
+    title: `Cab assigned — ${ride.date}`,
     body:
       `${cab?.cabNumber || 'A cab'} · ${driver}${phone}\n` +
-      `${ride.direction} on ${ride.date}, pickup ${ride.shift} from ${where}.\n` +
+      `${ride.direction} on ${ride.date} (${bound}) from ${where}. ` +
+      `The driver will coordinate the exact pickup time.\n` +
       `Track it live from My Rides.`,
   };
 }
@@ -133,15 +141,8 @@ export function rideCancelledMessage(ride, note) {
   return {
     title: `Ride cancelled — ${ride.date}`,
     body:
-      `Your ${ride.direction} cab at ${ride.shift} has been cancelled.` +
+      `Your ${ride.direction} ride on ${ride.date} has been cancelled.` +
       (note ? `\n${note}` : ''),
-  };
-}
-
-export function pickupChangedMessage(ride, oldTime) {
-  return {
-    title: `New pickup time — ${ride.date}`,
-    body: `Your ${ride.direction} pickup has moved from ${oldTime} to ${ride.shift}.`,
   };
 }
 

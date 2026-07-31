@@ -24,6 +24,7 @@ import {
 } from '../data/changeRequests';
 import { STATUS } from '../data/mockData';
 import { rosterId } from './roster';
+import { getLiveBookingsForDate } from './bookings';
 
 const COL = 'changeRequests';
 
@@ -116,23 +117,39 @@ function stampResolution(batch, request, { status, actor, note }) {
   });
 }
 
-// Cancel the whole day's rides for this employee — Leave and Absent.
-// `bookings` is the desk's live booking list; only that employee's rides on that
-// date are touched. For Leave we also rewrite the roster's code to L, because
-// leave is a roster fact and would otherwise regenerate rides tomorrow.
-export async function resolveCancelDay(request, { actor, bookings, note, recode }) {
-  if (!firestore) throw new Error('Backend not configured.');
-  const batch = writeBatch(firestore);
+// The fields CancelledRidesScreen (admin) reads to show WHY a ride was
+// cancelled. Every resolver that cancels a booking stamps these onto it —
+// without this, the admin's screen has no way to tell a request-driven
+// cancellation from anything else, and the employee's actual reason (typed on
+// the change request, not the booking) is never seen by anyone again.
+function cancelFields(request) {
+  return {
+    cancelStatus: 'Approved',
+    cancelReason: request.comments
+      ? `${request.reason || request.typeLabel || 'Cancelled'} — ${request.comments}`
+      : request.reason || request.typeLabel || '',
+    cancelRequestedAt: request.createdAt || null,
+    cancelResolvedAt: serverTimestamp(),
+  };
+}
 
-  const affected = (bookings || []).filter(
-    (b) =>
-      b.employeeId === request.employeeId &&
-      b.date === request.date &&
-      b.status !== STATUS.CANCELLED &&
-      b.status !== STATUS.COMPLETED
-  );
+// Cancel the whole day's rides for this employee — Leave and Absent. Reads the
+// employee's bookings for that date FRESH from Firestore rather than trusting the
+// desk's local snapshot, which might not yet include a booking another
+// coordinator just created — cancelling off a stale list would leave that ride
+// live, and someone on leave still gets a cab. For Leave we also rewrite the
+// roster's code to L, because leave is a roster fact and would otherwise
+// regenerate rides tomorrow.
+export async function resolveCancelDay(request, { actor, note, recode }) {
+  if (!firestore) throw new Error('Backend not configured.');
+  const affected = await getLiveBookingsForDate(request.employeeId, request.date);
+
+  const batch = writeBatch(firestore);
   affected.forEach((b) => {
-    batch.update(doc(firestore, 'bookings', b.id), { status: STATUS.CANCELLED });
+    batch.update(doc(firestore, 'bookings', b.id), {
+      status: STATUS.CANCELLED,
+      ...cancelFields(request),
+    });
   });
 
   // Leave rewrites the roster so the day stops generating rides at all.
@@ -156,7 +173,10 @@ export async function resolveCancelRide(request, { actor, note }) {
   if (!firestore) throw new Error('Backend not configured.');
   const batch = writeBatch(firestore);
   if (request.bookingId) {
-    batch.update(doc(firestore, 'bookings', request.bookingId), { status: STATUS.CANCELLED });
+    batch.update(doc(firestore, 'bookings', request.bookingId), {
+      status: STATUS.CANCELLED,
+      ...cancelFields(request),
+    });
   }
   stampResolution(batch, request, { status: REQUEST_STATUS.RESOLVED, actor, note });
   await batch.commit();
@@ -168,8 +188,12 @@ export async function resolveCancelRide(request, { actor, note }) {
 // Change the roster's shift code for that day. The day's rides are derived, so
 // this is all that's needed — they regenerate at the new times. Any cab already
 // assigned at the OLD time is cancelled, or the employee would have two rides.
-export async function resolveRecode(request, { actor, bookings, note, code }) {
+// Reads the employee's bookings for that date FRESH (see resolveCancelDay) rather
+// than a possibly-stale caller-supplied list.
+export async function resolveRecode(request, { actor, note, code }) {
   if (!firestore) throw new Error('Backend not configured.');
+  const stale = await getLiveBookingsForDate(request.employeeId, request.date);
+
   const batch = writeBatch(firestore);
 
   const month = String(request.date).slice(0, 7);
@@ -180,15 +204,11 @@ export async function resolveRecode(request, { actor, bookings, note, code }) {
     { merge: true }
   );
 
-  const stale = (bookings || []).filter(
-    (b) =>
-      b.employeeId === request.employeeId &&
-      b.date === request.date &&
-      b.status !== STATUS.CANCELLED &&
-      b.status !== STATUS.COMPLETED
-  );
   stale.forEach((b) =>
-    batch.update(doc(firestore, 'bookings', b.id), { status: STATUS.CANCELLED })
+    batch.update(doc(firestore, 'bookings', b.id), {
+      status: STATUS.CANCELLED,
+      ...cancelFields(request),
+    })
   );
 
   stampResolution(batch, request, { status: REQUEST_STATUS.RESOLVED, actor, note });

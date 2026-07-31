@@ -35,8 +35,7 @@ import TrackCabScreen from './src/screens/employee/TrackCabScreen';
 import RateUsScreen from './src/screens/employee/RateUsScreen';
 import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
-import ManageDriversScreen from './src/screens/admin/ManageDriversScreen';
-import ManageCabsScreen from './src/screens/admin/ManageCabsScreen';
+import ManageFleetScreen from './src/screens/admin/ManageFleetScreen';
 import ManageTimingsScreen from './src/screens/admin/ManageTimingsScreen';
 import CancelledRidesScreen from './src/screens/admin/CancelledRidesScreen';
 import NoShowsScreen from './src/screens/admin/NoShowsScreen';
@@ -51,7 +50,7 @@ import MyScheduleScreen from './src/screens/employee/MyScheduleScreen';
 import RosterUploadScreen from './src/screens/admin/RosterUploadScreen';
 import ShiftPolicyScreen from './src/screens/admin/ShiftPolicyScreen';
 import CoordinatorDashboardScreen from './src/screens/coordinator/CoordinatorDashboardScreen';
-import ChangeRequestQueueScreen from './src/screens/coordinator/ChangeRequestQueueScreen';
+import RequestsScreen from './src/screens/coordinator/RequestsScreen';
 import ChangeRequestScreen from './src/screens/employee/ChangeRequestScreen';
 import NotificationsScreen from './src/screens/employee/NotificationsScreen';
 
@@ -89,8 +88,7 @@ const linking = {
       RosterUpload: 'roster-upload',
       ShiftPolicy: 'shift-policy',
       Bookings: 'bookings',
-      ManageDrivers: 'drivers',
-      ManageCabs: 'cabs',
+      ManageFleet: 'fleet',
       ManageTimings: 'manage-timings',
       CancelledRides: 'cancelled-rides',
       NoShows: 'no-shows',
@@ -101,7 +99,7 @@ const linking = {
       Messages: 'messages',
       // Coordinator
       CoordinatorHome: 'coordinator',
-      ChangeRequests: 'change-requests',
+      Requests: 'requests',
       // Driver
       DriverHome: 'driver',
       DriverShareLocation: 'driver/share',
@@ -542,7 +540,7 @@ function RootNavigator() {
                 <Stack.Screen
                   name="ShiftPolicy"
                   component={ShiftPolicyScreen}
-                  options={{ title: 'Shift Policy' }}
+                  options={{ title: 'Shift Timings' }}
                 />
                 <Stack.Screen
                   name="EmployeeManagement"
@@ -557,7 +555,7 @@ function RootNavigator() {
                 <Stack.Screen
                   name="ManageTimings"
                   component={ManageTimingsScreen}
-                  options={{ title: 'Routes & Timings' }}
+                  options={{ title: 'Cab Routes' }}
                 />
                 <Stack.Screen
                   name="FeedbackInbox"
@@ -573,9 +571,9 @@ function RootNavigator() {
                   options={{ title: "Today's Rides" }}
                 />
                 <Stack.Screen
-                  name="ChangeRequests"
-                  component={ChangeRequestQueueScreen}
-                  options={{ title: 'Change Requests' }}
+                  name="Requests"
+                  component={RequestsScreen}
+                  options={{ title: 'Requests' }}
                 />
               </>
             )}
@@ -585,14 +583,9 @@ function RootNavigator() {
               options={{ title: 'All Bookings' }}
             />
             <Stack.Screen
-              name="ManageDrivers"
-              component={ManageDriversScreen}
-              options={{ title: 'Coordinators' }}
-            />
-            <Stack.Screen
-              name="ManageCabs"
-              component={ManageCabsScreen}
-              options={{ title: 'Fleet' }}
+              name="ManageFleet"
+              component={ManageFleetScreen}
+              options={{ title: 'Cabs & Drivers' }}
             />
             <Stack.Screen
               name="CancelledRides"

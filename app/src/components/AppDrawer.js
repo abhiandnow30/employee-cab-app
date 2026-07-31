@@ -48,7 +48,7 @@ export const DRIVER_DRAWER_ITEMS = [
 // coordinator's job and deliberately absent here.
 export const ADMIN_DRAWER_ITEMS = [
   { label: 'Upload Roster', icon: 'file-upload-outline', screen: 'RosterUpload' },
-  { label: 'Shift Policy', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
+  { label: 'Shift Timings', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
   // No "Exception Approvals" here. Nothing routes to HR any more: the company runs
   // two scheduled rides and nothing else, so the requests that needed HR's
@@ -58,12 +58,11 @@ export const ADMIN_DRAWER_ITEMS = [
   { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
   { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
   // HR needs to SEE who is driving what — which cab a ride was given to, and which
-  // driver account is behind it — without owning the fleet. These three screens
+  // driver account is behind it — without owning the fleet. These two screens
   // render read-only for the admin role; the coordinator keeps the controls.
-  { label: 'Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
-  { label: 'Fleet', icon: 'car-multiple', screen: 'ManageCabs' },
+  { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
   { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
-  { label: 'Routes & Timings', icon: 'map-marker-path', screen: 'ManageTimings' },
+  { label: 'Cab Routes', icon: 'map-marker-path', screen: 'ManageTimings' },
   { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
   { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
   { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
@@ -74,13 +73,11 @@ export const ADMIN_DRAWER_ITEMS = [
 // records.
 export const COORDINATOR_DRAWER_ITEMS = [
   { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
-  { label: 'Change Requests', icon: 'clipboard-list-outline', screen: 'ChangeRequests' },
+  { label: 'Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
   { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
-  { label: 'Fleet', icon: 'car-multiple', screen: 'ManageCabs' },
-  { label: 'Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
+  { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
   { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
   { label: 'Messages', icon: 'email-outline', screen: 'Messages' },
-  { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
   { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
 ];
 

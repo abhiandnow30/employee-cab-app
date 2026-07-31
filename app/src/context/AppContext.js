@@ -60,7 +60,7 @@ import {
   subscribeMonthRosters, subscribeMyRosters, subscribeImportHistory,
   importRoster as importRosterSvc, setRosterDay,
 } from '../services/roster';
-import { ridesForDate, bookingFromRide } from '../services/rides';
+import { ridesForDate, bookingFromRide, excuseResolvedRequests } from '../services/rides';
 import {
   createChangeRequest, subscribeMyChangeRequests, subscribeAllChangeRequests,
   resolveCancelDay, resolveCancelRide, resolveRecode, resolveNoop,
@@ -133,7 +133,7 @@ export function AppProvider({ children }) {
   const [authAttempt, setAuthAttempt] = useState(0);
   const [bookings, setBookings] = useState([]); // filled live from Firestore
   const [fleetCabs, setFleetCabs] = useState([]); // live fleet from Firestore
-  const [timings, setTimings] = useState(DEFAULT_TIMINGS); // legacy pickup/drop options + routes
+  const [timings, setTimings] = useState(DEFAULT_TIMINGS); // config/timings — cab routes
   const [shiftPolicy, setShiftPolicy] = useState(DEFAULT_SHIFT_POLICY); // config/shifts
   const [myRosters, setMyRosters] = useState([]); // an employee's own months
   // The employee directory, for the desk only. Held here rather than fetched per
@@ -143,6 +143,13 @@ export function AppProvider({ children }) {
   // The roster month the coordinator is working in, and its rows.
   const [rosterMonth, setRosterMonth] = useState(() => todayKey().slice(0, 7));
   const [monthRosters, setMonthRosters] = useState([]);
+  // The month right before rosterMonth. ridesForDate() reads TWO roster days for
+  // any given travel date (today + yesterday, to catch an overnight shift's
+  // outbound leg landing on the next calendar day) — so viewing the 1st of a
+  // month needs the LAST day of the previous month's roster too, not just the
+  // month currently being viewed. Kept as its own subscription rather than
+  // widening the main query, since the two months rarely overlap in practice.
+  const [prevMonthRosters, setPrevMonthRosters] = useState([]);
   const [myAddressRequests, setMyAddressRequests] = useState([]); // employee's own address-change requests (live)
   // Every address request, for HR. Held here rather than only on its screen so the
   // menu can show a pending count — a request nobody opens is a request nobody
@@ -486,6 +493,20 @@ export function AppProvider({ children }) {
       return;
     }
     return subscribeMonthRosters(rosterMonth, setMonthRosters, onSubError('the shift roster'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid, currentUser?.role, rosterMonth]);
+
+  useEffect(() => {
+    if (!firestore || !isDeskRole(currentUser?.role)) {
+      setPrevMonthRosters([]);
+      return;
+    }
+    const prevMonth = shiftDateKey(`${rosterMonth}-01`, -1).slice(0, 7);
+    return subscribeMonthRosters(
+      prevMonth,
+      setPrevMonthRosters,
+      onSubError('the shift roster')
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.uid, currentUser?.role, rosterMonth]);
 
@@ -1215,9 +1236,9 @@ export function AppProvider({ children }) {
     }
   }
 
-  // Admin saves the edited Weekly Schedule timings. `pickupTimes` / `dropTimes`
-  // are arrays of "hh:mm AM/PM" strings (no "NA"). The live subscription above
-  // then pushes the new lists to every screen. Returns { ok, message }.
+  // Admin saves the edited cab routes. `routes` is an array of route names.
+  // The live subscription above then pushes the new list to every screen.
+  // Returns { ok, message }.
   async function saveTimings(next) {
     try {
       await saveTimingsSvc(next);
@@ -1311,7 +1332,20 @@ export function AppProvider({ children }) {
     // Purely roster-driven. There is no "extra ride" path any more: the company
     // runs the two scheduled rides and nothing else, so nothing an employee can
     // request adds a ride to this list — requests only remove or re-code them.
-    const rides = ridesForDate(dateKey, monthRosters, shiftPolicy, bookings);
+    // Concatenated with the previous month's rosters so a date on or near a
+    // month boundary can still find yesterday's roster row for an overnight
+    // shift's outbound leg (see prevMonthRosters above). ridesForDate() already
+    // filters each roster doc by its own `month` field, so passing in rosters
+    // outside what a given date needs is harmless.
+    const rides = excuseResolvedRequests(
+      ridesForDate(
+        dateKey,
+        [...monthRosters, ...prevMonthRosters],
+        shiftPolicy,
+        bookings
+      ),
+      changeRequests
+    );
 
     // ROUTE COMES FROM THE PROFILE, NOT THE ROSTER SNAPSHOT.
     //
@@ -1440,13 +1474,12 @@ export function AppProvider({ children }) {
       // shift code. Nothing here can create a ride.
       const outcome = 'Resolved';
       if (meta?.effect === EFFECT.CANCEL_DAY) {
-        await resolveCancelDay(req, { actor, bookings, note, recode: meta.recodeTo });
+        await resolveCancelDay(req, { actor, note, recode: meta.recodeTo });
       } else if (meta?.effect === EFFECT.CANCEL_RIDE) {
         await resolveCancelRide(req, { actor, note });
       } else if (meta?.effect === EFFECT.RECODE) {
         await resolveRecode(req, {
           actor,
-          bookings,
           note,
           code: code || req.requestedShiftCode,
         });
@@ -1503,7 +1536,7 @@ export function AppProvider({ children }) {
     ? {
         AddressRequests: addressRequests.filter((r) => r.status === ADDRESS_STATUS.PENDING)
           .length,
-        ChangeRequests: pendingFor(changeRequests, currentUser.role).length,
+        Requests: pendingFor(changeRequests, currentUser.role).length,
       }
     : {};
 
@@ -1560,8 +1593,6 @@ export function AppProvider({ children }) {
     bookings,
     cabs,
     cabCapacity,
-    pickupTimes: timings.pickupTimes,
-    dropTimes: timings.dropTimes,
     routes: timings.routes,
     saveTimings,
     // Shift policy + monthly roster

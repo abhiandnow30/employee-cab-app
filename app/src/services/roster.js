@@ -246,6 +246,19 @@ export function parseRosterFile(data, { year, fileName = '' } = {}) {
     (d) => (d.monthIndex == null || d.monthIndex === monthIndex) && d.day <= daysInMonth
   );
 
+  // A day between 1 and daysInMonth with no usableCols entry at all means its
+  // header cell never parsed as a date — the most common cause is a merged
+  // header cell in the spreadsheet: SheetJS only puts a value in the top-left
+  // cell of a merge, so the other physical column reads as '' and vanishes here
+  // rather than landing in badDateHeaders (which is only for headers that DID
+  // parse, just to the wrong month/day). Every employee's shift code in that
+  // column would otherwise be dropped with nothing telling HR it happened.
+  const foundDays = new Set(usableCols.map((d) => d.day));
+  const missingDayColumns = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    if (!foundDays.has(day)) missingDayColumns.push(day);
+  }
+
   const header = grid[headerIndex];
 
   // The row carrying the DATES is very often NOT the row carrying the LABELS, and it
@@ -449,6 +462,7 @@ export function parseRosterFile(data, { year, fileName = '' } = {}) {
     nameColumnHeading: nameCol >= 0 ? String(labelRow[nameCol] ?? '').trim() : '',
     skippedWeekdayRows,
     badDateHeaders,
+    missingDayColumns,
     // What the header row looked like, for the "we couldn't find X" messages.
     headerCells: header
       .slice(0, 12)
@@ -485,6 +499,10 @@ export const ERROR_KINDS = {
   INVALID_CODE: 'Invalid shift code',
   MISSING_SHIFT: 'Missing shift value',
   BAD_DATE: 'Incorrect dates',
+  // A day whose header cell never parsed as a date at all — usually a merged
+  // header cell in the spreadsheet. Distinct from BAD_DATE, which is a header
+  // that DID parse, just to the wrong month/an out-of-range day.
+  MISSING_DAY_COLUMN: 'Missing day column',
   NO_ACCOUNT: 'No account yet',
   ID_MISMATCH: 'Employee ID does not match',
   // A warning, never an error: the month still imports, but every ride it
@@ -692,6 +710,15 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
   if (parsed.badDateHeaders?.length) {
     fileErrors.push(`${ERROR_KINDS.BAD_DATE}: ${parsed.badDateHeaders.slice(0, 5).join(', ')}`);
   }
+  if (parsed.missingDayColumns?.length) {
+    const plural = parsed.missingDayColumns.length > 1;
+    const days = parsed.missingDayColumns.join(', ');
+    fileErrors.push(
+      `${ERROR_KINDS.MISSING_DAY_COLUMN}: day ${days} of ${parsed.monthLabel} ` +
+        `${plural ? 'have' : 'has'} no column in your sheet (check for a merged header ` +
+        `cell) — nobody's shift code for ${plural ? 'those days' : 'that day'} will be imported.`
+    );
+  }
   if (!parsed.hasNameColumn) {  // eslint-disable-line no-constant-condition
     fileErrors.push(
       'No employee name column found. Add a column headed "Employee Name"' +
@@ -815,21 +842,27 @@ export async function importRoster(report, { uploadedBy, uploadedByName } = {}) 
   };
 
   for (const row of good) {
-    // THE SHEET'S ROUTE COLUMN STICKS TO THE PROFILE.
-    // A route in the sheet used to reach the roster document and stop there, so
-    // HR filling in a Route column changed nothing for anyone next month — and the
-    // coordinator still had unrouted riders. Writing it onto the profile (only
-    // where there isn't one already, so it never overrides a deliberate choice
-    // made in the app) makes one upload route the whole company.
-    const alsoRoute = !row.profileRoute && !!row.sheetRoute;
-    if (writes + (alsoRoute ? 2 : 1) > BATCH_LIMIT) await flush();
+    // THE SHEET IS AUTHORITATIVE FOR THE PROFILE, ON EVERY UPLOAD.
+    // HR's explicit choice: every upload re-syncs name/phone/address/route from
+    // whatever the sheet says for a matched employee, overwriting the profile —
+    // not just filling a gap. A blank cell never erases existing data (there's
+    // nothing to sync from), but a filled one always wins, even over a value an
+    // admin set by hand or approved through Address Requests. Re-uploading last
+    // month's sheet unchanged will re-write the same values, so keep the sheet
+    // itself current — this screen no longer protects against a stale one.
+    const profileUpdates = {};
+    if (row.name) profileUpdates.name = String(row.name).trim();
+    if (row.phone) profileUpdates.phone = String(row.phone).trim();
+    if (row.sheetAddress) profileUpdates.address = String(row.sheetAddress).trim();
+    if (row.sheetRoute) profileUpdates['roster.route'] = row.sheetRoute;
+    const hasProfileUpdate = Object.keys(profileUpdates).length > 0;
 
-    if (alsoRoute) {
-      batch.update(doc(firestore, 'employees', row.employeeId), {
-        'roster.route': String(row.sheetRoute).trim(),
-      });
+    if (writes + (hasProfileUpdate ? 2 : 1) > BATCH_LIMIT) await flush();
+
+    if (hasProfileUpdate) {
+      batch.update(doc(firestore, 'employees', row.employeeId), profileUpdates);
       writes += 1;
-      routed += 1;
+      if (row.sheetRoute) routed += 1;
     }
     batch.set(doc(firestore, ROSTERS, rosterId(report.month, row.employeeId)), {
       employeeId: row.employeeId,

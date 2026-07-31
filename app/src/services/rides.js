@@ -34,6 +34,7 @@
 import { legsForShift, isWorkingCode } from '../data/shifts';
 import { shiftDateKey, timeToMinutes } from '../utils/datetime';
 import { STATUS } from '../data/mockData';
+import { REQUEST_STATUS, EFFECT } from '../data/changeRequests';
 
 export const DIRECTION = {
   IN: 'Home → Office',
@@ -164,6 +165,36 @@ export function ridesForDate(travelDate, rosters, policy, bookings = []) {
       // Same minute (a carpool): keep it stable and readable by name.
       return String(a.employeeName || '').localeCompare(String(b.employeeName || ''));
     });
+}
+
+// Drop rides that a RESOLVED change request already excused, even though no
+// booking document exists to carry a Cancelled status.
+//
+// A ride only becomes a document once it acquires state — a cab assigned, or a
+// cancellation (see the header above). Leave/Absent/Cancel-one-ride are almost
+// always raised BEFORE the coordinator has assigned anything, so resolving one
+// often has nothing to cancel: ridesForDate() would otherwise keep deriving
+// that ride as Pending forever, as if the request had never been resolved.
+//
+// This runs AFTER ridesForDate() rather than folding into it, so the deriver
+// itself still takes no request-shaped argument (see CLAUDE.md) — it only ever
+// REMOVES a ride here, never adds one, so the "no extra-request path" rule
+// stays true of the actual derivation.
+export function excuseResolvedRequests(rides, changeRequests) {
+  if (!rides.length || !changeRequests?.length) return rides;
+
+  const dayOff = new Set(); // `${employeeId}_${shiftDate}` — Leave / Absent
+  const rideOff = new Set(); // rideKey — Cancel one ride
+  changeRequests.forEach((r) => {
+    if (r.status !== REQUEST_STATUS.RESOLVED) return;
+    if (r.effect === EFFECT.CANCEL_DAY) dayOff.add(`${r.employeeId}_${r.date}`);
+    else if (r.effect === EFFECT.CANCEL_RIDE && r.rideKey) rideOff.add(r.rideKey);
+  });
+  if (!dayOff.size && !rideOff.size) return rides;
+
+  return rides.filter(
+    (ride) => !rideOff.has(ride.key) && !dayOff.has(`${ride.employeeId}_${ride.shiftDate}`)
+  );
 }
 
 // The payload for turning a derived ride into a real booking. Mirrors the shape

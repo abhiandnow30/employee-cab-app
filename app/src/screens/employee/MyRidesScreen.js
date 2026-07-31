@@ -42,7 +42,10 @@ export default function MyRidesScreen({ navigation }) {
           </View>
 
           <Text variant="bodyMedium" style={styles.detail}>
-            {item.date} · {item.shift}
+            {/* The shift's own start/end — a deadline (pickup) or
+                earliest-bound (drop), never a promised cab instant; the
+                driver/desk coordinate the exact timing. */}
+            {item.date} · {item.direction === 'Home → Office' ? 'by' : 'after'} {item.shift}
           </Text>
           <Text variant="bodyMedium" style={styles.detail}>
             Pickup: {item.pickup}{pickupSuffix}

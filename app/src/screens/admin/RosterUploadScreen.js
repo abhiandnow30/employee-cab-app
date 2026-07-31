@@ -977,6 +977,15 @@ export default function RosterUploadScreen({ navigation }) {
                 </Text>
               )}
 
+              <View style={styles.overwriteNote}>
+                <MaterialCommunityIcons name="alert-outline" size={15} color={colors.warning} />
+                <Text variant="bodySmall" style={styles.overwriteText}>
+                  Importing overwrites name, phone, address and route on every matched
+                  employee's profile with what this sheet says — including any change
+                  made since the last upload. Make sure the sheet is current first.
+                </Text>
+              </View>
+
               <Divider style={styles.divider} />
               <View style={styles.actions}>
                 <Button mode="outlined" onPress={dismiss} disabled={busy}>
@@ -1173,6 +1182,13 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   draftText: { color: colors.muted, flex: 1, lineHeight: 18 },
+  overwriteNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 12,
+  },
+  overwriteText: { color: colors.warning, flex: 1, lineHeight: 18 },
   waitRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   waitText: { color: colors.muted },
   sheetHint: { color: colors.muted, marginTop: 6, lineHeight: 18 },
