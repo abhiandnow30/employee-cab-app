@@ -19,12 +19,12 @@ function cabIcon(L, label) {
     className: '',
     html:
       `<div style="display:flex;flex-direction:column;align-items:center">` +
-      `<div style="background:#1565C0;color:#fff;width:26px;height:26px;border-radius:50% 50% 50% 0;` +
+      `<div style="background:${colors.primary};color:#fff;width:26px;height:26px;border-radius:50% 50% 50% 0;` +
       `transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);` +
       `display:flex;align-items:center;justify-content:center">` +
       `<span style="transform:rotate(45deg);font-size:13px">🚕</span></div>` +
       `<span style="margin-top:2px;background:#fff;padding:1px 5px;border-radius:6px;font-size:11px;` +
-      `font-weight:600;color:#0D47A1;box-shadow:0 1px 3px rgba(0,0,0,.25);white-space:nowrap">${label}</span>` +
+      `font-weight:600;color:${colors.primaryDark};box-shadow:0 1px 3px rgba(0,0,0,.25);white-space:nowrap">${label}</span>` +
       `</div>`,
     iconSize: [26, 42],
     iconAnchor: [13, 26],

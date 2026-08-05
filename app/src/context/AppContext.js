@@ -18,6 +18,9 @@ import {
 import {
   watchAuth, signIn, signUp, signOutUser, friendlyAuthError,
   changePassword as changePasswordSvc, sendPasswordReset,
+  signInWithMicrosoftPopup, signInWithMicrosoftCredential,
+  linkMicrosoftPopup, linkMicrosoftCredential, unlinkMicrosoft as unlinkMicrosoftSvc,
+  isMicrosoftLinked,
 } from '../services/auth';
 import {
   getOrCreateProfile, setPendingProfile, subscribeProfile, adminUpdateEmployee,
@@ -58,7 +61,8 @@ import { subscribeShiftPolicy, saveShiftPolicy } from '../services/shifts';
 import { DEFAULT_SHIFT_POLICY } from '../data/shifts';
 import {
   subscribeMonthRosters, subscribeMyRosters, subscribeImportHistory,
-  importRoster as importRosterSvc, setRosterDay,
+  importRoster as importRosterSvc, setRosterDay, deleteImportHistoryEntry,
+  addSingleEmployeeRoster as addSingleEmployeeRosterSvc,
 } from '../services/roster';
 import { ridesForDate, bookingFromRide, excuseResolvedRequests } from '../services/rides';
 import {
@@ -234,12 +238,69 @@ export function AppProvider({ children }) {
       ? { id: firebaseUser.uid, uid: firebaseUser.uid, email: firebaseUser.email, ...profile }
       : null;
 
+  // Whether THIS session's Firebase user already has a Microsoft credential
+  // linked — read straight off the auth user, not stored anywhere ourselves.
+  const microsoftLinked = isMicrosoftLinked(firebaseUser);
+
   // Sign in with email + password. Firebase validates the credentials against
   // its user store; on success the auth listener above loads the profile and
   // the app unlocks automatically.
   async function login(email, password) {
     try {
       await signIn(email, password);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  // --- Microsoft (Entra ID) sign-in — web ----------------------------------
+  // Added alongside email/password, never instead of it. A brand-new
+  // employee's account is always created by the admin first (Employee
+  // Management); Microsoft only becomes usable for THEM after they log in
+  // once normally and link it from Profile — see linkWithMicrosoftPopup.
+  async function loginWithMicrosoftPopup() {
+    try {
+      await signInWithMicrosoftPopup();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  async function linkWithMicrosoftPopup() {
+    try {
+      await linkMicrosoftPopup();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  // --- Microsoft (Entra ID) sign-in — native (phone) -----------------------
+  // `idToken`/`rawNonce` come from useMicrosoftAuthRequest's promptMicrosoftSignIn()
+  // — see that hook for why both travel together.
+  async function loginWithMicrosoftCredential(idToken, rawNonce) {
+    try {
+      await signInWithMicrosoftCredential(idToken, rawNonce);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  async function linkWithMicrosoftCredential(idToken, rawNonce) {
+    try {
+      await linkMicrosoftCredential(idToken, rawNonce);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  async function unlinkMicrosoft() {
+    try {
+      await unlinkMicrosoftSvc();
       return { ok: true };
     } catch (e) {
       return { ok: false, message: friendlyAuthError(e) };
@@ -1261,7 +1322,7 @@ export function AppProvider({ children }) {
   // --- Monthly roster import (admin) --------------------------------------
   // `report` is the validated result from validateRoster(). Only the clean rows
   // are written; the rejects come back to HR to fix and re-upload.
-  async function importRoster(report) {
+  async function importRoster(report, { onProgress } = {}) {
     if (currentUser?.role !== 'admin') {
       return { ok: false, message: 'Only HR/Admin can import a roster.' };
     }
@@ -1269,12 +1330,47 @@ export function AppProvider({ children }) {
       const res = await importRosterSvc(report, {
         uploadedBy: currentUser.uid,
         uploadedByName: currentUser.name || currentUser.email,
+        onProgress,
       });
       // Jump the desk to the month that was just imported.
       setRosterMonth(report.month);
       return { ok: true, ...res };
     } catch (e) {
       return failure(e, 'Could not import the roster.');
+    }
+  }
+
+  // Add one employee's roster for a day range, without a spreadsheet — the
+  // walk-in case. Admin-only: the security rules only let admin CREATE a
+  // rosters/<month>_<uid> doc (a coordinator may only edit `days` on one that
+  // already exists), so this mirrors importRoster's gate exactly.
+  async function addSingleEmployeeRoster(input) {
+    if (currentUser?.role !== 'admin') {
+      return { ok: false, message: 'Only HR/Admin can add a roster row.' };
+    }
+    try {
+      const res = await addSingleEmployeeRosterSvc(input, {
+        uploadedBy: currentUser.uid,
+        uploadedByName: currentUser.name || currentUser.email,
+      });
+      setRosterMonth(input.month);
+      return { ok: true, ...res };
+    } catch (e) {
+      return failure(e, 'Could not add that roster row.');
+    }
+  }
+
+  // Remove one row from Import history. Admin-only, same as importRoster —
+  // it's the log of an upload, not the roster data itself (see roster.js).
+  async function deleteImportHistory(importId) {
+    if (currentUser?.role !== 'admin') {
+      return { ok: false, message: 'Only HR/Admin can remove an import record.' };
+    }
+    try {
+      await deleteImportHistoryEntry(importId);
+      return { ok: true };
+    } catch (e) {
+      return failure(e, 'Could not remove that record.');
     }
   }
 
@@ -1574,6 +1670,10 @@ export function AppProvider({ children }) {
 
   const value = {
     currentUser,
+    // Raw Firebase auth user — for the rare screen that needs auth identity
+    // when there's no employee profile yet (e.g. UnprovisionedScreen telling
+    // a Microsoft-only sign-in apart from a genuinely unprovisioned account).
+    firebaseUser,
     authReady,
     profileMissing,
     profileError,
@@ -1586,6 +1686,12 @@ export function AppProvider({ children }) {
     dismissDataError: () => setDataError(''),
     subscribeImportHistory,
     login,
+    loginWithMicrosoftPopup,
+    loginWithMicrosoftCredential,
+    linkWithMicrosoftPopup,
+    linkWithMicrosoftCredential,
+    unlinkMicrosoft,
+    microsoftLinked,
     signup,
     logout,
     changePassword,
@@ -1603,6 +1709,8 @@ export function AppProvider({ children }) {
     setRosterMonth,
     monthRosters,
     importRoster,
+    addSingleEmployeeRoster,
+    deleteImportHistory,
     updateRosterDay,
     // Pickup routes — what the coordinator groups the day by
     employees,

@@ -6,13 +6,18 @@
 
 import React, { useState, useRef } from 'react';
 import { StyleSheet, View, Image, KeyboardAvoidingView, Platform } from 'react-native';
-import { Text, TextInput, Button, HelperText, Card } from 'react-native-paper';
+import { Text, TextInput, Button, HelperText, Card, Divider } from 'react-native-paper';
 import { useApp } from '../context/AppContext';
 import { COMPANY_NAME, companyLogo } from '../branding';
 import { colors } from '../theme';
+import useMicrosoftAuthRequest from '../utils/useMicrosoftAuthRequest';
 
 export default function LoginScreen({ navigation }) {
-  const { login, resetPassword } = useApp();
+  const { login, resetPassword, loginWithMicrosoftPopup, loginWithMicrosoftCredential } = useApp();
+  // Only does anything on native — see the hook's own header comment. Calling
+  // it unconditionally (web included) is fine; it just never gets prompted.
+  const { promptMicrosoftSignIn, ready: microsoftReady } = useMicrosoftAuthRequest();
+  const [microsoftBusy, setMicrosoftBusy] = useState(false);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -38,6 +43,33 @@ export default function LoginScreen({ navigation }) {
     }
     // Success: the auth listener loads the profile and App.js switches to the
     // right home screen automatically — no further navigation needed here.
+  }
+
+  // Web uses a plain popup; a phone has no popup, so it drives the OAuth
+  // flow itself via useMicrosoftAuthRequest and hands Firebase the resulting
+  // token. Either way, success flows through the same auth listener as
+  // email/password — same as handleLogin above.
+  async function handleMicrosoftLogin() {
+    setError('');
+    setInfo('');
+    setMicrosoftBusy(true);
+    try {
+      const result =
+        Platform.OS === 'web'
+          ? await loginWithMicrosoftPopup()
+          : await (async () => {
+              const token = await promptMicrosoftSignIn();
+              if (!token) return { ok: true }; // cancelled — not an error
+              return loginWithMicrosoftCredential(token.idToken, token.rawNonce);
+            })();
+      if (!result.ok && result.message) {
+        setError(result.message);
+      }
+    } catch (e) {
+      setError(e.message || 'Could not sign in with Microsoft.');
+    } finally {
+      setMicrosoftBusy(false);
+    }
   }
 
   // Emails a password-reset link to the address typed in the Email field.
@@ -148,6 +180,27 @@ export default function LoginScreen({ navigation }) {
               Forgot password?
             </Button>
 
+            <View style={styles.dividerRow}>
+              <Divider style={styles.dividerLine} />
+              <Text variant="bodySmall" style={styles.dividerText}>or</Text>
+              <Divider style={styles.dividerLine} />
+            </View>
+
+            {/* Only usable once an admin has created the account (email/password)
+                AND the employee has linked Microsoft from their Profile screen —
+                see ProfileScreen.js. A never-linked Microsoft account signing in
+                here lands on UnprovisionedScreen with an explanation of that. */}
+            <Button
+              mode="outlined"
+              icon="microsoft"
+              onPress={handleMicrosoftLogin}
+              style={styles.button}
+              loading={microsoftBusy}
+              disabled={microsoftBusy || loading || (Platform.OS !== 'web' && !microsoftReady)}
+            >
+              Sign in with Microsoft
+            </Button>
+
             {/* Drivers register themselves; employees are added by the transport
                 desk. Without this link the sign-up screen was only reachable by
                 typing its URL, so on a phone a driver could never create an
@@ -197,6 +250,9 @@ const styles = StyleSheet.create({
   error: { marginTop: -2, marginBottom: 2 },
   button: { marginTop: 6, paddingVertical: 2, borderRadius: 8 },
   link: { marginTop: 4 },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10, marginBottom: 4, gap: 8 },
+  dividerLine: { flex: 1 },
+  dividerText: { color: colors.muted },
   signupRow: {
     flexDirection: 'row',
     alignItems: 'center',

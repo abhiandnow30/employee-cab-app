@@ -27,7 +27,7 @@
 
 import {
   collection, doc, getDocs, setDoc, onSnapshot, query, where, orderBy, limit,
-  writeBatch, serverTimestamp, addDoc,
+  writeBatch, serverTimestamp, addDoc, deleteDoc,
 } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 import { firestore } from './firebase';
@@ -797,8 +797,10 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
 // Write the valid rows. Existing documents for the same employee+month are
 // REPLACED, so a corrected re-upload converges instead of duplicating.
 // Also records the run in rosterImports for the history screen.
+// `onProgress(done, total)` fires after each committed batch, in rows — a
+// 250-row roster is one batch (one call), a 1000+ row one reports as it goes.
 // Returns { imported, skipped, importId }.
-export async function importRoster(report, { uploadedBy, uploadedByName } = {}) {
+export async function importRoster(report, { uploadedBy, uploadedByName, onProgress } = {}) {
   if (!firestore) throw new Error('Backend not configured.');
   const good = report.rows.filter((r) => r.valid);
   if (!good.length) throw new Error('Nothing to import — every row has an error.');
@@ -839,6 +841,7 @@ export async function importRoster(report, { uploadedBy, uploadedByName } = {}) 
     batch = writeBatch(firestore);
     writes = 0;
     pendingRows = 0;
+    onProgress?.(imported, good.length);
   };
 
   for (const row of good) {
@@ -944,6 +947,15 @@ export function subscribeImportHistory(cb, onError) {
   );
 }
 
+// Remove one entry from Import history. This only deletes the log record of
+// the upload — the roster rows it wrote (rosters/<month>_<uid>) are untouched,
+// so nobody's shifts or already-generated rides disappear. It's a cleanup of
+// the audit trail, not an undo of the import itself.
+export async function deleteImportHistoryEntry(importId) {
+  if (!firestore) throw new Error('Backend not configured.');
+  return deleteDoc(doc(firestore, IMPORTS, importId));
+}
+
 // Change one employee's code for one day — how an approved leave / shift change
 // gets written back onto the roster. `day` is "01".."31".
 export async function setRosterDay(month, employeeId, day, code) {
@@ -953,6 +965,77 @@ export async function setRosterDay(month, employeeId, day, code) {
     { days: { [day]: code }, updatedAt: serverTimestamp() },
     { merge: true }
   );
+}
+
+// --- Manual single-employee add (no spreadsheet) ----------------------------
+
+// Writes ONE employee's roster for a range of days, without a spreadsheet —
+// for the walk-in case: someone needs a cab arranged for the rest of the
+// month and re-uploading the whole sheet (or asking HR to add a row and
+// re-import) is overkill for one person.
+//
+// Writes the SAME document shape importRoster() writes per row (month,
+// employeeId, employeeName, empId, route, address), so this employee's rides
+// generate identically whether their row came from a sheet or was added by
+// hand here — nothing downstream needs to know which. `{merge: true}` means
+// an existing partial roster for this employee/month gets these days merged
+// in rather than wiped.
+//
+// Also logs a rosterImports entry (status 'imported', fileName says "Manual
+// entry") so this write shows up in Import history exactly like a real
+// upload — otherwise it would be an invisible way to change someone's roster.
+// Returns { importId, daysWritten }.
+export async function addSingleEmployeeRoster(
+  { month, monthLabel, employee, startDay, endDay, code },
+  { uploadedBy, uploadedByName } = {}
+) {
+  if (!firestore) throw new Error('Backend not configured.');
+  if (!employee?.uid) throw new Error('Pick an employee first.');
+  if (!code) throw new Error('Pick a shift code first.');
+  if (!(startDay >= 1) || !(endDay >= startDay)) {
+    throw new Error('Pick a valid day range.');
+  }
+
+  const days = {};
+  for (let d = startDay; d <= endDay; d += 1) {
+    days[String(d).padStart(2, '0')] = code;
+  }
+
+  const importRef = doc(collection(firestore, IMPORTS));
+  const batch = writeBatch(firestore);
+  batch.set(importRef, {
+    month,
+    monthLabel,
+    fileName: `Manual entry — ${employee.name || 'employee'}`,
+    uploadedBy: uploadedBy || null,
+    uploadedByName: uploadedByName || '',
+    uploadedAt: serverTimestamp(),
+    total: 1,
+    valid: 1,
+    errorCount: 0,
+    errorSummary: {},
+    status: 'imported',
+    importedCount: 1,
+    routedCount: 0,
+  });
+  batch.set(
+    doc(firestore, ROSTERS, rosterId(month, employee.uid)),
+    {
+      employeeId: employee.uid,
+      employeeName: employee.name || '',
+      empId: employee.empId || '',
+      month,
+      days,
+      route: employee.roster?.route || null,
+      address: employee.address || '',
+      importId: importRef.id,
+      importedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+  await batch.commit();
+
+  return { importId: importRef.id, daysWritten: Object.keys(days).length };
 }
 
 // --- Sample template -------------------------------------------------------

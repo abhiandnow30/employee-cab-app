@@ -30,7 +30,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View, Platform, ScrollView } from 'react-native';
 import {
   Text, Card, Button, Chip, Divider, DataTable, HelperText, Snackbar,
-  ActivityIndicator, IconButton,
+  ActivityIndicator, IconButton, Portal, Dialog, Tooltip, ProgressBar,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
@@ -44,7 +44,7 @@ import {
   saveDraft, loadDraft, clearDraft, describeAge, encodeBytes, decodeBytes,
   openOriginalFile,
 } from '../../utils/rosterDraft';
-import { colors } from '../../theme';
+import { colors, spacing } from '../../theme';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -57,15 +57,18 @@ function thisYear() {
   return new Date().getFullYear();
 }
 
-// A short "07 Jul 2026, 14:32" for the import history.
-function formatWhen(ts) {
+// Just the date, for the Import history table — "30 Jul 2026".
+function formatDateOnly(ts) {
   if (!ts?.seconds) return '';
   const d = new Date(ts.seconds * 1000);
-  return `${String(d.getDate()).padStart(2, '0')} ${MONTH_NAMES[d.getMonth()].slice(0, 3)} ${d.getFullYear()}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${String(d.getDate()).padStart(2, '0')} ${MONTH_NAMES[d.getMonth()].slice(0, 3)} ${d.getFullYear()}`;
 }
 
 export default function RosterUploadScreen({ navigation }) {
-  const { shiftPolicy, importRoster, subscribeImportHistory, routeOptions } = useApp();
+  const {
+    shiftPolicy, importRoster, subscribeImportHistory, routeOptions, deleteImportHistory,
+    addSingleEmployeeRoster,
+  } = useApp();
 
   const [employees, setEmployees] = useState([]);
   // Validation is meaningless until the employee directory has arrived — against
@@ -82,7 +85,19 @@ export default function RosterUploadScreen({ navigation }) {
   const [error, setError] = useState('');
   const [snack, setSnack] = useState('');
   const [dragging, setDragging] = useState(false);
+  // "Add single employee" — one roster row for a walk-in, no spreadsheet.
+  const [singleEmployeeUid, setSingleEmployeeUid] = useState(null);
+  const [singleYear, setSingleYear] = useState(() => thisYear());
+  const [singleMonth, setSingleMonth] = useState(() => new Date().getMonth() + 1); // 1-12
+  const [singleCode, setSingleCode] = useState(null);
+  const [singleStartDay, setSingleStartDay] = useState(() => new Date().getDate());
+  const [singleEndDay, setSingleEndDay] = useState(null); // filled in by the effect below
+  const [singleBusy, setSingleBusy] = useState(false);
   const [history, setHistory] = useState([]);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [deleteFor, setDeleteFor] = useState(null); // history entry pending removal confirmation
+  const [deleting, setDeleting] = useState(false);
+  const [importProgress, setImportProgress] = useState(null); // { done, total } while writing
   const [showAllErrors, setShowAllErrors] = useState(false);
   // Closed by default. This grid is a diagnostic for "did you read my file
   // correctly?", not a spreadsheet viewer — Open in Excel is for reading the file.
@@ -90,6 +105,10 @@ export default function RosterUploadScreen({ navigation }) {
   const [showAllSheetRows, setShowAllSheetRows] = useState(false);
   // The original bytes, kept so the file itself can be opened in Excel.
   const [fileBytes, setFileBytes] = useState(null);
+  // "How this works" — explains the roster-driven model in plain language.
+  // This screen has real hidden rules (rides are never booked directly, a
+  // re-upload overwrites profile data) that a new admin has no way to guess.
+  const [helpOpen, setHelpOpen] = useState(false);
   // Bulk-provisioning the people the sheet names who have no account yet.
   const [inviting, setInviting] = useState(false);
   const [inviteProgress, setInviteProgress] = useState(null); // { done, total, label }
@@ -166,6 +185,15 @@ export default function RosterUploadScreen({ navigation }) {
     );
     return unsub;
   }, [subscribeImportHistory]);
+
+  // Keep the "add single employee" day range inside the picked month — e.g.
+  // switching from July (31 days) to a month with fewer days shouldn't leave
+  // day 31 selected somewhere that no longer exists.
+  useEffect(() => {
+    const daysInMonth = new Date(singleYear, singleMonth, 0).getDate();
+    setSingleStartDay((d) => Math.min(d, daysInMonth));
+    setSingleEndDay((d) => (d == null ? daysInMonth : Math.min(d, daysInMonth)));
+  }, [singleYear, singleMonth]);
 
   const yearOptions = useMemo(() => {
     const y = thisYear();
@@ -326,8 +354,12 @@ export default function RosterUploadScreen({ navigation }) {
   async function doImport() {
     if (!report?.canImport) return;
     setBusy(true);
-    const res = await importRoster(report);
+    setImportProgress({ done: 0, total: report.valid });
+    const res = await importRoster(report, {
+      onProgress: (done, total) => setImportProgress({ done, total }),
+    });
     setBusy(false);
+    setImportProgress(null);
     if (res?.ok) {
       setSnack(
         `Imported ${res.imported} employee${res.imported === 1 ? '' : 's'} for ${report.monthLabel}` +
@@ -342,6 +374,50 @@ export default function RosterUploadScreen({ navigation }) {
     } else {
       setError(res?.message || 'Could not import the roster.');
     }
+  }
+
+  // Add one employee's roster for a day range — the walk-in case, no
+  // spreadsheet. Shows up in Import history exactly like a real upload.
+  async function submitSingleEmployee() {
+    const emp = employees.find((e) => e.uid === singleEmployeeUid);
+    if (!emp || !singleCode) return;
+    if (singleEndDay < singleStartDay) {
+      setError('End day must be on or after the start day.');
+      return;
+    }
+    setSingleBusy(true);
+    const month = `${singleYear}-${String(singleMonth).padStart(2, '0')}`;
+    const monthLabel = `${MONTH_NAMES[singleMonth - 1].slice(0, 3)} ${singleYear}`;
+    const res = await addSingleEmployeeRoster({
+      month,
+      monthLabel,
+      employee: emp,
+      startDay: singleStartDay,
+      endDay: singleEndDay,
+      code: singleCode,
+    });
+    setSingleBusy(false);
+    if (res?.ok) {
+      const codeLabel = shiftPolicy?.[singleCode]?.label || singleCode;
+      setSnack(
+        `Added ${codeLabel} for ${emp.name}, day ${singleStartDay}–${singleEndDay} of ${monthLabel}.`
+      );
+      setSingleEmployeeUid(null);
+      setSingleCode(null);
+    } else {
+      setError(res?.message || 'Could not add that roster row.');
+    }
+  }
+
+  // Removes one Import history row — the log entry only. The roster rows it
+  // wrote stay put, so nobody's shifts or already-generated rides disappear.
+  async function confirmDeleteHistory() {
+    if (!deleteFor) return;
+    setDeleting(true);
+    const res = await deleteImportHistory(deleteFor.id);
+    setDeleting(false);
+    setDeleteFor(null);
+    if (!res?.ok) setError(res?.message || 'Could not remove that record.');
   }
 
   // --- Web-only guard -------------------------------------------------------
@@ -384,35 +460,85 @@ export default function RosterUploadScreen({ navigation }) {
       ? report.rows
       : report.rows.slice(0, 15)
     : [];
+  const shownHistory = showAllHistory ? history : history.slice(0, 5);
+
+  const singleDaysInMonth = new Date(singleYear, singleMonth, 0).getDate();
+  const singleDayOptions = Array.from({ length: singleDaysInMonth }, (_, i) => i + 1);
+  const employeeOptions = employees
+    .filter((e) => e.role === 'employee')
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .map((e) => e.uid);
+  const employeeLabel = (uid) => {
+    const emp = employees.find((e) => e.uid === uid);
+    if (!emp) return 'Select employee';
+    return emp.empId ? `${emp.name} · ${emp.empId}` : emp.name;
+  };
 
   return (
-    <ScrollView contentContainerStyle={styles.scroll}>
+    <ScrollView style={styles.page} contentContainerStyle={styles.scroll}>
       <View style={styles.col}>
-        {/* ---- Step 1: choose a file ---- */}
-        <Card mode="outlined" style={styles.card}>
-          <Card.Content>
-            <Text variant="titleMedium">Upload monthly shift roster</Text>
-            <Text variant="bodySmall" style={styles.sub}>
-              One row per employee, one column per day. Rides are generated from
-              this — employees don't submit shifts.
-            </Text>
-
-            <View style={styles.yearRow}>
-              <Text variant="labelLarge" style={styles.yearLabel}>
-                Year
+        <View style={styles.pageHeader}>
+          <View style={styles.pageHeaderRow}>
+            <View style={styles.pageHeaderText}>
+              <Text variant="headlineSmall" style={styles.pageTitle}>
+                Upload Monthly Roster
               </Text>
-              <View style={styles.yearPicker}>
-                <Dropdown
-                  value={year}
-                  options={yearOptions}
-                  onSelect={setYear}
-                  format={(y) => String(y)}
-                />
-              </View>
-              <Text variant="bodySmall" style={styles.yearHint}>
-                The month comes from the date headers in the file.
+              <Text variant="bodyMedium" style={styles.pageSubtitle}>
+                Upload the monthly shift roster for employees — rides are generated
+                from it automatically.
               </Text>
             </View>
+            <Button
+              mode="text"
+              icon="help-circle-outline"
+              compact
+              onPress={() => setHelpOpen(true)}
+            >
+              How this works
+            </Button>
+          </View>
+        </View>
+
+        {/* ---- Step 1: choose a file ---- */}
+        <Card mode="elevated" style={styles.card}>
+          <Card.Content>
+            <SectionHeader icon="file-upload-outline" title="Choose a file" />
+
+            <View style={styles.fieldsRow}>
+              <View style={styles.fieldGroup}>
+                <Text variant="labelLarge" style={styles.yearLabel}>
+                  Year
+                </Text>
+                <View style={styles.yearPicker}>
+                  <Dropdown
+                    value={year}
+                    options={yearOptions}
+                    onSelect={setYear}
+                    format={(y) => String(y)}
+                  />
+                </View>
+              </View>
+              <View style={styles.fieldGroup}>
+                <Text variant="labelLarge" style={styles.yearLabel}>
+                  Month
+                </Text>
+                <View style={styles.yearPicker}>
+                  {/* Read-only — the month always comes from the file's own date
+                      headers, never from a pick here. Shows what was detected
+                      once a file has been read. */}
+                  <Dropdown
+                    value={report ? report.monthLabel : null}
+                    options={report ? [report.monthLabel] : []}
+                    onSelect={() => {}}
+                    placeholder="Detected from file"
+                    disabled
+                  />
+                </View>
+              </View>
+            </View>
+            <Text variant="bodySmall" style={styles.yearHint}>
+              The month is read from the file's own date headers, not picked here.
+            </Text>
 
             {/* Drop zone. `dataSet` reaches the DOM node on react-native-web. */}
             <View
@@ -531,7 +657,9 @@ export default function RosterUploadScreen({ navigation }) {
               </View>
             ) : null}
 
-            {/* Shift-code legend, straight from the live policy. */}
+            {/* Shift-code legend, straight from the live policy. Just the name on
+                the badge — hover (or tap, on a phone) to see the timing, so the
+                row itself doesn't turn into a wall of text. */}
             <Divider style={styles.divider} />
             <Text variant="labelLarge" style={styles.legendLabel}>
               Shift codes
@@ -539,15 +667,17 @@ export default function RosterUploadScreen({ navigation }) {
             <View style={styles.legend}>
               {ALL_SHIFT_CODES.map((code) => {
                 const c = SHIFT_COLORS[code] || { bg: '#EEE', fg: colors.text };
+                const label = shiftPolicy?.[code]?.label || code;
                 return (
-                  <Chip
-                    key={code}
-                    compact
-                    style={{ backgroundColor: c.bg }}
-                    textStyle={{ color: c.fg, fontSize: 12 }}
-                  >
-                    {code} — {shiftSummary(shiftPolicy, code)}
-                  </Chip>
+                  <Tooltip key={code} title={shiftSummary(shiftPolicy, code)}>
+                    <Chip
+                      compact
+                      style={[styles.shiftBadge, { backgroundColor: c.bg }]}
+                      textStyle={{ color: c.fg, fontSize: 12, fontWeight: '600' }}
+                    >
+                      {label}
+                    </Chip>
+                  </Tooltip>
                 );
               })}
             </View>
@@ -561,10 +691,127 @@ export default function RosterUploadScreen({ navigation }) {
           </Card.Content>
         </Card>
 
+        {/* ---- Add a single employee's roster, no spreadsheet ----------------
+            For the walk-in: someone needs a cab arranged for the rest of the
+            month and editing + re-uploading the whole sheet is overkill for
+            one person. Writes the same roster shape a real import would, so
+            it shows up in Import history exactly like one. */}
+        <Card mode="elevated" style={styles.card}>
+          <Card.Content>
+            <SectionHeader
+              icon="account-plus-outline"
+              title="Add a single employee"
+              subtitle="For a walk-in mid-month — one employee, one shift, a day range. Skips the spreadsheet."
+            />
+
+            <View style={styles.soloFieldGroup}>
+              <Text variant="labelLarge" style={styles.yearLabel}>
+                Employee
+              </Text>
+              <Dropdown
+                compact={false}
+                value={singleEmployeeUid}
+                options={employeeOptions}
+                onSelect={setSingleEmployeeUid}
+                format={employeeLabel}
+                placeholder={
+                  employeesLoaded && employeeOptions.length === 0
+                    ? 'No employees on file yet'
+                    : 'Select employee'
+                }
+                disabled={employeeOptions.length === 0}
+              />
+            </View>
+
+            <View style={styles.fieldsRow}>
+              <View style={styles.fieldGroup}>
+                <Text variant="labelLarge" style={styles.yearLabel}>
+                  Year
+                </Text>
+                <View style={styles.yearPicker}>
+                  <Dropdown
+                    value={singleYear}
+                    options={yearOptions}
+                    onSelect={setSingleYear}
+                    format={(y) => String(y)}
+                  />
+                </View>
+              </View>
+              <View style={styles.fieldGroup}>
+                <Text variant="labelLarge" style={styles.yearLabel}>
+                  Month
+                </Text>
+                <View style={styles.yearPicker}>
+                  <Dropdown
+                    value={singleMonth}
+                    options={Array.from({ length: 12 }, (_, i) => i + 1)}
+                    onSelect={setSingleMonth}
+                    format={(m) => MONTH_NAMES[m - 1]}
+                  />
+                </View>
+              </View>
+              <View style={styles.fieldGroup}>
+                <Text variant="labelLarge" style={styles.yearLabel}>
+                  Shift
+                </Text>
+                <View style={styles.yearPicker}>
+                  <Dropdown
+                    value={singleCode}
+                    options={ALL_SHIFT_CODES}
+                    onSelect={setSingleCode}
+                    format={(c) => shiftPolicy?.[c]?.label || c}
+                    placeholder="Select shift"
+                  />
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.fieldsRow}>
+              <View style={styles.fieldGroup}>
+                <Text variant="labelLarge" style={styles.yearLabel}>
+                  From day
+                </Text>
+                <View style={styles.dayPicker}>
+                  <Dropdown
+                    value={singleStartDay}
+                    options={singleDayOptions}
+                    onSelect={setSingleStartDay}
+                    format={(d) => String(d)}
+                  />
+                </View>
+              </View>
+              <View style={styles.fieldGroup}>
+                <Text variant="labelLarge" style={styles.yearLabel}>
+                  To day
+                </Text>
+                <View style={styles.dayPicker}>
+                  <Dropdown
+                    value={singleEndDay}
+                    options={singleDayOptions}
+                    onSelect={setSingleEndDay}
+                    format={(d) => String(d)}
+                  />
+                </View>
+              </View>
+            </View>
+
+            <Button
+              mode="contained"
+              icon="calendar-plus"
+              onPress={submitSingleEmployee}
+              loading={singleBusy}
+              disabled={singleBusy || !singleEmployeeUid || !singleCode}
+              style={styles.singleAddBtn}
+            >
+              Add roster row
+            </Button>
+          </Card.Content>
+        </Card>
+
         {/* A sheet is in hand but the employee directory hasn't arrived, so there
             is nothing honest to say about it yet. */}
         {parsed && !report ? (
-          <Card mode="outlined" style={styles.card}>
+          <Card mode="elevated" style={styles.card}>
             <Card.Content style={styles.waitRow}>
               <ActivityIndicator size={18} />
               <Text variant="bodyMedium" style={styles.waitText}>
@@ -582,26 +829,23 @@ export default function RosterUploadScreen({ navigation }) {
             whether the file had been understood at all. This is the file: every
             row, every day, in the app's own words. -------------------------- */}
         {report ? (
-          <Card mode="outlined" style={styles.card}>
+          <Card mode="elevated" style={styles.card}>
             <Card.Content>
-              <View style={styles.rowBetween}>
-                <View style={styles.summaryHead}>
-                  <Text variant="titleMedium">What the app read from your file</Text>
-                  <Text variant="bodySmall" style={styles.sub}>
-                    {report.total} row{report.total === 1 ? '' : 's'} ·{' '}
-                    {report.dayKeys.length} day
-                    {report.dayKeys.length === 1 ? '' : 's'} · {report.monthLabel} · to
-                    read the spreadsheet itself use Open in Excel above
-                  </Text>
-                </View>
-                <Button
-                  mode="text"
-                  icon={showSheet ? 'chevron-up' : 'chevron-down'}
-                  onPress={() => setShowSheet((v) => !v)}
-                >
-                  {showSheet ? 'Hide' : 'Show'}
-                </Button>
-              </View>
+              <SectionHeader
+                icon="table-eye"
+                title="What the app read from your file"
+                subtitle={`${report.total} row${report.total === 1 ? '' : 's'} · ${report.dayKeys.length} day${report.dayKeys.length === 1 ? '' : 's'} · ${report.monthLabel} · to read the spreadsheet itself use Open in Excel above`}
+                right={
+                  <Button
+                    mode="text"
+                    compact
+                    icon={showSheet ? 'chevron-up' : 'chevron-down'}
+                    onPress={() => setShowSheet((v) => !v)}
+                  >
+                    {showSheet ? 'Hide' : 'Show'}
+                  </Button>
+                }
+              />
 
               {/* Always visible, even with the grid closed. "I added an Employee ID
                   column, why does it say missing?" is answered here in one line:
@@ -727,15 +971,13 @@ export default function RosterUploadScreen({ navigation }) {
             HR has to fill in by hand. Nobody is issued a password: each account is
             created with a throwaway one and Firebase emails a set-your-own link. */}
         {report && (report.creatableCount > 0 || report.uncreatableCount > 0) ? (
-          <Card mode="outlined" style={styles.card}>
+          <Card mode="elevated" style={styles.card}>
             <Card.Content>
-              <Text variant="titleMedium">
-                {report.creatableCount + report.uncreatableCount} in this sheet have no
-                account yet
-              </Text>
-              <Text variant="bodySmall" style={styles.sub}>
-                Their shifts can't import until they exist as employees.
-              </Text>
+              <SectionHeader
+                icon="account-alert-outline"
+                title={`${report.creatableCount + report.uncreatableCount} in this sheet have no account yet`}
+                subtitle="Their shifts can't import until they exist as employees."
+              />
 
               {report.creatableCount > 0 ? (
                 <>
@@ -838,17 +1080,14 @@ export default function RosterUploadScreen({ navigation }) {
 
         {/* ---- Step 2: validation summary ---- */}
         {report ? (
-          <Card mode="outlined" style={styles.card}>
+          <Card mode="elevated" style={styles.card}>
             <Card.Content>
-              <View style={styles.rowBetween}>
-                <View style={styles.summaryHead}>
-                  <Text variant="titleMedium">Validation summary</Text>
-                  <Text variant="bodySmall" style={styles.sub}>
-                    {report.fileName} · {report.monthLabel}
-                  </Text>
-                </View>
-                <IconButton icon="close" onPress={dismiss} />
-              </View>
+              <SectionHeader
+                icon="clipboard-check-outline"
+                title="Validation summary"
+                subtitle={`${report.fileName} · ${report.monthLabel}`}
+                right={<IconButton icon="close" onPress={dismiss} />}
+              />
 
               <View style={styles.stats}>
                 <Stat label="Total employees" value={report.total} />
@@ -987,25 +1226,37 @@ export default function RosterUploadScreen({ navigation }) {
               </View>
 
               <Divider style={styles.divider} />
-              <View style={styles.actions}>
-                <Button mode="outlined" onPress={dismiss} disabled={busy}>
+              <Button
+                mode="contained"
+                icon="database-import"
+                onPress={doImport}
+                loading={busy}
+                disabled={busy || !report.canImport}
+                style={styles.importBtn}
+                contentStyle={styles.importBtnContent}
+              >
+                {!report.canImport
+                  ? 'Nothing to import'
+                  : report.errorCount
+                  ? `Import ${report.valid} valid, skip ${report.errorCount}`
+                  : `Import ${report.valid} employees`}
+              </Button>
+              {importProgress ? (
+                <View style={styles.progressWrap}>
+                  <ProgressBar
+                    progress={importProgress.total ? importProgress.done / importProgress.total : 0}
+                    color={colors.primary}
+                    style={styles.progressBar}
+                  />
+                  <Text variant="bodySmall" style={styles.progressText}>
+                    Importing {importProgress.done} of {importProgress.total} rows…
+                  </Text>
+                </View>
+              ) : (
+                <Button mode="text" onPress={dismiss} disabled={busy} style={styles.cancelLink}>
                   Cancel
                 </Button>
-                <Button
-                  mode="contained"
-                  icon="database-import"
-                  onPress={doImport}
-                  loading={busy}
-                  disabled={busy || !report.canImport}
-                  style={styles.importBtn}
-                >
-                  {!report.canImport
-                    ? 'Nothing to import'
-                    : report.errorCount
-                    ? `Import ${report.valid} valid, skip ${report.errorCount}`
-                    : `Import ${report.valid} employees`}
-                </Button>
-              </View>
+              )}
               {!report.canImport ? (
                 <View style={styles.blockedBox}>
                   <MaterialCommunityIcons name="cancel" size={16} color={colors.danger} />
@@ -1039,54 +1290,192 @@ export default function RosterUploadScreen({ navigation }) {
 
 
         {/* ---- Import history ---- */}
-        <Card mode="outlined" style={styles.card}>
+        <Card mode="elevated" style={styles.card}>
           <Card.Content>
-            <Text variant="titleMedium">Import history</Text>
-            <Text variant="bodySmall" style={styles.sub}>
-              Every roster that has actually been saved. If a month isn't here, it
-              wasn't imported.
-            </Text>
+            <SectionHeader
+              icon="history"
+              title="Import history"
+              subtitle="Every roster that has actually been saved. If a month isn't here, it wasn't imported."
+            />
             {history.length === 0 ? (
               <Text variant="bodySmall" style={styles.historyEmpty}>
                 No roster has been imported yet.
               </Text>
             ) : (
-              history.map((h) => (
-                <View key={h.id} style={styles.historyRow}>
-                  <View style={styles.historyMain}>
-                    <Text variant="bodyMedium" style={styles.historyMonth}>
-                      {h.monthLabel || h.month}
-                    </Text>
-                    <Text variant="bodySmall" style={styles.sub}>
-                      {h.fileName || 'file'} · {h.uploadedByName || 'admin'} ·{' '}
-                      {formatWhen(h.uploadedAt)}
-                    </Text>
+              <>
+                <ScrollView horizontal>
+                  <View>
+                    <DataTable style={styles.historyTable}>
+                      <DataTable.Header>
+                        <DataTable.Title style={styles.histColMonth}>Month</DataTable.Title>
+                        <DataTable.Title style={styles.histColFile}>File</DataTable.Title>
+                        <DataTable.Title style={styles.histColImported} numeric>
+                          Imported
+                        </DataTable.Title>
+                        <DataTable.Title style={styles.histColDate}>Date</DataTable.Title>
+                        <DataTable.Title style={styles.histColStatus}>Status</DataTable.Title>
+                        <DataTable.Title style={styles.histColActions}> </DataTable.Title>
+                      </DataTable.Header>
+                      {shownHistory.map((h) => {
+                        const ok = h.status === 'imported';
+                        return (
+                          <DataTable.Row key={h.id}>
+                            <DataTable.Cell style={styles.histColMonth}>
+                              {h.monthLabel || h.month}
+                            </DataTable.Cell>
+                            <DataTable.Cell style={styles.histColFile}>
+                              <View>
+                                <Text variant="bodySmall" numberOfLines={1} style={styles.histFileName}>
+                                  {h.fileName || 'file'}
+                                </Text>
+                                <Text variant="bodySmall" style={styles.histFileMeta} numberOfLines={1}>
+                                  {h.uploadedByName || 'admin'}
+                                </Text>
+                              </View>
+                            </DataTable.Cell>
+                            <DataTable.Cell style={styles.histColImported} numeric>
+                              {ok ? `${h.importedCount ?? h.valid} Employees` : '—'}
+                            </DataTable.Cell>
+                            <DataTable.Cell style={styles.histColDate}>
+                              {formatDateOnly(h.uploadedAt)}
+                            </DataTable.Cell>
+                            <DataTable.Cell style={styles.histColStatus}>
+                              <View style={styles.histStatusRow}>
+                                <MaterialCommunityIcons
+                                  name={ok ? 'check-circle' : 'progress-clock'}
+                                  size={15}
+                                  color={ok ? colors.success : '#B26A00'}
+                                />
+                                <Text
+                                  variant="bodySmall"
+                                  style={{ color: ok ? colors.success : '#B26A00' }}
+                                >
+                                  {ok ? 'Success' : h.status}
+                                </Text>
+                              </View>
+                            </DataTable.Cell>
+                            <DataTable.Cell style={styles.histColActions}>
+                              <IconButton
+                                icon="delete"
+                                size={18}
+                                iconColor={colors.danger}
+                                onPress={() => setDeleteFor(h)}
+                                accessibilityLabel="Remove this import record"
+                              />
+                            </DataTable.Cell>
+                          </DataTable.Row>
+                        );
+                      })}
+                    </DataTable>
                   </View>
-                  <Chip
-                    compact
-                    style={{
-                      backgroundColor: h.status === 'imported' ? '#E7F4E8' : '#FFF4E0',
-                    }}
-                    textStyle={{
-                      color: h.status === 'imported' ? colors.success : '#B26A00',
-                      fontSize: 12,
-                    }}
-                  >
-                    {h.status === 'imported'
-                      ? `${h.importedCount ?? h.valid} imported`
-                      : h.status}
-                  </Chip>
-                </View>
-              ))
+                </ScrollView>
+                {history.length > 5 ? (
+                  <Button mode="text" onPress={() => setShowAllHistory((v) => !v)}>
+                    {showAllHistory ? 'Show less' : `View all ${history.length}`}
+                  </Button>
+                ) : null}
+              </>
             )}
           </Card.Content>
         </Card>
       </View>
 
+      {/* "How this works" — the hidden rules this screen runs on */}
+      <Portal>
+        <Dialog visible={helpOpen} onDismiss={() => setHelpOpen(false)} style={styles.helpDialog}>
+          <Dialog.Title>How Roster Upload works</Dialog.Title>
+          <Dialog.Content>
+            <View style={styles.helpItem}>
+              <MaterialCommunityIcons name="car-clock" size={18} color={colors.primary} style={styles.helpIcon} />
+              <Text variant="bodyMedium" style={styles.helpText}>
+                Rides are generated automatically from this roster — employees never
+                book a ride themselves. Their shift code decides their pickup or drop.
+              </Text>
+            </View>
+            <View style={styles.helpItem}>
+              <MaterialCommunityIcons name="file-replace-outline" size={18} color={colors.primary} style={styles.helpIcon} />
+              <Text variant="bodyMedium" style={styles.helpText}>
+                Re-uploading a corrected sheet for the same month replaces it, not a
+                duplicate — and overwrites name, phone, address, and route for every
+                employee it matches, using whatever the sheet says.
+              </Text>
+            </View>
+            <View style={styles.helpItem}>
+              <MaterialCommunityIcons name="account-plus-outline" size={18} color={colors.primary} style={styles.helpIcon} />
+              <Text variant="bodyMedium" style={styles.helpText}>
+                Need to add just one person mid-month, without touching the whole
+                sheet? Use "Add a single employee" below instead of re-uploading.
+              </Text>
+            </View>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setHelpOpen(false)}>Got it</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      {/* Remove one Import history row */}
+      <Portal>
+        <Dialog visible={!!deleteFor} onDismiss={() => setDeleteFor(null)}>
+          <Dialog.Title>Remove this import record?</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium">
+              This removes the log entry for {deleteFor?.monthLabel || deleteFor?.month}
+              {' '}({deleteFor?.fileName || 'file'}) from Import history. The employee
+              shifts it already wrote are not affected — only this record of the upload
+              disappears.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setDeleteFor(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              buttonColor={colors.danger}
+              onPress={confirmDeleteHistory}
+              loading={deleting}
+              disabled={deleting}
+            >
+              Remove
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
       <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={4000}>
         {snack}
       </Snackbar>
     </ScrollView>
+  );
+}
+
+// One consistent title style for every card: an icon chip, a title, an
+// optional subtitle, and an optional right-aligned action (a button or
+// close icon). Keeps every section reading the same way instead of each
+// card inventing its own header layout.
+function SectionHeader({ icon, title, subtitle, right }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionHeaderLeft}>
+        {icon ? (
+          <View style={styles.sectionIconWrap}>
+            <MaterialCommunityIcons name={icon} size={18} color={colors.primary} />
+          </View>
+        ) : null}
+        <View style={styles.sectionHeaderText}>
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            {title}
+          </Text>
+          {subtitle ? (
+            <Text variant="bodySmall" style={styles.sectionSubtitle}>
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      {right ? <View style={styles.sectionHeaderRight}>{right}</View> : null}
+    </View>
   );
 }
 
@@ -1106,25 +1495,76 @@ function Stat({ label, value, tone }) {
 }
 
 const styles = StyleSheet.create({
-  scroll: { padding: 12, alignItems: 'center' },
+  // Local page background — a touch lighter than the app-wide theme
+  // background, per this screen's own redesign brief.
+  page: { flex: 1, backgroundColor: '#F8FAFC' },
+  scroll: { padding: spacing.xl, alignItems: 'center', paddingBottom: 48 },
   col: { width: '100%', maxWidth: 900 },
-  card: { marginBottom: 14 },
-  sub: { color: colors.muted, marginTop: 2 },
-  rowBetween: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
-  summaryHead: { flex: 1 },
 
-  yearRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' },
+  pageHeader: { marginBottom: spacing.lg, paddingHorizontal: 2 },
+  pageHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
+  pageHeaderText: { flex: 1 },
+  pageTitle: { fontWeight: '700', color: colors.text, letterSpacing: 0.1 },
+  pageSubtitle: { color: colors.muted, marginTop: 4, lineHeight: 20 },
+  helpDialog: { maxWidth: 480, alignSelf: 'center', width: '100%' },
+  helpItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 14 },
+  helpIcon: { marginTop: 2 },
+  helpText: { flex: 1, lineHeight: 20 },
+
+  // Flat white cards with a soft shadow instead of a hard outline — the
+  // "modern SaaS dashboard" look asked for, scoped to this screen only.
+  card: {
+    marginBottom: spacing.lg,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    shadowColor: '#1A2233',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  sub: { color: colors.muted, marginTop: 2 },
+
+  // Shared card header: icon chip + title + optional subtitle + optional
+  // right-aligned action, so every card reads the same way.
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  sectionHeaderLeft: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 },
+  sectionIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#EAF2FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  sectionHeaderText: { flex: 1 },
+  sectionHeaderRight: { marginLeft: spacing.sm },
+  sectionTitle: { fontWeight: '700', color: colors.text },
+  sectionSubtitle: { color: colors.muted, marginTop: 2, lineHeight: 18 },
+
+  fieldsRow: { flexDirection: 'row', gap: 20, marginTop: 14, flexWrap: 'wrap' },
+  fieldGroup: { gap: 6 },
+  soloFieldGroup: { gap: 6, marginTop: 14 },
   yearLabel: { color: colors.text },
-  yearPicker: { width: 120 },
-  yearHint: { color: colors.muted, flex: 1, minWidth: 180 },
+  yearPicker: { width: 160 },
+  dayPicker: { width: 90 },
+  yearHint: { color: colors.muted, marginTop: 8 },
+  shiftBadge: { borderRadius: 16 },
+  singleAddBtn: { marginTop: 18, alignSelf: 'flex-start', borderRadius: 10 },
 
   drop: {
     marginTop: 14,
     borderWidth: 2,
     borderStyle: 'dashed',
     borderColor: colors.border,
-    borderRadius: 14,
-    paddingVertical: 28,
+    borderRadius: 12,
+    paddingVertical: 32,
     paddingHorizontal: 16,
     alignItems: 'center',
     gap: 10,
@@ -1161,7 +1601,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 10,
     backgroundColor: '#FEF3F3',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 10,
   },
   errorBoxText: { color: colors.danger, flex: 1, lineHeight: 18 },
@@ -1171,7 +1611,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 10,
     backgroundColor: '#FEF3F3',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 10,
   },
   blockedText: { color: colors.danger, flex: 1, lineHeight: 18 },
@@ -1202,7 +1642,7 @@ const styles = StyleSheet.create({
   colChipFound: { backgroundColor: '#E7F4E8' },
   colChipMissing: { backgroundColor: '#FDECEC' },
   colChipText: { fontSize: 12 },
-  sheetScroll: { marginTop: 12, borderWidth: 1, borderColor: '#E4E8EF', borderRadius: 8 },
+  sheetScroll: { marginTop: 12, borderWidth: 1, borderColor: '#E4E8EF', borderRadius: 10 },
   sheetRow: { flexDirection: 'row', alignItems: 'stretch', borderBottomWidth: 1, borderBottomColor: '#EEF1F6' },
   sheetHeadRow: { backgroundColor: '#F5F7FA' },
   sheetHeadText: { color: colors.muted, paddingVertical: 8, textAlign: 'center' },
@@ -1226,7 +1666,7 @@ const styles = StyleSheet.create({
   fileErrors: {
     marginTop: 12,
     backgroundColor: '#FDECEC',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 10,
   },
   fileErrorText: { color: colors.danger, lineHeight: 18 },
@@ -1236,7 +1676,7 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 12,
     backgroundColor: '#FFF6E5',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 10,
   },
   warnText: { color: '#B26A00', flex: 1, lineHeight: 18 },
@@ -1248,21 +1688,25 @@ const styles = StyleSheet.create({
   errText: { color: colors.danger },
   allGood: { color: colors.success, marginTop: 12, fontWeight: '600' },
 
-  actions: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
-  importBtn: { flex: 1, minWidth: 220 },
+  // One large primary action, full width — the single thing left to do once
+  // the sheet checks out.
+  importBtn: { borderRadius: 10 },
+  importBtnContent: { paddingVertical: 6 },
+  cancelLink: { alignSelf: 'center', marginTop: 4 },
+  progressWrap: { marginTop: 12, gap: 6 },
+  progressBar: { height: 8, borderRadius: 4 },
+  progressText: { color: colors.muted, textAlign: 'center' },
 
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    marginTop: 10,
-  },
-  historyMain: { flex: 1 },
-  historyMonth: { fontWeight: '600' },
+  historyTable: { minWidth: 640 },
+  histColMonth: { flex: 1.1 },
+  histColFile: { flex: 2 },
+  histColImported: { flex: 1.4 },
+  histColDate: { flex: 1.2 },
+  histColStatus: { flex: 1.2 },
+  histColActions: { flex: 0.6, justifyContent: 'flex-end' },
+  histFileName: { fontWeight: '600', color: colors.text },
+  histFileMeta: { color: colors.muted, marginTop: 1 },
+  histStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
 
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
   centerTitle: { marginTop: 8, textAlign: 'center' },

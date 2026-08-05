@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from 'react';
-import { StyleSheet, View, ScrollView } from 'react-native';
+import { StyleSheet, View, ScrollView, useWindowDimensions } from 'react-native';
 import { Text, Card, TextInput, Button, HelperText, Snackbar, Switch } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
@@ -48,8 +48,29 @@ function StatusLine({ icon, label, tone }) {
   );
 }
 
+// Three breakpoints, one column count each — phone stacks everything in one
+// column, tablet fits two per row, laptop/desktop the full three-across grid.
+function useResponsiveLayout() {
+  const { width } = useWindowDimensions();
+  const isMobile = width < 640;
+  const isTablet = !isMobile && width < 1024;
+  const columns = isMobile ? 1 : isTablet ? 2 : 3;
+  return {
+    columns,
+    gap: isMobile ? 12 : isTablet ? 20 : 28,
+    outerPadding: isMobile ? 16 : isTablet ? 22 : 28,
+    cardPadding: isMobile ? 16 : isTablet ? 20 : 22,
+    // Exact thirds only make sense once there's room for three; below that, let
+    // the last (short) row of cards keep the same width as a full row instead
+    // of stretching to fill the leftover space.
+    cardBasis: columns === 1 ? '100%' : columns === 2 ? '47%' : 340,
+    cardGrow: columns === 1 ? 1 : 0,
+  };
+}
+
 export default function ShiftPolicyScreen() {
   const { shiftPolicy, saveShifts } = useApp();
+  const layout = useResponsiveLayout();
 
   // The form sits over the live policy, so another admin's change is picked up
   // while this form is untouched instead of being silently overwritten.
@@ -80,8 +101,12 @@ export default function ShiftPolicyScreen() {
     const endBad = working && hhmmToMinutes(s.end) == null;
 
     return (
-      <Card key={code} mode="elevated" style={[styles.card, compact && styles.cardCompact]}>
-        <Card.Content style={styles.cardContent}>
+      <Card
+        key={code}
+        mode="elevated"
+        style={[styles.card, { flexBasis: layout.cardBasis, flexGrow: layout.cardGrow }]}
+      >
+        <Card.Content style={[styles.cardContent, { padding: layout.cardPadding }]}>
           <View style={styles.headerRow}>
             <View style={styles.identity}>
               <View style={[styles.iconWrap, compact && styles.iconWrapCompact]}>
@@ -217,17 +242,22 @@ export default function ShiftPolicyScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.scrollContent, { padding: layout.outerPadding }]}
+      >
         <View style={styles.col}>
-          <View style={styles.row}>{WORKING_CODES.map((code) => renderCard(code, false))}</View>
-          <View style={styles.rowCompact}>
+          <View style={[styles.row, { gap: layout.gap }]}>
+            {WORKING_CODES.map((code) => renderCard(code, false))}
+          </View>
+          <View style={[styles.rowCompact, { gap: layout.gap, marginTop: layout.gap }]}>
             {NON_WORKING_CODES.map((code) => renderCard(code, true))}
           </View>
         </View>
       </ScrollView>
 
       <View style={styles.footerBar}>
-        <View style={styles.footerInner}>
+        <View style={[styles.footerInner, { paddingHorizontal: layout.outerPadding }]}>
           {error ? (
             <HelperText type="error" visible style={styles.footerError}>
               {error}
@@ -265,25 +295,28 @@ export default function ShiftPolicyScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { padding: 28, alignItems: 'center' },
+  scrollContent: { alignItems: 'center' },
   col: { width: '100%', maxWidth: 1180 },
 
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 28 },
-  rowCompact: { flexDirection: 'row', flexWrap: 'wrap', gap: 28, marginTop: 28 },
+  row: { flexDirection: 'row', flexWrap: 'wrap' },
+  rowCompact: { flexDirection: 'row', flexWrap: 'wrap' },
 
   card: {
-    flexGrow: 1,
-    flexBasis: 340,
-    minWidth: 300,
+    minWidth: 0,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
   },
-  cardCompact: { flexBasis: 340 },
-  cardContent: { padding: 22 },
+  cardContent: {},
 
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+  headerRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   iconWrap: {
     width: 44,
@@ -344,7 +377,6 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 1180,
     alignSelf: 'center',
-    paddingHorizontal: 28,
     paddingVertical: 16,
   },
   footerError: { marginBottom: 4 },

@@ -17,6 +17,7 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COMPANY_NAME, companyLogo } from '../branding';
+import { colors } from '../theme';
 
 // Each menu item → which screen it opens.
 //
@@ -254,7 +255,7 @@ function DrawerBody({
         </Text>
         {!permanent ? (
           <Pressable onPress={onClose} hitSlop={10}>
-            <MaterialCommunityIcons name="close" size={22} color="#0D47A1" />
+            <MaterialCommunityIcons name="close" size={22} color={colors.primaryDark} />
           </Pressable>
         ) : null}
       </View>
@@ -378,12 +379,12 @@ const styles = StyleSheet.create({
     width: '78%',
     maxWidth: 320,
     height: '100%',
-    backgroundColor: '#0D47A1', // dark blue
+    backgroundColor: colors.primaryDark,
   },
   permanentPanel: {
     width: 250,
     height: '100%',
-    backgroundColor: '#0D47A1', // dark blue
+    backgroundColor: colors.primaryDark,
   },
   body: { flex: 1 },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
@@ -401,7 +402,7 @@ const styles = StyleSheet.create({
   // sits at 20px like the nav icons; the 3px margin makes the column total 30px
   // so the brand name lands at 50px — exactly under the menu labels below.
   brandLogo: { width: 27, height: 30, marginRight: 3 },
-  brandName: { color: '#0D47A1', fontWeight: 'bold', fontSize: 16, flex: 1 },
+  brandName: { color: colors.primaryDark, fontWeight: 'bold', fontSize: 16, flex: 1 },
   menu: { flex: 1 }, // nav sits right below the brand band
   item: {
     flexDirection: 'row',
@@ -409,7 +410,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 20,
   },
-  itemActive: { backgroundColor: '#1565C0' }, // highlight current screen
+  itemActive: { backgroundColor: colors.primary }, // highlight current screen
   logoutItem: {
     marginTop: 8,
     borderTopWidth: 1,
@@ -427,9 +428,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  countText: { color: '#0D47A1', fontSize: 12, fontWeight: 'bold' },
+  countText: { color: colors.primaryDark, fontSize: 12, fontWeight: 'bold' },
   userBox: {
-    backgroundColor: '#1E88E5',
+    backgroundColor: colors.primaryLight,
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderTopWidth: 1,

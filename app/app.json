@@ -13,7 +13,11 @@
       "bundleIdentifier": "com.neutara.cabservice",
       "supportsTablet": true,
       "infoPlist": {
-        "LSApplicationQueriesSchemes": ["comgooglemaps", "maps", "tel"]
+        "LSApplicationQueriesSchemes": [
+          "comgooglemaps",
+          "maps",
+          "tel"
+        ]
       }
     },
     "android": {
@@ -35,7 +39,8 @@
         {
           "locationWhenInUsePermission": "This app uses your location to share the cab's live position with employees."
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }

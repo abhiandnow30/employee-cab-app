@@ -294,7 +294,15 @@ function AppHeader({ navigation, route, options, back }) {
 // employee profile here, which handed a removed employee a working account
 // again. Now the session stops with an explanation.
 function UnprovisionedScreen() {
-  const { logout, currentUser } = useApp();
+  const { logout, firebaseUser } = useApp();
+  // A Microsoft sign-in that's never been LINKED to an existing account mints
+  // a brand-new Firebase uid with no employees/{uid} doc — same symptom as a
+  // genuinely unprovisioned account, but a completely different fix (sign in
+  // with email/password and link Microsoft from Profile, vs. ask HR to add
+  // you). Tell them apart by what's the ONLY provider on this session's user.
+  const isMicrosoftOnly =
+    (firebaseUser?.providerData?.length || 0) > 0 &&
+    firebaseUser.providerData.every((p) => p.providerId === 'microsoft.com');
   return (
     <View style={styles.splash}>
       <View style={styles.lockedCard}>
@@ -302,11 +310,19 @@ function UnprovisionedScreen() {
         <Text variant="headlineSmall" style={styles.lockedTitle}>
           Account not set up
         </Text>
-        <Text variant="bodyMedium" style={styles.lockedBody}>
-          This login isn't linked to an employee record{currentUser?.email ? '' : ''}, so
-          there's nothing to show yet. Ask the transport desk to add you, then sign
-          in again.
-        </Text>
+        {isMicrosoftOnly ? (
+          <Text variant="bodyMedium" style={styles.lockedBody}>
+            This Microsoft account isn't linked to an employee profile yet. If you
+            already have an account here, sign out and sign in with your email and
+            password instead, then link Microsoft from your Profile screen. If you
+            don't have an account yet, ask the transport desk to add you first.
+          </Text>
+        ) : (
+          <Text variant="bodyMedium" style={styles.lockedBody}>
+            This login isn't linked to an employee record, so there's nothing to
+            show yet. Ask the transport desk to add you, then sign in again.
+          </Text>
+        )}
         <Text variant="bodySmall" style={styles.lockedHelp}>
           Transport desk: {SUPPORT_HELPLINE}
         </Text>
@@ -642,8 +658,13 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  appRow: { flex: 1, flexDirection: 'row' },
-  appContent: { flex: 1 },
+  // overflow: 'hidden' is a safety net — the real fix is appbarContent's
+  // minWidth: 0 below, which stops the header from ever growing past the
+  // viewport in the first place. This just guarantees that if anything else
+  // ever does, the page clips instead of gaining a horizontal scrollbar that
+  // hides the sidebar off the left edge.
+  appRow: { flex: 1, flexDirection: 'row', overflow: 'hidden' },
+  appContent: { flex: 1, minWidth: 0 },
   appbar: { backgroundColor: colors.primary },
   headerLogoChip: {
     width: 38,
@@ -656,7 +677,12 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   headerLogo: { width: 30, height: 30 },
-  appbarContent: { alignItems: 'center' },
+  // minWidth: 0 overrides the flex item's default "don't shrink below content
+  // size" on web — without it, a long title plus the notification/message/
+  // call/logout action icons refuse to shrink and push the header (and with
+  // it the whole page) wider than the viewport, forcing a horizontal scroll
+  // that hides the sidebar and title behind the edge of the screen.
+  appbarContent: { alignItems: 'center', minWidth: 0 },
   appbarTitle: { fontWeight: 'bold', letterSpacing: 0.3, textAlign: 'center' },
   msgDialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
   splash: {
