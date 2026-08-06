@@ -1,12 +1,13 @@
 // ---------------------------------------------------------------------------
-// MANAGE TIMINGS  (admin)
-// Edit the Weekly Schedule (Self Roster) time options WITHOUT a code change:
-//   • Pickup times (Home → Office)
-//   • Drop times   (Office → Home)
-// Add a time (validated + normalised to "hh:mm AM/PM"), remove any time, then
-// Save. Saved to Firestore (config/timings); every employee's Weekly Schedule
-// picks up the change live. "NA" isn't listed here — it's added automatically
-// as the "no ride this leg" option.
+// MANAGE ROUTES  (admin)
+// Edit the Cab routes used in Shift Roster WITHOUT a code change: add a route
+// (trimmed, deduped), remove any route, then Save. Saved to Firestore
+// (config/timings.routes); every screen that offers a route picks it up live.
+//
+// This screen used to also edit Pickup/Drop time lists for the old ad-hoc
+// Weekly Schedule. That flow is gone — ride times are now derived from Shift
+// Policy (see data/shifts.js), so those lists were removed rather than kept
+// as dead config nobody reads.
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from 'react';
@@ -16,42 +17,27 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { timeToMinutes } from '../../utils/datetime';
 import useSyncedDraft from '../../utils/useSyncedDraft';
 import { colors } from '../../theme';
 
-// "9:00 pm" / "09:00 PM" → canonical "09:00 PM" (2-digit hour). null if invalid.
-function normalizeTime(input) {
-  const mins = timeToMinutes(input);
-  if (mins == null) return null;
-  const h24 = Math.floor(mins / 60);
-  const m = mins % 60;
-  const ap = h24 >= 12 ? 'PM' : 'AM';
-  let h12 = h24 % 12;
-  if (h12 === 0) h12 = 12;
-  return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ap}`;
-}
-
-// A plain-text normaliser for lists that aren't times (e.g. routes): just trim.
+// A plain-text normaliser for the route list: just trim.
 function normalizeText(input) {
   const v = (input || '').trim();
   return v || null;
 }
 
-// One editable list (Pickup, Drop, or Routes): chips you can remove + an add
-// field. `normalize` validates/canonicalises each entry (times vs plain text);
-// `label`/`placeholder`/`invalidMsg` tailor the add field to the list type.
-function TimingEditor({
+// An editable list of routes: chips you can remove + an add field.
+function RouteEditor({
   title,
   subtitle,
   icon,
-  times,
+  routes,
   onAdd,
   onRemove,
-  normalize = normalizeTime,
-  label = 'Add time (hh:mm AM/PM)',
-  placeholder = 'e.g. 09:00 PM',
-  invalidMsg = 'Enter a valid time like 09:00 PM.',
+  normalize,
+  label,
+  placeholder,
+  invalidMsg,
 }) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
@@ -63,7 +49,7 @@ function TimingEditor({
       setError(invalidMsg);
       return;
     }
-    if (times.includes(value)) {
+    if (routes.includes(value)) {
       setError(`${value} is already in the list.`);
       return;
     }
@@ -84,13 +70,13 @@ function TimingEditor({
 
         <Divider style={styles.divider} />
 
-        {times.length === 0 ? (
+        {routes.length === 0 ? (
           <Text variant="bodySmall" style={styles.emptyList}>
-            No times yet — add at least one below.
+            No routes yet — add at least one below.
           </Text>
         ) : (
           <View style={styles.chips}>
-            {times.map((t) => (
+            {routes.map((t) => (
               <Chip key={t} onClose={() => onRemove(t)} style={styles.chip}>
                 {t}
               </Chip>
@@ -120,48 +106,36 @@ function TimingEditor({
 }
 
 export default function ManageTimingsScreen() {
-  const { pickupTimes, dropTimes, routes, saveTimings } = useApp();
+  const { routes, saveTimings } = useApp();
 
-  // Local drafts over the LIVE config. useSyncedDraft re-seeds them if the
-  // config arrives (or another admin changes it) while this form is untouched.
-  // A plain useState initialiser captured whatever was loaded at mount — usually
+  // Local draft over the LIVE config. useSyncedDraft re-seeds it if the config
+  // arrives (or another admin changes it) while this form is untouched. A
+  // plain useState initialiser captured whatever was loaded at mount — usually
   // the built-in defaults, since the subscription hadn't answered yet — then
   // counted itself as "edited", so pressing Save quietly replaced the real
-  // timings with the defaults.
+  // routes with the defaults.
   const liveRoutes = useMemo(() => routes || [], [routes]);
-  const [pickup, setPickup, pickupState] = useSyncedDraft(pickupTimes);
-  const [drop, setDrop, dropState] = useSyncedDraft(dropTimes);
   const [routeList, setRouteList, routeState] = useSyncedDraft(liveRoutes);
   const [saving, setSaving] = useState(false);
   const [snack, setSnack] = useState('');
   const [error, setError] = useState('');
 
-  const dirty = pickupState.dirty || dropState.dirty || routeState.dirty;
+  const dirty = routeState.dirty;
 
   async function handleSave() {
     setError('');
-    if (pickup.length === 0 || drop.length === 0) {
-      setError('Both Pickup and Drop need at least one time.');
-      return;
-    }
     if (routeList.length === 0) {
       setError('Add at least one cab route.');
       return;
     }
     setSaving(true);
-    const res = await saveTimings({
-      pickupTimes: pickup,
-      dropTimes: drop,
-      routes: routeList,
-    });
+    const res = await saveTimings({ routes: routeList });
     setSaving(false);
     if (res?.ok) setSnack('Saved ✓');
     else setError(res?.message || 'Could not save.');
   }
 
   function resetDrafts() {
-    pickupState.reset();
-    dropState.reset();
     routeState.reset();
     setError('');
   }
@@ -171,34 +145,15 @@ export default function ManageTimingsScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.centerCol}>
           <Text variant="bodySmall" style={styles.hint}>
-            The Pickup and Drop times employees choose from on the Weekly Schedule,
-            plus the Cab routes used in Shift Roster. Changes apply to everyone as
+            The Cab routes used in Shift Roster. Changes apply to everyone as
             soon as you Save.
           </Text>
 
-          <TimingEditor
-            title="Pickup times"
-            subtitle="Home → Office"
-            icon="home-export-outline"
-            times={pickup}
-            onAdd={(t) => setPickup((list) => [...list, t])}
-            onRemove={(t) => setPickup((list) => list.filter((x) => x !== t))}
-          />
-
-          <TimingEditor
-            title="Drop times"
-            subtitle="Office → Home"
-            icon="home-import-outline"
-            times={drop}
-            onAdd={(t) => setDrop((list) => [...list, t])}
-            onRemove={(t) => setDrop((list) => list.filter((x) => x !== t))}
-          />
-
-          <TimingEditor
+          <RouteEditor
             title="Cab routes"
             subtitle="Pickup routes used in Shift Roster"
             icon="map-marker-path"
-            times={routeList}
+            routes={routeList}
             onAdd={(r) => setRouteList((list) => [...list, r])}
             onRemove={(r) => setRouteList((list) => list.filter((x) => x !== r))}
             normalize={normalizeText}

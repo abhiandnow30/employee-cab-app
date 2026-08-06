@@ -11,16 +11,17 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, Platform } from 'react-native';
 import {
   Text, Avatar, Card, List, Button, Divider, TextInput, HelperText,
-  Portal, Dialog, Chip,
+  Portal, Dialog, Chip, Snackbar,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import ScreenContainer from '../../components/ScreenContainer';
 import { REQUEST_STATUS } from '../../services/addressRequests';
 import { colors } from '../../theme';
+import useMicrosoftAuthRequest from '../../utils/useMicrosoftAuthRequest';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -54,11 +55,47 @@ function StatusChip({ status }) {
 const EMPTY_FORM = { requestedAddress: '', landmark: '', reason: '' };
 
 export default function ProfileScreen() {
-  const { currentUser, logout, homeAddressOf, myAddressRequests, requestAddressChange } = useApp();
+  const {
+    currentUser, logout, homeAddressOf, myAddressRequests, requestAddressChange,
+    microsoftLinked, linkWithMicrosoftPopup, linkWithMicrosoftCredential, unlinkMicrosoft,
+  } = useApp();
   const u = currentUser || {};
   const isEmployee = u.role === 'employee';
   const roleLabel = u.role === 'admin' ? 'Transport Desk' : u.role === 'driver' ? 'Driver' : 'Employee';
   const address = homeAddressOf(u);
+
+  // --- Link / unlink Microsoft --------------------------------------------
+  const { promptMicrosoftSignIn, ready: microsoftReady } = useMicrosoftAuthRequest();
+  const [msBusy, setMsBusy] = useState(false);
+  const [msSnack, setMsSnack] = useState('');
+
+  async function handleLinkMicrosoft() {
+    setMsBusy(true);
+    try {
+      const result =
+        Platform.OS === 'web'
+          ? await linkWithMicrosoftPopup()
+          : await (async () => {
+              const token = await promptMicrosoftSignIn();
+              if (!token) return { ok: true }; // cancelled
+              return linkWithMicrosoftCredential(token.idToken, token.rawNonce);
+            })();
+      setMsSnack(
+        result.ok ? 'Microsoft account linked — you can use it to sign in next time.' : result.message
+      );
+    } catch (e) {
+      setMsSnack(e.message || 'Could not link your Microsoft account.');
+    } finally {
+      setMsBusy(false);
+    }
+  }
+
+  async function handleUnlinkMicrosoft() {
+    setMsBusy(true);
+    const result = await unlinkMicrosoft();
+    setMsBusy(false);
+    setMsSnack(result.ok ? 'Microsoft account unlinked.' : result.message);
+  }
 
   const initials = (u.name || '?')
     .split(' ')
@@ -193,12 +230,53 @@ export default function ProfileScreen() {
               </Card.Content>
             </Card>
           ) : null}
+
+          {/* Added ALONGSIDE the email/password sign-in you already used to get
+              here — never a replacement. Linking makes Microsoft usable next
+              time, on the SAME account (same profile, same ride history). */}
+          <Card mode="outlined" style={styles.card}>
+            <Card.Content>
+              <Text variant="titleMedium">Microsoft sign-in</Text>
+              <Text variant="bodySmall" style={styles.help}>
+                {microsoftLinked
+                  ? 'Your Microsoft work account is linked — you can use it to sign in instead of your password.'
+                  : 'Link your Microsoft work account so you can sign in with it next time, in addition to your password.'}
+              </Text>
+              {microsoftLinked ? (
+                <Button
+                  mode="outlined"
+                  icon="link-off"
+                  onPress={handleUnlinkMicrosoft}
+                  loading={msBusy}
+                  disabled={msBusy}
+                  style={styles.requestBtn}
+                >
+                  Unlink Microsoft account
+                </Button>
+              ) : (
+                <Button
+                  mode="contained"
+                  icon="microsoft"
+                  onPress={handleLinkMicrosoft}
+                  loading={msBusy}
+                  disabled={msBusy || (Platform.OS !== 'web' && !microsoftReady)}
+                  style={styles.requestBtn}
+                >
+                  Link Microsoft account
+                </Button>
+              )}
+            </Card.Content>
+          </Card>
         </>
       ) : null}
 
       <Button mode="contained" icon="logout" onPress={logout} style={styles.logout}>
         Log out
       </Button>
+
+      <Snackbar visible={!!msSnack} onDismiss={() => setMsSnack('')} duration={4000}>
+        {msSnack}
+      </Snackbar>
 
       <Portal>
         <Dialog visible={open} onDismiss={() => setOpen(false)} style={styles.dialog}>

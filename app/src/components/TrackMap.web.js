@@ -89,7 +89,7 @@ export default function TrackMap({ latitude, longitude, route, destination }) {
       routeRef.current = null;
     }
     if (route && route.length > 1) {
-      routeRef.current = L.polyline(route, { color: '#1565C0', weight: 5, opacity: 0.75 }).addTo(
+      routeRef.current = L.polyline(route, { color: colors.primary, weight: 5, opacity: 0.75 }).addTo(
         mapRef.current
       );
       mapRef.current.fitBounds(routeRef.current.getBounds(), { padding: [40, 40] });

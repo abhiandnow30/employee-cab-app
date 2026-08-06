@@ -93,7 +93,7 @@ export default function TrackCabScreen({ navigation }) {
     : pickupPoint?.coords || null;
   const targetLabel = onBoard ? 'Reaching your drop in' : 'Arriving in';
 
-  const lastFetchRef = useRef({ time: 0, lat: 0, lng: 0 });
+  const lastFetchRef = useRef({ time: 0, lat: 0, lng: 0, target: '' });
 
   useEffect(() => {
     if (!driverUid) {
@@ -114,15 +114,27 @@ export default function TrackCabScreen({ navigation }) {
 
   // Recompute the route + ETA as the cab moves — but throttled, so we don't hit
   // the routing service on every single GPS ping (only every ~8s or after 80m).
+  //
+  // The throttle must NOT swallow a change of DESTINATION. When the driver marks
+  // "Arrived", the target flips from the pickup point to the drop, and the label
+  // changes with it — so a throttled skip would show the old pickup route under
+  // "Reaching your drop in", i.e. a confidently wrong number.
   useEffect(() => {
     if (!location || !target) return;
     const stamp = Date.now();
     const last = lastFetchRef.current;
+    const targetKey = `${target.latitude},${target.longitude}`;
+    const targetChanged = last.target !== targetKey;
     const movedFar =
       distanceMeters(location, { latitude: last.lat, longitude: last.lng }) > 80;
-    if (route && stamp - last.time < 8000 && !movedFar) return;
+    if (route && !targetChanged && stamp - last.time < 8000 && !movedFar) return;
 
-    lastFetchRef.current = { time: stamp, lat: location.latitude, lng: location.longitude };
+    lastFetchRef.current = {
+      time: stamp,
+      lat: location.latitude,
+      lng: location.longitude,
+      target: targetKey,
+    };
     let cancelled = false;
     getRoute(location, target).then((r) => {
       if (!cancelled) setRoute(r);
@@ -189,9 +201,12 @@ export default function TrackCabScreen({ navigation }) {
             </Chip>
           </View>
 
-          {/* Which trip this is */}
+          {/* Which trip this is. The shift's own start/end is a deadline
+              (pickup) or earliest-bound (drop), never a promised cab instant
+              — the ETA below is the live, real estimate. */}
           <Text variant="bodyMedium" style={styles.trip}>
-            {trackedBooking.direction} · {trackedBooking.date} · {trackedBooking.shift}
+            {trackedBooking.direction} · {trackedBooking.date} ·{' '}
+            {trackedBooking.direction === 'Home → Office' ? 'by' : 'after'} {trackedBooking.shift}
           </Text>
           <Text variant="bodySmall" style={styles.detail}>
             Pickup: {pickupPoint?.label || trackedBooking.pickup || '—'}

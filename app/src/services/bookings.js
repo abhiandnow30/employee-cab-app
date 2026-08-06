@@ -26,6 +26,7 @@ import {
   limit,
   serverTimestamp,
   writeBatch,
+  runTransaction,
 } from 'firebase/firestore';
 import { firestore } from './firebase';
 import { STATUS } from '../data/mockData';
@@ -54,6 +55,71 @@ function toList(snap) {
 
 export async function createBooking(data) {
   return addDoc(collection(firestore, COL), { ...data, createdAt: serverTimestamp() });
+}
+
+// Create several already-assigned bookings AND re-assign existing ones, as one
+// atomic commit — the desk putting a whole carpool into one cab. Doing these as
+// separate writes meant a failure halfway through left some riders assigned and
+// the rest not, with the cab's seats already counted against the ones that landed.
+//
+// A NEW booking is keyed by its `rideKey` (deterministic, one per employee +
+// shift-day + leg) rather than a random id, and the whole thing runs as a
+// TRANSACTION that checks each ride is still unbooked before creating it. Two
+// coordinators racing to assign the same still-unassigned ride would otherwise
+// both succeed — one random-id doc each — leaving the same employee double-booked
+// into two different cabs with neither coordinator any the wiser. Keying on
+// `rideKey` plus this existence check means the second commit fails loudly
+// ("already assigned by someone else") instead of silently duplicating the ride.
+//
+// Returns the ids of the newly created bookings, in the order given, so the caller
+// can link each one back to whatever it fulfilled.
+export async function createAssignedBookings(newBookings, existingIds, cabId) {
+  if (!firestore) throw new Error('Backend not configured.');
+  const fresh = (newBookings || []).map((b) => ({
+    ref: doc(firestore, COL, b.rideKey),
+    data: b,
+  }));
+
+  await runTransaction(firestore, async (tx) => {
+    // All reads before any writes — Firestore transactions require that order.
+    const snaps = await Promise.all(fresh.map(({ ref }) => tx.get(ref)));
+    const taken = fresh.filter((_, i) => snaps[i].exists());
+    if (taken.length) {
+      const names = taken.map((t) => t.data.employeeName || t.data.employeeId).join(', ');
+      throw new Error(
+        `Already assigned by someone else: ${names}. Refresh and try again.`
+      );
+    }
+    fresh.forEach(({ ref, data }) => {
+      tx.set(ref, { ...data, createdAt: serverTimestamp() });
+    });
+    (existingIds || []).forEach((id) => {
+      tx.update(doc(firestore, COL, id), {
+        assignedCabId: cabId,
+        status: STATUS.ASSIGNED,
+      });
+    });
+  });
+
+  return fresh.map(({ ref }) => ref.id);
+}
+
+// Fresh, uncached read of one employee's live (not cancelled/completed) bookings
+// on a given date — used when resolving a change request, so the desk always acts
+// on what's actually in Firestore right now rather than a coordinator's possibly
+// stale local snapshot (which might be missing a booking another coordinator just
+// created a moment ago).
+export async function getLiveBookingsForDate(employeeId, date) {
+  if (!firestore || !employeeId) return [];
+  // Equality-only query (no composite index needed); date/status narrowing
+  // happens here, same pattern as syncEmployeeAddress below.
+  const q = query(collection(firestore, COL), where('employeeId', '==', employeeId));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter(
+      (b) => b.date === date && b.status !== STATUS.CANCELLED && b.status !== STATUS.COMPLETED
+    );
 }
 
 // The Weekly Schedule can, in one save, drop some rides and create others (a
@@ -208,4 +274,31 @@ export async function syncEmployeeAddress(employeeId, address, batch = null) {
   stale.forEach((d) => b.update(d.ref, { employeeAddress: address }));
   if (own) await b.commit();
   return stale.length;
+}
+
+// --- Repair: employee IDs on existing bookings -------------------------------
+//
+// The driver's trip list identifies riders by EMPLOYEE ID, and a driver may not
+// read employee profiles (the rules see to that), so the id has to travel on the
+// booking. Bookings written before `empId` was carried have none, and would read
+// "Employee ID not on record" for ever.
+//
+// So the desk repairs them: it can read both the bookings and the employee
+// directory, and it is allowed to update a booking. Only UPCOMING, still-live
+// rides are touched — history is left exactly as it was recorded.
+//
+// `pairs` = [{ id, empId }]. Returns how many were stamped.
+export async function stampBookingEmpIds(pairs) {
+  if (!firestore || !pairs?.length) return 0;
+  const CHUNK = 400; // under Firestore's 500-write batch limit
+  let written = 0;
+  for (let i = 0; i < pairs.length; i += CHUNK) {
+    const batch = writeBatch(firestore);
+    pairs.slice(i, i + CHUNK).forEach(({ id, empId }) => {
+      batch.update(doc(firestore, COL, id), { empId });
+    });
+    await batch.commit();
+    written += Math.min(CHUNK, pairs.length - i);
+  }
+  return written;
 }

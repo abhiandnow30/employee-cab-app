@@ -37,15 +37,27 @@ export default function TrackCabsScreen() {
   // list below shows it as "No driver linked".
   const cabIdsKey = cabs.map((c) => `${c.id}:${c.driverUid || ''}`).join(',');
   useEffect(() => {
-    const unsubs = cabs
-      .filter((c) => c.driverUid)
-      .map((c) =>
-        subscribeDriverLocation(
-          c.driverUid,
-          (loc) => setLocs((prev) => ({ ...prev, [c.id]: loc })),
-          (e) => console.warn('[tracking] subscription error:', e?.message)
-        )
-      );
+    const tracked = cabs.filter((c) => c.driverUid);
+
+    // Drop cached positions for cabs we're no longer following — a cab whose
+    // coordinator was detached, or that left the fleet. Without this its last
+    // known position stays on the map as a marker that will never move again.
+    const keep = new Set(tracked.map((c) => c.id));
+    setLocs((prev) => {
+      const next = {};
+      Object.keys(prev).forEach((id) => {
+        if (keep.has(id)) next[id] = prev[id];
+      });
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+
+    const unsubs = tracked.map((c) =>
+      subscribeDriverLocation(
+        c.driverUid,
+        (loc) => setLocs((prev) => ({ ...prev, [c.id]: loc })),
+        (e) => console.warn('[tracking] subscription error:', e?.message)
+      )
+    );
     return () => unsubs.forEach((u) => u && u());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cabIdsKey]);

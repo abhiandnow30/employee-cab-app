@@ -5,27 +5,14 @@
 // starter fleet the admin can seed from.)
 // ---------------------------------------------------------------------------
 
-// How many riders a cab seats when nothing else is set. The admin can give each
-// cab its own capacity in Manage Cabs; this is only the fallback for cabs that
-// were created before capacity existed.
+// How many riders a cab seats when nothing else is set. Each driver enters their
+// own vehicle's seat count when they register it; this is only the fallback for
+// cabs saved before capacity existed.
 export const DEFAULT_CAB_CAPACITY = 6;
 
-// The company's starter cabs (seeded on request from Manage Cabs).
-export const cabs = [
-  { id: 'c1', cabNumber: 'TS 09 AB 1234', driverName: 'Ramesh', driverPhone: '9111111111', capacity: 6 },
-  { id: 'c2', cabNumber: 'TS 09 CD 5678', driverName: 'Suresh', driverPhone: '9222222222', capacity: 6 },
-  { id: 'c3', cabNumber: 'TS 09 EF 9012', driverName: 'Mahesh', driverPhone: '9333333333', capacity: 6 },
-];
-
-// Times shown in the Weekly Schedule table (night-shift service: 9 PM → 6 AM).
-// "Pickup" = cab picks you up from home to office → start of the night shift
-//            (late evening: 9-11 PM).
-// "Drop"   = cab drops you home from office → end of the night shift
-//            (early morning of the next day: 4-6 AM).
-// "NA" is the default (no ride that leg).
-export const NONE = 'NA';
-export const PICKUP_TIMES = [NONE, '09:00 PM', '10:00 PM', '11:00 PM'];
-export const DROP_TIMES = [NONE, '04:00 AM', '05:00 AM', '06:00 AM'];
+// (There is no starter fleet any more. Cabs are registered by the drivers who
+// drive them, so an empty fleet is a real, meaningful state — "no coordinator has
+// added a cab yet" — rather than something to paper over with demo vehicles.)
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 

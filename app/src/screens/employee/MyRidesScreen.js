@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
-// MY RIDES SCREEN  (employee home)
-// Shows the logged-in employee's bookings and their status.
-// The "+ Book a Cab" button (bottom right) opens the booking form.
+// MY RIDES  (employee)
+// The cabs assigned to this employee's rostered shifts, with their status. Rides
+// are generated from the monthly roster, so there is nothing to book here — the
+// action is raising a change request against a ride.
 // ---------------------------------------------------------------------------
 
 import React from 'react';
@@ -41,7 +42,10 @@ export default function MyRidesScreen({ navigation }) {
           </View>
 
           <Text variant="bodyMedium" style={styles.detail}>
-            {item.date} · {item.shift}
+            {/* The shift's own start/end — a deadline (pickup) or
+                earliest-bound (drop), never a promised cab instant; the
+                driver/desk coordinate the exact timing. */}
+            {item.date} · {item.direction === 'Home → Office' ? 'by' : 'after'} {item.shift}
           </Text>
           <Text variant="bodyMedium" style={styles.detail}>
             Pickup: {item.pickup}{pickupSuffix}
@@ -82,7 +86,8 @@ export default function MyRidesScreen({ navigation }) {
             No rides yet
           </Text>
           <Text variant="bodyMedium" style={styles.emptyText}>
-            Tap “Book a Cab” to create your first booking.
+            Your cabs appear here once the transport desk assigns them to your
+            rostered shifts.
           </Text>
         </View>
       ) : (
@@ -94,11 +99,13 @@ export default function MyRidesScreen({ navigation }) {
         />
       )}
 
+      {/* Rides come from the roster, so there's nothing to "book" — the action
+          available here is flagging a change to one. */}
       <FAB
-        icon="plus"
-        label="Book a Cab"
+        icon="calendar-edit"
+        label="Change request"
         style={styles.fab}
-        onPress={() => navigation.navigate('BookCab')}
+        onPress={() => navigation.navigate('ChangeRequest')}
       />
       </View>
     </View>

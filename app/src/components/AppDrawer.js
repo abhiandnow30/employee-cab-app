@@ -17,16 +17,28 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COMPANY_NAME, companyLogo } from '../branding';
+import { colors } from '../theme';
 
 // Each menu item → which screen it opens.
+//
+// My Shift Calendar, Change Request and Feedback are deliberately NOT here: the
+// Home screen already puts them front and centre as tiles, and listing them in
+// both places made the menu longer without making anything reachable that wasn't
+// already one tap away. Home is the first item, so the tiles are never far.
+// Appended to the employee menu ONLY while it means something: someone with no
+// address/route yet, or with a request still in flight. A fully set-up rider has
+// nothing to do here, so it isn't a permanent row.
+export const CAB_SERVICE_ITEM = {
+  label: 'Cab Service', icon: 'car-clock', screen: 'CabServiceRequest',
+};
+
 export const DRAWER_ITEMS = [
   { label: 'Home', icon: 'home', screen: 'EmployeeHome' },
   { label: 'Profile', icon: 'account', screen: 'Profile' },
   { label: 'My Rides', icon: 'calendar-search', screen: 'MyRides' },
+  { label: 'Notifications', icon: 'bell', screen: 'Notifications' },
   { label: 'Ride History', icon: 'history', screen: 'RosterHistory' },
-  { label: 'Trip Cancel', icon: 'car-off', screen: 'TripCancel' },
   { label: 'Track Cab', icon: 'map-marker-radius', screen: 'TrackCab' },
-  { label: 'Feedback', icon: 'message-text', screen: 'Feedback' },
   { label: 'Rate Us', icon: 'star', screen: 'RateUs' },
 ];
 
@@ -39,19 +51,49 @@ export const DRIVER_DRAWER_ITEMS = [
 ];
 
 // Admin (transport desk) menu — the actions that used to be top buttons.
+// HR / Admin owns the SOURCE DATA and the policy: the monthly roster, who exists,
+// what the shifts mean, and the reporting. Day-to-day cab assignment is the
+// coordinator's job and deliberately absent here.
 export const ADMIN_DRAWER_ITEMS = [
-  { label: 'Dashboard', icon: 'view-dashboard', screen: 'Bookings' },
+  { label: 'Upload Roster', icon: 'file-upload-outline', screen: 'RosterUpload' },
+  { label: 'Shift Timings', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
+  // No "Exception Approvals" here. Nothing routes to HR any more: the company runs
+  // two scheduled rides and nothing else, so the requests that needed HR's
+  // sign-off (a cab after an extended shift, an emergency ride) no longer exist.
+  // What remains — leave, absent, drop a ride, shift changed — only ever cancels or
+  // re-codes a ride, which is the coordinator's job as they run the day.
   { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
-  { label: 'Messages', icon: 'email-outline', screen: 'Messages' },
-  { label: 'Manage Cabs', icon: 'car-multiple', screen: 'ManageCabs' },
-  { label: 'Manage Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
-  { label: 'Shift Roster', icon: 'calendar-account', screen: 'ShiftRoster' },
-  { label: 'Manage Timings', icon: 'clock-edit-outline', screen: 'ManageTimings' },
-  { label: 'Track Cabs', icon: 'map-marker-radius', screen: 'TrackCabs' },
+  // People who signed in with their company account but were never entered by
+  // HR, so they have no address or route and no cab can be sent for them. HR
+  // approves; the coordinator sets the route (same screen, see its header).
+  { label: 'Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
+  { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
+  // HR needs to SEE who is driving what — which cab a ride was given to, and which
+  // driver account is behind it — without owning the fleet. These two screens
+  // render read-only for the admin role; the coordinator keeps the controls.
+  { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
+  { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
+  { label: 'Cab Routes', icon: 'map-marker-path', screen: 'ManageTimings' },
   { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
   { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
   { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
+];
+
+// The COORDINATOR runs the day: turn the roster into assigned cabs, watch the
+// trips, keep the fleet current. No roster upload, no policy, no employee
+// records.
+export const COORDINATOR_DRAWER_ITEMS = [
+  { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
+  { label: 'Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
+  // The coordinator is who knows which route an address is on, so they triage
+  // these even though HR does the approving.
+  { label: 'Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
+  { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
+  { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
+  { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
+  { label: 'Messages', icon: 'email-outline', screen: 'Messages' },
+  { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
 ];
 
 const EMPTY_PW = { current: '', next: '', confirm: '' };
@@ -145,7 +187,12 @@ function ChangePasswordDialog({ visible, onDismiss, onChangePassword }) {
 }
 
 // Friendly label for a role.
-const ROLE_LABEL = { admin: 'Admin', driver: 'Driver', employee: 'Employee' };
+const ROLE_LABEL = {
+  admin: 'HR / Admin',
+  coordinator: 'Transport Coordinator',
+  driver: 'Driver',
+  employee: 'Employee',
+};
 
 // The signed-in user card at the bottom: name + role, expands on tap.
 function UserCard({ user, onChangePassword }) {
@@ -205,8 +252,12 @@ function UserCard({ user, onChangePassword }) {
 }
 
 // The brand strip + nav list + user card. Shared by both modes.
+// `counts` is { [screenName]: number } — how much is waiting on this person for
+// that screen. Rendered as a pill on the row, because a desk queue that only
+// announces itself once you open it is a queue that gets left.
 function DrawerBody({
-  user, items = DRAWER_ITEMS, onNavigate, onClose, onChangePassword, onLogout, activeScreen, permanent,
+  user, items = DRAWER_ITEMS, onNavigate, onClose, onChangePassword, onLogout,
+  activeScreen, permanent, counts = {},
 }) {
   return (
     <View style={styles.body}>
@@ -218,7 +269,7 @@ function DrawerBody({
         </Text>
         {!permanent ? (
           <Pressable onPress={onClose} hitSlop={10}>
-            <MaterialCommunityIcons name="close" size={22} color="#0D47A1" />
+            <MaterialCommunityIcons name="close" size={22} color={colors.primaryDark} />
           </Pressable>
         ) : null}
       </View>
@@ -227,12 +278,16 @@ function DrawerBody({
       <ScrollView style={styles.menu}>
         {items.map((item) => {
           const active = item.screen === activeScreen;
+          const waiting = counts[item.screen] || 0;
           return (
             <Pressable
               key={item.label}
               style={[styles.item, active && styles.itemActive]}
               onPress={() => onNavigate(item)}
               android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
+              accessibilityLabel={
+                waiting ? `${item.label}, ${waiting} waiting` : item.label
+              }
             >
               <MaterialCommunityIcons
                 name={item.icon}
@@ -243,6 +298,11 @@ function DrawerBody({
               <Text style={[styles.itemText, active && styles.itemTextActive]}>
                 {item.label}
               </Text>
+              {waiting ? (
+                <View style={styles.countPill}>
+                  <Text style={styles.countText}>{waiting > 99 ? '99+' : waiting}</Text>
+                </View>
+              ) : null}
             </Pressable>
           );
         })}
@@ -275,6 +335,7 @@ export default function AppDrawer({
   onChangePassword,
   onLogout,
   activeScreen,
+  counts,
   permanent = false,
 }) {
   // Permanent sidebar: a static left column, always on screen.
@@ -288,6 +349,7 @@ export default function AppDrawer({
           onChangePassword={onChangePassword}
           onLogout={onLogout}
           activeScreen={activeScreen}
+          counts={counts}
           permanent
         />
       </View>
@@ -308,6 +370,7 @@ export default function AppDrawer({
             onLogout={onLogout}
             onClose={onClose}
             activeScreen={activeScreen}
+            counts={counts}
           />
         </View>
         {/* Tapping outside the panel closes it */}
@@ -330,12 +393,12 @@ const styles = StyleSheet.create({
     width: '78%',
     maxWidth: 320,
     height: '100%',
-    backgroundColor: '#0D47A1', // dark blue
+    backgroundColor: colors.primaryDark,
   },
   permanentPanel: {
     width: 250,
     height: '100%',
-    backgroundColor: '#0D47A1', // dark blue
+    backgroundColor: colors.primaryDark,
   },
   body: { flex: 1 },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
@@ -353,7 +416,7 @@ const styles = StyleSheet.create({
   // sits at 20px like the nav icons; the 3px margin makes the column total 30px
   // so the brand name lands at 50px — exactly under the menu labels below.
   brandLogo: { width: 27, height: 30, marginRight: 3 },
-  brandName: { color: '#0D47A1', fontWeight: 'bold', fontSize: 16, flex: 1 },
+  brandName: { color: colors.primaryDark, fontWeight: 'bold', fontSize: 16, flex: 1 },
   menu: { flex: 1 }, // nav sits right below the brand band
   item: {
     flexDirection: 'row',
@@ -361,17 +424,27 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 20,
   },
-  itemActive: { backgroundColor: '#1565C0' }, // highlight current screen
+  itemActive: { backgroundColor: colors.primary }, // highlight current screen
   logoutItem: {
     marginTop: 8,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.15)',
   },
   itemIcon: { width: 30 },
-  itemText: { color: '#FFFFFF', fontSize: 16 },
+  itemText: { color: '#FFFFFF', fontSize: 16, flex: 1 },
   itemTextActive: { fontWeight: 'bold' },
+  countPill: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countText: { color: colors.primaryDark, fontSize: 12, fontWeight: 'bold' },
   userBox: {
-    backgroundColor: '#1E88E5',
+    backgroundColor: colors.primaryLight,
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderTopWidth: 1,

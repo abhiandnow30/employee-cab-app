@@ -1,27 +1,41 @@
 // ---------------------------------------------------------------------------
 // ADDRESS CHANGE REQUESTS  (admin)
-// The transport desk reviews employees' home-address change requests.
-//   • Approve → writes the new address onto the employee's profile and marks
-//               the request "Approved" (done atomically in the service).
-//   • Reject  → keeps the current address, marks the request "Rejected", with
-//               an optional reason the employee then sees on their profile.
-// Requests are live from Firestore; only an admin can read all of them or act
-// on them (enforced by the security rules).
+//
+// APPROVAL IS A REVIEW, NOT A RUBBER STAMP. The dialog opens with the requested
+// address EDITABLE and the employee's pickup route alongside it, because a move is
+// usually both: someone who moves across the city needs the new address AND the
+// route that collects that part of the city. Approving the address alone was a real
+// hole — the driver navigated to the new house while the rider stayed grouped with
+// their old neighbours, so the wrong cab collected them every day until somebody
+// noticed by hand.
+//
+//   • Approve → profile address + pickup route + the address copy on upcoming
+//               rides + the request itself, all in one atomic write.
+//   • Reject  → address unchanged, an optional reason recorded.
+// Either way the employee is notified, so the outcome isn't something they have to
+// discover by opening their profile.
+//
+// Requests are live from Firestore; only an admin can read all of them or act on
+// them (enforced by the security rules).
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import {
   Text, Card, Button, Divider, Chip, SegmentedButtons, Snackbar,
-  Portal, Dialog, TextInput,
+  Portal, Dialog, TextInput, HelperText,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
+import Dropdown from '../../components/Dropdown';
 import {
   subscribeAllAddressRequests, approveAddressRequest, rejectAddressRequest,
   REQUEST_STATUS,
 } from '../../services/addressRequests';
 import { colors } from '../../theme';
+
+// The dropdown value meaning "not on a route".
+const NO_ROUTE = '__none__';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -46,7 +60,7 @@ function StatusChip({ status }) {
   );
 }
 
-function RequestCard({ req, onApprove, onReject, busy }) {
+function RequestCard({ req, currentRoute, onApprove, onReject, busy }) {
   const isPending = req.status === REQUEST_STATUS.PENDING;
   return (
     <Card style={styles.card} mode="outlined">
@@ -78,6 +92,20 @@ function RequestCard({ req, onApprove, onReject, busy }) {
 
         <Text variant="labelMedium" style={[styles.fieldLabel, styles.newLabel]}>Reason</Text>
         <Text variant="bodyMedium" style={styles.fieldValue}>{req.reason || '—'}</Text>
+
+        {/* The route they're on today. Shown next to the addresses because that is
+            the comparison that matters: if the new address is in a different part
+            of the city, the route almost certainly has to move with it. */}
+        {isPending ? (
+          <>
+            <Text variant="labelMedium" style={[styles.fieldLabel, styles.newLabel]}>
+              Current pickup route
+            </Text>
+            <Text variant="bodyMedium" style={styles.fieldValue}>
+              {currentRoute || 'No route set'}
+            </Text>
+          </>
+        ) : null}
 
         {req.status === REQUEST_STATUS.REJECTED && req.rejectionReason ? (
           <View style={styles.rejectBox}>
@@ -123,13 +151,19 @@ function RequestCard({ req, onApprove, onReject, busy }) {
 }
 
 export default function AddressChangeRequestsScreen() {
-  const { currentUser } = useApp();
+  const { currentUser, employees, routeOptions } = useApp();
   const adminName = currentUser?.name || 'Admin';
   const [requests, setRequests] = useState([]);
   const [tab, setTab] = useState('pending');
   const [error, setError] = useState('');
   const [snack, setSnack] = useState('');
   const [busyId, setBusyId] = useState('');
+
+  // Approve dialog state — the address as it will be SAVED, and the route.
+  const [approveFor, setApproveFor] = useState(null);
+  const [approveAddress, setApproveAddress] = useState('');
+  const [approveRoute, setApproveRoute] = useState(NO_ROUTE);
+  const [approveError, setApproveError] = useState('');
 
   // Reject dialog state.
   const [rejectFor, setRejectFor] = useState(null);
@@ -146,24 +180,52 @@ export default function AddressChangeRequestsScreen() {
   );
   const data = tab === 'pending' ? pending : requests;
 
-  async function handleApprove(req) {
-    setError('');
+  // The route the employee is on RIGHT NOW, from their live profile — the request
+  // document doesn't carry it.
+  const currentRouteOf = (employeeId) =>
+    employees.find((e) => e.uid === employeeId)?.roster?.route || null;
+
+  function openApprove(req) {
+    setApproveError('');
+    // Seed with what they asked for, including the landmark they typed — the desk
+    // shouldn't have to retype it to keep it.
+    setApproveAddress(
+      [req.requestedAddress, req.landmark ? `Landmark: ${req.landmark}` : '']
+        .filter(Boolean)
+        .join(', ')
+    );
+    setApproveRoute(currentRouteOf(req.employeeId) || NO_ROUTE);
+    setApproveFor(req);
+  }
+
+  async function confirmApprove() {
+    const req = approveFor;
+    if (!req) return;
+    if (!approveAddress.trim()) {
+      setApproveError('The address cannot be empty.');
+      return;
+    }
+    setApproveError('');
     setBusyId(req.id);
     try {
-      // Approval also rewrites the address copy carried on the employee's
-      // upcoming rides, so drivers navigate to the new house rather than the old
-      // one. `syncedRides` says how many were corrected.
-      const { syncedRides } = await approveAddressRequest(req, adminName);
+      // Writes the profile address, the pickup route, the address copy on every
+      // upcoming ride, and the request — atomically. `syncedRides` says how many
+      // rides were corrected so drivers navigate to the new house.
+      const { syncedRides, route } = await approveAddressRequest(req, adminName, {
+        address: approveAddress,
+        route: approveRoute === NO_ROUTE ? '' : approveRoute,
+      });
+      setApproveFor(null);
       const who = req.employeeName || 'employee';
       setSnack(
-        syncedRides
-          ? `Approved — ${who}'s address updated on their profile and ${syncedRides} upcoming ride${
-              syncedRides > 1 ? 's' : ''
-            }.`
-          : `Approved — ${who}'s address updated.`
+        `Approved — ${who}'s address updated` +
+          (route ? `, route set to ${route}` : '') +
+          (syncedRides
+            ? `, and ${syncedRides} upcoming ride${syncedRides > 1 ? 's' : ''} corrected.`
+            : '.')
       );
     } catch (e) {
-      setError(e.message);
+      setApproveError(e.message);
     } finally {
       setBusyId('');
     }
@@ -209,7 +271,8 @@ export default function AddressChangeRequestsScreen() {
           renderItem={({ item }) => (
             <RequestCard
               req={item}
-              onApprove={handleApprove}
+              currentRoute={currentRouteOf(item.employeeId)}
+              onApprove={openApprove}
               onReject={openReject}
               busy={busyId === item.id}
             />
@@ -227,6 +290,66 @@ export default function AddressChangeRequestsScreen() {
       </View>
 
       <Portal>
+        {/* Review and save — not a rubber stamp. */}
+        <Dialog
+          visible={!!approveFor}
+          onDismiss={() => !busyId && setApproveFor(null)}
+          style={styles.dialog}
+        >
+          <Dialog.Title>Approve address change</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodySmall" style={styles.dialogText}>
+              Check the wording before saving — this is what drivers navigate to.
+            </Text>
+            <TextInput
+              label="Home address (as it will be saved)"
+              value={approveAddress}
+              onChangeText={setApproveAddress}
+              mode="outlined"
+              multiline
+              numberOfLines={3}
+              style={styles.input}
+            />
+
+            <Text variant="labelLarge" style={styles.dialogLabel}>
+              Pickup route
+            </Text>
+            <Dropdown
+              value={approveRoute}
+              options={[NO_ROUTE, ...routeOptions]}
+              onSelect={setApproveRoute}
+              format={(r) => (r === NO_ROUTE ? 'No route set' : r)}
+              compact={false}
+              leadingIcon="map-marker-path"
+            />
+            <HelperText type="info" visible>
+              A move usually changes the route too. Leave it as it is if the new
+              address is in the same pickup area — otherwise the cab keeps
+              collecting them with their old neighbours.
+            </HelperText>
+
+            {approveError ? (
+              <HelperText type="error" visible>
+                {approveError}
+              </HelperText>
+            ) : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setApproveFor(null)} disabled={!!busyId}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              icon="check"
+              onPress={confirmApprove}
+              loading={!!busyId}
+              disabled={!!busyId}
+            >
+              Approve &amp; save
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+
         <Dialog visible={!!rejectFor} onDismiss={() => setRejectFor(null)} style={styles.dialog}>
           <Dialog.Title>Reject request</Dialog.Title>
           <Dialog.Content>
@@ -288,4 +411,6 @@ const styles = StyleSheet.create({
   emptyText: { opacity: 0.7 },
   dialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
   dialogText: { marginBottom: 12, opacity: 0.8 },
+  dialogLabel: { marginTop: 14, marginBottom: 6 },
+  input: { backgroundColor: colors.surface },
 });

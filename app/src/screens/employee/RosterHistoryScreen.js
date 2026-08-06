@@ -8,7 +8,7 @@ import React from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import { Text, Card, Chip } from 'react-native-paper';
 import { useApp } from '../../context/AppContext';
-import { statusColors } from '../../theme';
+import { statusColors, colors } from '../../theme';
 import { SOURCE } from '../../data/mockData';
 
 function sourceLabel(source) {
@@ -45,7 +45,9 @@ export default function RosterHistoryScreen() {
                 {item.direction}
               </Text>
               <Text variant="bodyMedium" style={styles.detail}>
-                {item.date} · {item.shift}
+                {/* The shift's own start/end — a deadline (pickup) or
+                    earliest-bound (drop), never a promised cab instant. */}
+                {item.date} · {item.direction === 'Home → Office' ? 'by' : 'after'} {item.shift}
               </Text>
               <Text variant="bodyMedium" style={styles.detail}>
                 Pickup: {item.pickup}
@@ -69,7 +71,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sourceChip: { backgroundColor: '#E3F2FD' },
-  sourceChipText: { color: '#1565C0', fontSize: 12 },
+  sourceChipText: { color: colors.primary, fontSize: 12 },
   statusChipText: { color: 'white', fontSize: 12 },
   direction: { marginBottom: 2 },
   detail: { opacity: 0.8, marginTop: 2 },
