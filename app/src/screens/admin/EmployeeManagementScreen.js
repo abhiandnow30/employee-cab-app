@@ -195,7 +195,10 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
       setError('Email is required.');
       return;
     }
-    if ((form.password || '').length < 6) {
+    // Only a driver gets a password: they aren't in the company Microsoft
+    // directory. Employees and coordinators are invited instead and sign in
+    // with Microsoft, so there is no password to set or share.
+    if (isDriver && (form.password || '').length < 6) {
       setError('Temporary password must be at least 6 characters.');
       return;
     }
@@ -222,8 +225,9 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
         <Dialog.ScrollArea>
           <View style={styles.dialogBody}>
             <Text variant="bodySmall" style={styles.dialogHint}>
-              Creates a login account and profile. Share the email and temporary
-              password with them; they can change the password after signing in.
+              {isDriver
+                ? 'Creates a login account and profile. Share the email and temporary password with them; they can change the password after signing in.'
+                : 'No password is created. They sign in with their company Microsoft account and their profile is set up automatically the first time — just make sure the email below is right.'}
             </Text>
 
             <SegmentedButtons
@@ -258,17 +262,23 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
               keyboardType="email-address"
               style={styles.input}
             />
-            <TextInput
-              label="Temporary password"
-              value={form.password}
-              onChangeText={setField('password')}
-              mode="outlined"
-              autoCapitalize="none"
-              style={styles.input}
-            />
-            <HelperText type="info" visible style={styles.pwHint}>
-              At least 6 characters. They can change it after signing in.
-            </HelperText>
+            {/* Drivers only — everyone else signs in with Microsoft, so there is
+                no password for HR to invent, share, or for anyone to reuse. */}
+            {isDriver ? (
+              <>
+                <TextInput
+                  label="Temporary password"
+                  value={form.password}
+                  onChangeText={setField('password')}
+                  mode="outlined"
+                  autoCapitalize="none"
+                  style={styles.input}
+                />
+                <HelperText type="info" visible style={styles.pwHint}>
+                  At least 6 characters. They can change it after signing in.
+                </HelperText>
+              </>
+            ) : null}
             {/* Only employees ride, so only they get an ID and home address. */}
             {needsRiderFields ? (
               <TextInput

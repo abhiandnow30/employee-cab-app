@@ -7,16 +7,85 @@ this can be done from code or the `firebase` CLI.
 
 ## How it fits into this app
 
-- An employee's account and `employees/{uid}` profile are still always
-  created by the admin first, in **Employee Management**, exactly as before.
-- Microsoft is an *additional credential* an employee links onto that SAME
-  account from their **Profile** screen, after signing in once normally.
-  Linking never changes their `uid`, so nothing about their profile, ride
-  history, or the access-control rules changes.
-- A Microsoft sign-in that was never linked to an existing account lands on
-  the "Account not set up" screen with an explanation, rather than silently
-  creating a new blank profile — same fail-closed behavior the app already
-  guarantees for email/password (see `CLAUDE.md` → Access model).
+- **Every employee with a company Microsoft account can sign in — invited or
+  not.** Someone HR has entered (Employee Management, or the monthly roster
+  upload) arrives with their employee id, phone, address and pickup route
+  already filled in. Someone who hasn't been entered still gets in, with those
+  fields blank and flagged `selfProvisioned`, so they can reach the app and ask
+  the desk for a cab. This is why **step 1.3 below — single tenant — is not
+  optional**: it is the only thing that makes "every employee" mean your
+  company's employees rather than every Microsoft account in the world.
+- **This project stays on the free Spark plan — deliberately, no Cloud
+  Functions.** Cloud Functions (any version) require the paid Blaze plan just
+  to deploy at all, regardless of what the function does or how little it's
+  used — Artifact Registry/Cloud Build are billed services Google gates
+  behind it. Microsoft sign-in itself needs none of that: it is a built-in
+  Firebase Auth provider, and everything below runs client-side.
+
+### The normal path: one click, no password, ever
+
+HR does **not** create a login for anyone. An employee clicks **"Sign in with
+Microsoft"**, Firebase creates their account under a fresh uid, and the app
+builds their profile at `employees/{that uid}` from whichever of these applies:
+
+1. **HR entered them** (Employee Management, or the monthly roster upload). HR
+   files an **invite** at `employeeInvites/<their email>` holding name,
+   employee id, phone, address and route. The app claims it into their profile
+   and deletes the invite in the same batch (single-use). They arrive complete.
+2. **HR hasn't entered them.** They still get in — `selfProvisionsFromDirectory()`
+   creates an `employee` profile from the token, flagged `selfProvisioned`, with
+   **no** employee id, phone, address or route. Enough to open the app and ask
+   the desk for a cab; not enough to be routed into one until the desk fills
+   those in. This is what lets someone who isn't on this month's roster ask for
+   a ride at all.
+
+Either way: no password entry, no confirmation screen, nothing to explain. The
+uid is theirs from the start, so nothing ever needs re-keying.
+
+**What stops this being open sign-up:** `signedInWithDirectory()` in
+`firestore.rules` requires `sign_in_provider == 'microsoft.com'`, and the Azure
+app registration is single-tenant — so Microsoft itself refuses a token for
+anyone outside the company directory. `role` is pinned to `employee`, and
+`hasOnly()` pins the document to token-supplied fields, so no desk role and no
+self-chosen pickup route can come in this way. A *verified email* is
+deliberately not sufficient anywhere near this path: anyone can verify their
+own personal address.
+
+**Two consequences worth knowing:**
+
+- **Offboarding is IT's job now.** Deleting an `employees/<uid>` document no
+  longer locks anyone out — they recreate it on their next sign-in. Access ends
+  when their Microsoft account is disabled in Entra.
+- **Shifts import after first sign-in, not at upload.** A shift document is
+  keyed by uid, and a uid exists only once the person has signed in. The roster
+  screen's report re-derives live, so people are picked up as they arrive — no
+  re-upload needed.
+
+### Keep "one account per email address" enabled
+
+Firebase Console → **Authentication → Settings**. It's the default; leave it on.
+With it off, an employee who already has a password login would get a *second*
+account on Microsoft sign-in plus a fresh blank profile, orphaning their roster
+and ride history — instead of being sent down the confirm-and-link path below.
+
+### Fallbacks (existing accounts only)
+
+- If an employee **already has** an HR-created email/password account, their
+  profile sits under that older uid, and Firebase will not attach Microsoft to
+  it without proof of ownership. Those people get the **"Confirm your
+  Microsoft sign-in"** screen once: one password entry links Microsoft onto
+  their real account (same uid, no data moves), and every sign-in after that
+  is direct. New hires never see this.
+- This also covers `auth/account-exists-with-different-credential`, which
+  Firebase raises when "one account per email address" (the default) blocks a
+  Microsoft sign-in whose email matches an existing password login.
+- Someone with **neither** an account nor an invite falls through to
+  "Account not set up" — the same fail-closed behavior the app guarantees for
+  email/password (see `CLAUDE.md` → Access model). It never guesses.
+- The **manual link-from-Profile** flow (`ProfileScreen.js`) still exists for
+  anyone who'd rather link proactively.
+- **Drivers keep email/password logins** — they aren't in the company
+  directory, so there's no Microsoft account for them to use.
 
 ## 1. Register an app in Microsoft Entra ID
 
@@ -103,10 +172,17 @@ are baked in at bundle time, so a running server won't pick up the change.
 
 ## What employees actually do
 
-1. Admin creates their account in Employee Management, as always
-   (email + temporary password).
-2. They sign in once with that email/password.
-3. On their **Profile** screen, they tap **"Link Microsoft account"** and
-   sign in with their company Microsoft account.
-4. From then on, **"Sign in with Microsoft"** on the login screen works for
-   them too — email/password still works as well, side by side.
+1. They open the app and click **"Sign in with Microsoft"**.
+2. They're in. That's the whole flow, first time and every time.
+
+Nothing to brief them on, and no temporary password in circulation.
+
+HR's job is no longer to grant access — the directory does that — it's to make
+sure riders arrive **complete**. Someone HR entered has their address and
+pickup route already set and can be grouped into a cab immediately. Someone who
+self-provisioned shows up with neither, and the desk has to fill those in
+before they can be picked up.
+
+Email/password still works side by side for anyone who has a password (drivers,
+admins, and employees provisioned before this change), and **Profile → "Link
+Microsoft account"** still exists for linking proactively.

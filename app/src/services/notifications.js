@@ -33,6 +33,7 @@ export const NOTIFY = {
   REQUEST_RESOLVED: 'request_resolved',
   ADDRESS_RESOLVED: 'address_resolved',
   ROSTER_PUBLISHED: 'roster_published',
+  CAB_SERVICE_RESOLVED: 'cab_service_resolved',
 };
 
 // Create one notification. `payload` carries whatever the screen needs to deep
@@ -164,6 +165,28 @@ export function addressDecisionMessage({ approved, address, route, reason }) {
     title: 'Address change rejected',
     body:
       'Your home address is unchanged.' +
+      (reason ? `\n${reason}` : '\nContact the transport desk for details.'),
+  };
+}
+
+// The outcome of a "please set me up for cab service" request from someone who
+// signed in without being on the roster. Worth telling them either way: until
+// this is decided they have no route, so no cab can collect them, and the
+// waiting is otherwise invisible.
+export function cabServiceDecisionMessage({ approved, route, reason }) {
+  if (approved) {
+    return {
+      title: 'Cab service approved',
+      body:
+        'Your details have been confirmed by the transport desk.' +
+        (route ? `\nYou are on the ${route} pickup route.` : '') +
+        '\nYour rides will appear here once you are added to a shift roster.',
+    };
+  }
+  return {
+    title: 'Cab service request rejected',
+    body:
+      'The transport desk could not set up cab service from these details.' +
       (reason ? `\n${reason}` : '\nContact the transport desk for details.'),
   };
 }

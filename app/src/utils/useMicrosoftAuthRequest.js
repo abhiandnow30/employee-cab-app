@@ -62,7 +62,14 @@ export default function useMicrosoftAuthRequest() {
       redirectUri,
       responseType: AuthSession.ResponseType.IdToken,
       usePKCE: false, // implicit id_token flow — no code to exchange, no secret needed
-      extraParams: hashedNonce ? { nonce: hashedNonce } : {},
+      // `prompt: select_account` keeps this in step with the web popup
+      // (microsoftProvider() in services/auth.js): always let the person choose
+      // which work account to use, instead of silently reusing whichever
+      // session the system browser already holds.
+      extraParams: {
+        prompt: 'select_account',
+        ...(hashedNonce ? { nonce: hashedNonce } : {}),
+      },
     },
     discovery
   );

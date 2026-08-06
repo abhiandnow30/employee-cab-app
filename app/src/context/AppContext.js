@@ -20,17 +20,24 @@ import {
   changePassword as changePasswordSvc, sendPasswordReset,
   signInWithMicrosoftPopup, signInWithMicrosoftCredential,
   linkMicrosoftPopup, linkMicrosoftCredential, unlinkMicrosoft as unlinkMicrosoftSvc,
-  isMicrosoftLinked,
+  isMicrosoftLinked, microsoftCredentialFromResult, deleteCurrentUser,
+  linkMicrosoftOAuthCredential, microsoftCredentialFromError,
 } from '../services/auth';
 import {
   getOrCreateProfile, setPendingProfile, subscribeProfile, adminUpdateEmployee,
   adminCreateAccount, adminInviteEmployees, adminDeleteEmployee, subscribeEmployees,
-  updateEmployeeRoute,
+  updateEmployeeRoute, adminCreateInvite,
 } from '../services/profile';
 import {
   createAddressChangeRequest, subscribeMyAddressRequests,
   subscribeAllAddressRequests, REQUEST_STATUS as ADDRESS_STATUS,
 } from '../services/addressRequests';
+import {
+  createCabServiceRequest, subscribeMyCabServiceRequests,
+  subscribeCabServiceRequests, approveCabServiceRequest, rejectCabServiceRequest,
+  proposeRoute as proposeCabRequestRouteSvc, needsCabServiceSetup, pendingRequest,
+  CAB_REQUEST_STATUS,
+} from '../services/cabServiceRequests';
 import { createMessage } from '../services/messages';
 import {
   createBooking,
@@ -122,6 +129,13 @@ function connectionMessage(e) {
 
 export function AppProvider({ children }) {
   const [firebaseUser, setFirebaseUser] = useState(null); // raw Firebase auth user
+  // Set right after a FRESH Microsoft sign-in turns out to match nobody by
+  // uid — { email, credential } while we wait for them to type their existing
+  // password so we can link Microsoft onto that account instead. See
+  // loginWithMicrosoftPopup/loginWithMicrosoftCredential and
+  // confirmMicrosoftLink below, and the "Confirm your Microsoft sign-in"
+  // screen in App.js that renders while this is set.
+  const [microsoftConfirm, setMicrosoftConfirm] = useState(null);
   const [profile, setProfile] = useState(null); // employee profile from Firestore
   const [authReady, setAuthReady] = useState(false); // false until first auth check
   // True when someone is signed in but has NO profile document — an account that
@@ -155,6 +169,11 @@ export function AppProvider({ children }) {
   // widening the main query, since the two months rarely overlap in practice.
   const [prevMonthRosters, setPrevMonthRosters] = useState([]);
   const [myAddressRequests, setMyAddressRequests] = useState([]); // employee's own address-change requests (live)
+  // "Please set me up for cab service" — raised by anyone who signed in from the
+  // company directory without HR having entered them, so they have no address or
+  // pickup route yet. See services/cabServiceRequests.js.
+  const [myCabServiceRequests, setMyCabServiceRequests] = useState([]);
+  const [cabServiceRequests, setCabServiceRequests] = useState([]);
   // Every address request, for HR. Held here rather than only on its screen so the
   // menu can show a pending count — a request nobody opens is a request nobody
   // actions, and this queue had no way of announcing itself.
@@ -190,6 +209,10 @@ export function AppProvider({ children }) {
           const p = await getOrCreateProfile(user);
           setProfile(p || null);
           // A successful read that found nothing = genuinely not provisioned.
+          // (A fresh Microsoft sign-in with no profile is handled BEFORE this
+          // listener even sees a stable user — see loginWithMicrosoftPopup /
+          // loginWithMicrosoftCredential below, which delete the throwaway
+          // account and set microsoftConfirm instead, when that happens.)
           setProfileMissing(!p);
           setProfileError('');
         } catch (e) {
@@ -254,16 +277,67 @@ export function AppProvider({ children }) {
     }
   }
 
-  // --- Microsoft (Entra ID) sign-in — web ----------------------------------
+  // --- Microsoft (Entra ID) sign-in ----------------------------------------
   // Added alongside email/password, never instead of it. A brand-new
   // employee's account is always created by the admin first (Employee
-  // Management); Microsoft only becomes usable for THEM after they log in
-  // once normally and link it from Profile — see linkWithMicrosoftPopup.
+  // Management, with their real email on file).
+  //
+  // DIRECT sign-in (no prior "link from Profile" trip) works like this: a
+  // fresh Microsoft identity always gets a brand-new Firebase uid, which
+  // getOrCreateProfile (in the auth listener above) won't find a profile for.
+  // Rather than leave that as "Account not set up" forever, we check RIGHT
+  // HERE, immediately after the sign-in call — before the throwaway account
+  // is worth anything: if no profile exists for it, we delete that throwaway
+  // account (the client can always delete ITS OWN current user — no Admin
+  // SDK needed) and ask for their existing password instead. Confirming that
+  // signs into their REAL account and links the SAME Microsoft credential we
+  // already obtained onto it — same uid as always, no data ever moves. See
+  // confirmMicrosoftLink below for the second half.
+  //
+  // This is deliberately NOT a Cloud Function: reassigning an employees/{uid}
+  // doc (and everything that references it) to a different uid needs
+  // Admin-SDK privileges, and Cloud Functions require the paid Blaze plan
+  // just to deploy at all — this project stays on the free Spark plan.
+  async function handlePostMicrosoftSignIn(result) {
+    const user = result.user;
+    const p = await getOrCreateProfile(user);
+    if (p) return { ok: true }; // already matched — either linked before, or somehow already has a doc
+    const email = user.email;
+    const credential = microsoftCredentialFromResult(result);
+    try {
+      await deleteCurrentUser(); // best-effort cleanup of the throwaway account; also signs out
+    } catch (delErr) {
+      console.warn('[auth] could not delete throwaway Microsoft account:', delErr?.message);
+    }
+    setMicrosoftConfirm({ email, credential });
+    return { ok: true }; // not an error — App.js shows the confirm screen next, not UnprovisionedScreen
+  }
+
+  // Firebase's "one account per email address" setting (the default on every
+  // project) refuses to even create the throwaway account when the Microsoft
+  // email matches an existing password account — it throws this error out of
+  // signInWithPopup/signInWithCredential instead of returning a result, so
+  // handlePostMicrosoftSignIn never runs. Firebase still attaches the OAuth
+  // credential the person just proved ownership of to the error itself,
+  // which is exactly enough to reuse the same "Confirm your Microsoft
+  // sign-in" password screen as the no-profile-found case above — there's no
+  // throwaway account to delete here because one was never created.
+  function handleMicrosoftAccountExists(e) {
+    const email = e?.customData?.email;
+    const credential = microsoftCredentialFromError(e);
+    if (!email || !credential) return { ok: false, message: friendlyAuthError(e) };
+    setMicrosoftConfirm({ email, credential });
+    return { ok: true };
+  }
+
   async function loginWithMicrosoftPopup() {
     try {
-      await signInWithMicrosoftPopup();
-      return { ok: true };
+      const result = await signInWithMicrosoftPopup();
+      return await handlePostMicrosoftSignIn(result);
     } catch (e) {
+      if (e?.code === 'auth/account-exists-with-different-credential') {
+        return handleMicrosoftAccountExists(e);
+      }
       return { ok: false, message: friendlyAuthError(e) };
     }
   }
@@ -277,16 +351,41 @@ export function AppProvider({ children }) {
     }
   }
 
-  // --- Microsoft (Entra ID) sign-in — native (phone) -----------------------
   // `idToken`/`rawNonce` come from useMicrosoftAuthRequest's promptMicrosoftSignIn()
   // — see that hook for why both travel together.
   async function loginWithMicrosoftCredential(idToken, rawNonce) {
     try {
-      await signInWithMicrosoftCredential(idToken, rawNonce);
+      const result = await signInWithMicrosoftCredential(idToken, rawNonce);
+      return await handlePostMicrosoftSignIn(result);
+    } catch (e) {
+      if (e?.code === 'auth/account-exists-with-different-credential') {
+        return handleMicrosoftAccountExists(e);
+      }
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  // The second half of direct sign-in: the employee just typed the password
+  // for their REAL (old) account. Signing in with it makes that account the
+  // current user, and THEN we link the Microsoft credential captured earlier
+  // onto it — same order as the existing manual link-from-Profile flow, just
+  // triggered inline instead of requiring a trip to Profile.
+  async function confirmMicrosoftLink(password) {
+    if (!microsoftConfirm) return { ok: false, message: 'Nothing to confirm.' };
+    try {
+      await signIn(microsoftConfirm.email, password);
+      await linkMicrosoftOAuthCredential(microsoftConfirm.credential);
+      setMicrosoftConfirm(null);
       return { ok: true };
     } catch (e) {
       return { ok: false, message: friendlyAuthError(e) };
     }
+  }
+
+  // Give up on confirming — back to a plain signed-out state, same as if they
+  // just closed the Microsoft popup.
+  function cancelMicrosoftConfirm() {
+    setMicrosoftConfirm(null);
   }
 
   async function linkWithMicrosoftCredential(idToken, rawNonce) {
@@ -436,6 +535,39 @@ export function AppProvider({ children }) {
       currentUser.uid,
       setMyAddressRequests,
       onSubError('address requests')
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid, currentUser?.role]);
+
+  // --- Cab service requests (employee's own, live) ------------------------
+  // Someone who signed in from the directory without an invite has no address
+  // and no route, so no cab can be sent for them. This is how they see whether
+  // the desk has dealt with their request yet.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'employee' || !firestore) {
+      setMyCabServiceRequests([]);
+      return;
+    }
+    return subscribeMyCabServiceRequests(
+      currentUser.uid,
+      setMyCabServiceRequests,
+      onSubError('cab service requests')
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid, currentUser?.role]);
+
+  // --- Cab service requests (the desk's queue, live) ----------------------
+  // BOTH desk roles, unlike address requests: the coordinator is the one who
+  // knows which pickup route an address sits on, so they triage the route and
+  // the admin approves. The rules allow either to read.
+  useEffect(() => {
+    if (!firestore || !isDeskRole(currentUser?.role)) {
+      setCabServiceRequests([]);
+      return;
+    }
+    return subscribeCabServiceRequests(
+      setCabServiceRequests,
+      onSubError('cab service requests')
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.uid, currentUser?.role]);
@@ -1207,6 +1339,76 @@ export function AppProvider({ children }) {
     }
   }
 
+  // --- Cab service requests ------------------------------------------------
+
+  // Employee asks to be set up for cab service. This is the only route into the
+  // app for someone the directory let in but HR never entered: they have no
+  // address and no pickup route, so nothing can be sent for them until the desk
+  // fills those in. Returns { ok, message }.
+  async function requestCabService({ name, empId, phone, address, landmark, note }) {
+    if (!currentUser) return { ok: false, message: 'Not signed in.' };
+    const cleanName = (name || '').trim();
+    const cleanAddress = (address || '').trim();
+    const cleanPhone = (phone || '').replace(/[^0-9]/g, '');
+    if (!cleanName) return { ok: false, message: 'Please enter your name.' };
+    if (!(empId || '').trim()) return { ok: false, message: 'Please enter your employee ID.' };
+    if (!cleanAddress) {
+      return { ok: false, message: 'Please enter your home address — the cab has nowhere to go without it.' };
+    }
+    if (cleanPhone && cleanPhone.length !== 10) {
+      return { ok: false, message: 'Phone must be a 10-digit number.' };
+    }
+    if (pendingRequest(myCabServiceRequests)) {
+      return { ok: false, message: 'Your request is already with the transport desk.' };
+    }
+    try {
+      await createCabServiceRequest({
+        employeeId: currentUser.uid,
+        email: currentUser.email,
+        name: cleanName,
+        empId: (empId || '').trim(),
+        phone: cleanPhone,
+        address: cleanAddress,
+        landmark: (landmark || '').trim(),
+        note: (note || '').trim(),
+      });
+      return { ok: true };
+    } catch (e) {
+      return failure(e, 'Could not submit your request.');
+    }
+  }
+
+  // Coordinator names the pickup route for a request's address — the one field
+  // they may write here, so the admin approves with it already filled in.
+  async function proposeCabRequestRoute(requestId, route) {
+    try {
+      await proposeCabRequestRouteSvc(requestId, route);
+      return { ok: true };
+    } catch (e) {
+      return failure(e, 'Could not save the route.');
+    }
+  }
+
+  // Admin approves: the details land on the employee's profile, with a route, and
+  // they become a fully routed rider. Returns { ok, message }.
+  async function approveCabService(request, edits) {
+    try {
+      const res = await approveCabServiceRequest(request, currentUser?.name, edits);
+      return { ok: true, ...res };
+    } catch (e) {
+      return failure(e, 'Could not approve the request.');
+    }
+  }
+
+  async function rejectCabService(request, reason) {
+    try {
+      await rejectCabServiceRequest(request, currentUser?.name, reason);
+      return { ok: true };
+    } catch (e) {
+      return failure(e, 'Could not reject the request.');
+    }
+  }
+
   // Employee texts the transport desk (Contact Us). Returns { ok, message }.
   async function sendMessage(text) {
     if (!currentUser) return { ok: false, message: 'Not signed in.' };
@@ -1248,37 +1450,51 @@ export function AppProvider({ children }) {
     }
   }
 
-  // Admin creates a brand-new employee or driver (login account + profile)
-  // without losing their own session. Returns { ok, message }.
+  // Admin provisions a brand-new person, without losing their own session.
+  // Returns { ok, message }.
+  //
+  // TWO MECHANISMS, BY ROLE — see the invite section of services/profile.js:
+  //   • Employees and coordinators are in the company Microsoft directory, so
+  //     they get an INVITE and no password at all. They sign in with Microsoft
+  //     and their profile is created under their own uid on the spot. Nobody
+  //     invents, transmits or confirms a password.
+  //   • Drivers are not in the directory — there is no Microsoft account for
+  //     them to use — so they still get an email/password login here.
   async function adminCreateEmployee(form) {
     const email = (form.email || '').trim();
     const password = form.password || '';
     const role = form.role || 'employee';
     if (!email) return { ok: false, message: 'Email is required.' };
-    if (password.length < 6) {
-      return { ok: false, message: 'Temporary password must be at least 6 characters.' };
-    }
     if (role === 'employee' && !(form.empId || '').trim()) {
       return { ok: false, message: 'Employee ID is required.' };
     }
+    const profile = {
+      empId: (form.empId || '').trim(),
+      name: (form.name || '').trim() || email,
+      phone: (form.phone || '').trim(),
+      department: (form.department || '').trim(),
+      address: (form.address || '').trim(),
+      // Route them at creation. Skipping it here is how people ended up
+      // unrouted in the first place: the only place to set a route was a
+      // separate screen nobody went back to, so every new hire arrived on the
+      // coordinator's board under "No route set".
+      ...(form.route ? { roster: { route: String(form.route).trim() } } : {}),
+    };
     try {
-      await adminCreateAccount({
-        email,
-        password,
-        role,
-        profile: {
-          empId: (form.empId || '').trim(),
-          name: (form.name || '').trim() || email,
-          phone: (form.phone || '').trim(),
-          department: (form.department || '').trim(),
-          address: (form.address || '').trim(),
-          // Route them at creation. Skipping it here is how people ended up
-          // unrouted in the first place: the only place to set a route was a
-          // separate screen nobody went back to, so every new hire arrived on the
-          // coordinator's board under "No route set".
-          ...(form.route ? { roster: { route: String(form.route).trim() } } : {}),
-        },
-      });
+      if (role === 'driver') {
+        if (password.length < 6) {
+          return { ok: false, message: 'Temporary password must be at least 6 characters.' };
+        }
+        await adminCreateAccount({ email, password, role, profile });
+      } else {
+        await adminCreateInvite({
+          email,
+          role,
+          // adminCreateInvite takes `route` flat; the nested roster map above is
+          // the shape a real profile stores.
+          profile: { ...profile, route: form.route ? String(form.route).trim() : '' },
+        });
+      }
       return { ok: true };
     } catch (e) {
       return { ok: false, message: friendlyAuthError(e) };
@@ -1633,6 +1849,11 @@ export function AppProvider({ children }) {
         AddressRequests: addressRequests.filter((r) => r.status === ADDRESS_STATUS.PENDING)
           .length,
         Requests: pendingFor(changeRequests, currentUser.role).length,
+        // Somebody is signed in and cannot be sent a cab until this is dealt
+        // with, so it badges for both desk roles.
+        CabRequests: cabServiceRequests.filter(
+          (r) => r.status === CAB_REQUEST_STATUS.PENDING
+        ).length,
       }
     : {};
 
@@ -1692,6 +1913,9 @@ export function AppProvider({ children }) {
     linkWithMicrosoftCredential,
     unlinkMicrosoft,
     microsoftLinked,
+    microsoftConfirm,
+    confirmMicrosoftLink,
+    cancelMicrosoftConfirm,
     signup,
     logout,
     changePassword,
@@ -1758,6 +1982,17 @@ export function AppProvider({ children }) {
     homeAddressOf,
     myAddressRequests,
     addressRequests,
+    // Cab service requests (the "I'm not on the roster, please set me up" flow).
+    myCabServiceRequests,
+    cabServiceRequests,
+    requestCabService,
+    proposeCabRequestRoute,
+    approveCabService,
+    rejectCabService,
+    // Whether the SIGNED-IN employee still has no address or route, so the app
+    // can hold them at the setup form instead of a dashboard that shows nothing.
+    needsCabSetup: needsCabServiceSetup(currentUser),
+    myPendingCabRequest: pendingRequest(myCabServiceRequests),
     menuCounts,
     requestAddressChange,
     sendMessage,

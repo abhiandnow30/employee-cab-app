@@ -1078,3 +1078,95 @@ export function downloadTemplate(year, monthIndex) {
   XLSX.writeFile(book, fileName);
   return fileName;
 }
+
+// --- Verifying an import ----------------------------------------------------
+//
+// "Status: Success" says the write returned without error. It does NOT show what
+// landed, and the uploaded file itself is never kept — the bytes live only in a
+// local draft that is cleared once the import completes, so there is nothing to
+// re-download. Which is arguably the right thing: the question worth answering
+// is not "what did I upload" but "what is in the system now", and after an
+// edited day or a re-upload those are different questions.
+//
+// So this rebuilds a sheet FROM FIRESTORE — the rosters/<month>_<uid> documents
+// the coordinator's board actually reads. If a name is missing here, that person
+// has no shifts, whatever the upload said.
+//
+// The name a roster row was imported under. The field is `employeeName` (see
+// importRoster) — `name` is the profile's field, not this document's, and reading
+// it here is what made every row of the verify dialog say "no name on roster
+// row" while the sheet plainly had names in it. `namesByUid` is an optional
+// fallback from the live directory, for rows written before this field existed.
+function rosterRowName(row, namesByUid) {
+  return (
+    row?.employeeName ||
+    namesByUid?.get?.(row?.employeeId) ||
+    ''
+  );
+}
+
+// `rosters` is what fetchMonthRosters(month) returned. `month` is 'YYYY-MM'.
+export function buildStoredRosterSheet(month, rosters, namesByUid) {
+  const [yearStr, monthStr] = String(month || '').split('-');
+  const year = Number(yearStr);
+  const monthIndex = Number(monthStr) - 1;
+  const daysInMonth =
+    Number.isFinite(year) && monthIndex >= 0 ? new Date(year, monthIndex + 1, 0).getDate() : 31;
+  const label = monthIndex >= 0 ? `${MONTHS[monthIndex]} ${year}` : String(month);
+
+  const header = ['Employee ID', 'Employee Name', 'Route'];
+  for (let d = 1; d <= daysInMonth; d++) {
+    header.push(`${String(d).padStart(2, '0')}-${MONTHS[monthIndex] || ''}`);
+  }
+
+  const rows = (rosters || []).map((r) => {
+    const line = [r.empId || '', rosterRowName(r, namesByUid), r.route || ''];
+    for (let d = 1; d <= daysInMonth; d++) {
+      // `days` is keyed by day number as a string, and a day with no code is a
+      // genuine blank — not an error — so it stays empty rather than guessing.
+      line.push(r.days?.[String(d)] || r.days?.[d] || '');
+    }
+    return line;
+  });
+
+  const sheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, label.slice(0, 31));
+  return { book, fileName: `imported-roster-${month}.xlsx`, rowCount: rows.length };
+}
+
+// Download what is actually stored for a month (web — HR works from a desk).
+export function downloadStoredRoster(month, rosters, namesByUid) {
+  const { book, fileName, rowCount } = buildStoredRosterSheet(month, rosters, namesByUid);
+  XLSX.writeFile(book, fileName);
+  return { fileName, rowCount };
+}
+
+// A quick per-employee summary of what a month actually holds, for the verify
+// dialog: how many days carry a code, and how many of those are rides rather
+// than time off. Counting the CODED days matters because a roster row that
+// imported with every cell blank still counts as "1 employee imported" — it just
+// generates no rides, which is exactly the failure "Success" hides.
+// `policy` is the shift-policy MAP, keyed by code: { A: { label, providePickup,
+// provideDrop, working }, WO: { working: false }, ... } — the same object the
+// Shift Timings screen edits.
+export function summariseStoredRoster(rosters, policy, namesByUid) {
+  // A code only produces a ride if the policy says it provides a leg. Evening is
+  // the case that matters: it's a real working code with BOTH legs off today, so
+  // counting "working" days would promise rides that never appear.
+  const givesRide = (code) => {
+    const s = policy?.[code];
+    return !!s && (s.providePickup === true || s.provideDrop === true);
+  };
+  return (rosters || []).map((r) => {
+    const codes = Object.values(r.days || {}).filter(Boolean);
+    return {
+      employeeId: r.employeeId,
+      name: rosterRowName(r, namesByUid) || '(no name on roster row)',
+      empId: r.empId || '',
+      route: r.route || '',
+      codedDays: codes.length,
+      rideDays: codes.filter(givesRide).length,
+    };
+  });
+}

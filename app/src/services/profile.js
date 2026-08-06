@@ -55,8 +55,31 @@ export async function getOrCreateProfile(user) {
   const snap = await getDoc(ref);
   if (snap.exists()) return snap.data();
 
-  // No document. Only a sign-up in progress may create one.
-  if (!pending) return null;
+  // No document, and no sign-up in flight → this may be someone HR invited but
+  // who has never signed in before. Their invite is filed under their email
+  // (the only thing that links a brand-new Microsoft uid to anything HR
+  // entered), so try to claim it. This is what makes "Sign in with Microsoft"
+  // work the very first time with no password — see claimInvite below.
+  if (!pending) {
+    // An invite comes FIRST because it carries what the token can't: employee
+    // id, phone, home address and pickup route.
+    const claimed = await claimInvite(user);
+    if (claimed) return claimed;
+
+    // No invite, but they signed in with a company Microsoft account → they
+    // work here, so let them in. See selfProvisionFromDirectory below.
+    const selfMade = await selfProvisionFromDirectory(user);
+    if (selfMade) return selfMade;
+
+    // A Microsoft sign-in runs this function twice, concurrently: once from the
+    // sign-in call itself and once from the auth-state listener. Both may reach
+    // the writes above, and only one can win — the loser's write is an UPDATE to
+    // a doc it doesn't own, which the rules refuse. Re-read before reporting
+    // nothing: returning null here would light up "Account not set up" for an
+    // employee whose profile had just been created fine by the other caller.
+    const after = await getDoc(ref);
+    return after.exists() ? after.data() : null;
+  }
 
   // First time we've seen this user → create their profile document from what
   // they entered at sign-up. The admin sets their cab / roster afterwards. We
@@ -65,6 +88,186 @@ export async function getOrCreateProfile(user) {
   const data = { ...pending, email };
   await setDoc(ref, { ...data, createdAt: serverTimestamp() });
   return data;
+}
+
+// --- Invites: provisioning WITHOUT a password ------------------------------
+//
+// THE PROBLEM THIS SOLVES. Firebase Auth will never attach a new sign-in
+// method to an existing account without proof of ownership of that account.
+// So while HR pre-created an email/password login, "Sign in with Microsoft"
+// arrived as a DIFFERENT uid, found no employees/<uid> document, and the only
+// honest way through was to ask for the password once and link the two. That
+// works, but it means explaining a confirmation screen to every new hire.
+//
+// So HR stops creating the login. Instead it files the person's details under
+// employeeInvites/<their email>. Nobody has a password because no account
+// exists yet. The employee clicks "Sign in with Microsoft"; Firebase creates
+// their account; getOrCreateProfile finds no profile, finds their invite, and
+// copies it into employees/<their own uid>. One click, first time, nothing to
+// explain — and the uid is theirs from the start, so nothing ever needs
+// re-keying.
+//
+// Still HR-provisioned: without an invite there is nothing to claim, and the
+// rules refuse an invite carrying role 'admin'. The email is proven by our
+// single-tenant Entra directory rather than by a password HR had to invent,
+// transmit and hope nobody reused — see emailIsTrusted() in firestore.rules.
+//
+// Drivers keep email/password accounts: they are not in the company directory,
+// so there is no Microsoft account for them to sign in with.
+
+const INVITES = 'employeeInvites';
+
+// Invites are keyed by email, so the key has to be derived identically
+// everywhere — HR writing it, the rules checking it, the employee claiming it.
+export function inviteKey(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+// HR files an invite. `profile` carries the same fields as a real record:
+// { name, empId, phone, address, route }.
+export function adminCreateInvite({ email, role = 'employee', profile = {} }) {
+  if (!firestore) throw new Error('Backend not configured.');
+  if (!ASSIGNABLE_ROLES.includes(role)) {
+    throw new Error('Admin accounts are created in the Firebase console.');
+  }
+  const key = inviteKey(email);
+  if (!key) throw new Error('An email address is required.');
+  return setDoc(doc(firestore, INVITES, key), {
+    // Stored as well as used for the ID: the rules cross-check the two, so a
+    // mismatched copy can never be written.
+    email: key,
+    role,
+    name: String(profile.name || '').trim(),
+    empId: String(profile.empId || '').trim(),
+    phone: String(profile.phone || '').trim(),
+    address: String(profile.address || '').trim(),
+    ...(profile.route ? { roster: { route: String(profile.route).trim() } } : {}),
+    createdAt: serverTimestamp(),
+  });
+}
+
+// HR revokes an invite that was never claimed (wrong address, or they never
+// joined). Deleting it is enough — there is no account to disable.
+export function adminRevokeInvite(email) {
+  if (!firestore) throw new Error('Backend not configured.');
+  return deleteDoc(doc(firestore, INVITES, inviteKey(email)));
+}
+
+// Live list of invites nobody has claimed yet, so Employee Management can show
+// "invited, not signed in yet" rather than losing track of them. Each claim
+// deletes its own invite, so simply everything here is outstanding.
+export function subscribeInvites(cb, onError) {
+  if (!firestore) {
+    cb([]);
+    return () => {};
+  }
+  return onSnapshot(
+    collection(firestore, INVITES),
+    (snap) => cb(snap.docs.map((d) => ({ email: d.id, ...d.data() }))),
+    onError
+  );
+}
+
+// Turn the invite HR filed for this email into a real profile at
+// employees/<uid>, and consume the invite so it can only be used once. Returns
+// the new profile, or null if there is nothing to claim.
+//
+// Both writes go in ONE batch: a claim that created the profile but left the
+// invite behind would leave a second person able to claim the same identity if
+// the address were ever reassigned.
+async function claimInvite(user) {
+  const key = inviteKey(user?.email);
+  if (!firestore || !key) return null;
+  try {
+    const inviteRef = doc(firestore, INVITES, key);
+    const snap = await getDoc(inviteRef);
+    if (!snap.exists()) return null;
+
+    const invite = snap.data();
+    const data = {
+      name: invite.name || '',
+      empId: invite.empId || '',
+      phone: invite.phone || '',
+      address: invite.address || '',
+      // Copied, not chosen: the rules check this against the invite, and refuse
+      // an invite that says 'admin'.
+      role: invite.role || 'employee',
+      email: key,
+      ...(invite.roster ? { roster: invite.roster } : {}),
+    };
+
+    const batch = writeBatch(firestore);
+    // createdAt is stamped server-side but kept off the returned object — it's
+    // a write-only sentinel, same as in getOrCreateProfile above.
+    batch.set(doc(firestore, 'employees', user.uid), {
+      ...data,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.delete(inviteRef);
+    await batch.commit();
+    return data;
+  } catch (e) {
+    // A failed claim must not look like a crash: the caller falls back to
+    // "Account not set up" (or the password-confirm screen), which is the
+    // correct outcome for anyone with no valid invite. Logged because a
+    // permission-denied here usually means the rules haven't been deployed.
+    console.warn('[invite] could not claim invite for', key, '—', e?.message);
+    return null;
+  }
+}
+
+// --- Self-provisioning from the company directory ---------------------------
+//
+// WHY THIS EXISTS. The two scheduled rides come off the monthly roster, but an
+// employee who is NOT on that roster still needs a cab sometimes — and the way
+// they get one is to ask the desk. They cannot ask if they cannot sign in. So
+// signing in with a company Microsoft account is itself enough to get a
+// profile: if Entra says you work here, you work here.
+//
+// The gate is the PROVIDER, not the email address. Our Azure app registration
+// is single-tenant, so Microsoft refuses to issue a token for anyone outside
+// the company directory — that is what makes this "every employee" rather than
+// "everyone". A verified email would NOT be good enough: anyone can verify
+// their own personal address. Mirrored by signedInWithDirectory() in
+// firestore.rules, which is the half that actually enforces it.
+//
+// What they DON'T get: no employee id, no phone, no home address, and no
+// pickup route — a rider must not pick the route that decides which cab
+// collects them, and the address is HR-owned (it changes via
+// addressChangeRequests). They are flagged `selfProvisioned` so the desk can
+// tell them apart from someone HR entered and fill in what's missing. Until
+// then they can sign in and ask for a cab, but not be routed into one.
+const DIRECTORY_PROVIDER = 'microsoft.com';
+
+function signedInWithDirectory(user) {
+  return !!user?.providerData?.some((p) => p.providerId === DIRECTORY_PROVIDER);
+}
+
+async function selfProvisionFromDirectory(user) {
+  if (!firestore || !signedInWithDirectory(user)) return null;
+  const email = inviteKey(user?.email);
+  if (!email) return null;
+  // Keep these keys in step with the hasOnly() list in firestore.rules — the
+  // rules pin the document to exactly this shape, so an extra field here fails
+  // the whole write rather than being quietly dropped.
+  const data = {
+    name: String(user.displayName || '').trim() || email,
+    email,
+    role: 'employee',
+    selfProvisioned: true,
+  };
+  try {
+    await setDoc(doc(firestore, 'employees', user.uid), {
+      ...data,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return data;
+  } catch (e) {
+    console.warn('[directory] could not self-provision', email, '—', e?.message);
+    return null;
+  }
 }
 
 // --- Admin: manage drivers -------------------------------------------------
@@ -261,29 +464,52 @@ export async function adminInviteEmployees(people, { onProgress, role = 'employe
     try {
       if (!email) throw new Error('No email address for this person');
       if (!name) throw new Error('No name for this person');
-      const uid = await adminCreateAccount({
-        email,
-        password: throwawayPassword(),
-        role,
-        profile: {
-          name,
-          empId: String(p.empId || '').trim(),
-          phone: String(p.phone || '').trim(),
-          address: String(p.address || '').trim(),
-          // The route the sheet named, if any — the coordinator groups rides by it.
-          ...(p.route ? { roster: { route: String(p.route).trim() } } : {}),
-        },
-      });
-      // The account exists; now let them set their own password. A failure here is
-      // NOT a failed creation — the account is real and HR can resend the email —
-      // so it is reported separately rather than rolled back.
-      let invited = true;
-      try {
-        await sendPasswordResetEmail(getAuth(), email);
-      } catch {
-        invited = false;
+      const profile = {
+        name,
+        empId: String(p.empId || '').trim(),
+        phone: String(p.phone || '').trim(),
+        address: String(p.address || '').trim(),
+        route: p.route ? String(p.route).trim() : '',
+      };
+
+      if (role === 'driver') {
+        // Drivers are not in the company Microsoft directory, so they still get
+        // a real login plus a set-your-own-password email (see the invite
+        // section above for why employees no longer do).
+        const uid = await adminCreateAccount({
+          email,
+          password: throwawayPassword(),
+          role,
+          profile: {
+            name: profile.name,
+            empId: profile.empId,
+            phone: profile.phone,
+            address: profile.address,
+            // The route the sheet named, if any — the coordinator groups rides by it.
+            ...(profile.route ? { roster: { route: profile.route } } : {}),
+          },
+        });
+        // The account exists; now let them set their own password. A failure here is
+        // NOT a failed creation — the account is real and HR can resend the email —
+        // so it is reported separately rather than rolled back.
+        let invited = true;
+        try {
+          await sendPasswordResetEmail(getAuth(), email);
+        } catch {
+          invited = false;
+        }
+        created.push({ uid, email, name, empId: p.empId, invited });
+      } else {
+        // Employees: file an invite, create nothing. There is no account and no
+        // password, so there is also nothing that can half-succeed the way
+        // "login created but profile write failed" used to — and no set-password
+        // email to send, because they sign in with Microsoft instead.
+        await adminCreateInvite({ email, role, profile });
+        // `uid` is genuinely not known yet — it comes into existence when they
+        // first sign in. Null rather than absent so callers reading it get a
+        // clear value instead of undefined.
+        created.push({ uid: null, email, name, empId: p.empId, invited: true });
       }
-      created.push({ uid, email, name, empId: p.empId, invited });
     } catch (e) {
       failed.push({ email, name, empId: p?.empId, reason: inviteError(e) });
     }

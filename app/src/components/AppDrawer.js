@@ -25,6 +25,13 @@ import { colors } from '../theme';
 // Home screen already puts them front and centre as tiles, and listing them in
 // both places made the menu longer without making anything reachable that wasn't
 // already one tap away. Home is the first item, so the tiles are never far.
+// Appended to the employee menu ONLY while it means something: someone with no
+// address/route yet, or with a request still in flight. A fully set-up rider has
+// nothing to do here, so it isn't a permanent row.
+export const CAB_SERVICE_ITEM = {
+  label: 'Cab Service', icon: 'car-clock', screen: 'CabServiceRequest',
+};
+
 export const DRAWER_ITEMS = [
   { label: 'Home', icon: 'home', screen: 'EmployeeHome' },
   { label: 'Profile', icon: 'account', screen: 'Profile' },
@@ -57,6 +64,10 @@ export const ADMIN_DRAWER_ITEMS = [
   // What remains — leave, absent, drop a ride, shift changed — only ever cancels or
   // re-codes a ride, which is the coordinator's job as they run the day.
   { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
+  // People who signed in with their company account but were never entered by
+  // HR, so they have no address or route and no cab can be sent for them. HR
+  // approves; the coordinator sets the route (same screen, see its header).
+  { label: 'Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
   { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
   // HR needs to SEE who is driving what — which cab a ride was given to, and which
   // driver account is behind it — without owning the fleet. These two screens
@@ -75,6 +86,9 @@ export const ADMIN_DRAWER_ITEMS = [
 export const COORDINATOR_DRAWER_ITEMS = [
   { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
   { label: 'Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
+  // The coordinator is who knows which route an address is on, so they triage
+  // these even though HR does the approving.
+  { label: 'Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
   { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
   { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
   { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },

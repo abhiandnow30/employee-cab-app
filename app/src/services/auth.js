@@ -22,6 +22,7 @@ import {
   linkWithPopup,
   linkWithCredential,
   unlink,
+  deleteUser,
 } from 'firebase/auth';
 import { auth } from './firebase';
 
@@ -42,7 +43,15 @@ const MICROSOFT_TENANT_ID = process.env.EXPO_PUBLIC_MICROSOFT_TENANT_ID || 'comm
 
 function microsoftProvider() {
   const provider = new OAuthProvider('microsoft.com');
-  provider.setCustomParameters({ tenant: MICROSOFT_TENANT_ID });
+  provider.setCustomParameters({
+    tenant: MICROSOFT_TENANT_ID,
+    // Always show the account picker. Without this, Microsoft silently reuses
+    // whichever work account the browser already has a session for, so someone
+    // on a shared or previously-used machine gets signed in as that person with
+    // no chance to choose — and on a phone or kiosk there is no visible way to
+    // tell which identity was picked.
+    prompt: 'select_account',
+  });
   return provider;
 }
 
@@ -85,6 +94,59 @@ export function unlinkMicrosoft() {
 // checks before allowing a second credential of the same type to link.
 export function isMicrosoftLinked(firebaseUser) {
   return !!firebaseUser?.providerData?.some((p) => p.providerId === 'microsoft.com');
+}
+
+// --- Direct Microsoft sign-in, no Cloud Function ----------------------------
+// Cloud Functions need the paid Blaze plan just to deploy at all (Artifact
+// Registry/Cloud Build are billed regardless of what the function does or how
+// little it's used) — genuinely reassigning an employees/{uid} doc (and every
+// booking/roster that references it) to a new uid needs Admin-SDK privileges
+// a client can never safely have under firestore.rules either way. So instead
+// of migrating data to a fresh Microsoft-derived account, we do the opposite:
+// sign into the EXISTING account with a password (once, the first time) and
+// link the Microsoft credential onto THAT — same uid, zero data migration,
+// entirely within what the client SDK can already do. See AppContext.js
+// (microsoftConfirm state) and the "Confirm your Microsoft sign-in" screen in
+// App.js for how these fit together.
+
+// Pulls the reusable OAuthCredential out of a signInWithPopup/
+// signInWithCredential result — a plain data object (the actual token
+// values), so it stays usable even after the throwaway account that first
+// obtained it has been deleted (deleteCurrentUser, below).
+export function microsoftCredentialFromResult(result) {
+  return OAuthProvider.credentialFromResult(result);
+}
+
+// Same idea, but for when Firebase refuses the sign-in outright instead of
+// returning a result — see the auth/account-exists-with-different-credential
+// case in AppContext.js. Firebase still hands back the OAuth credential the
+// user proved ownership of, attached to the error itself, specifically so it
+// can be linked after the existing account is confirmed with a password.
+export function microsoftCredentialFromError(error) {
+  return OAuthProvider.credentialFromError(error);
+}
+
+// Deletes the CURRENTLY SIGNED IN user's own account — the one thing the
+// client SDK is always allowed to do to itself, no rules or Admin SDK needed.
+// Used to clean up the throwaway Microsoft-only account created by a fresh
+// sign-in that turned out to have no employees/{uid} doc, rather than leaving
+// an orphaned account behind every time someone's first Microsoft attempt
+// needs a password confirmation.
+export function deleteCurrentUser() {
+  const user = auth?.currentUser;
+  if (!user) return Promise.resolve();
+  return deleteUser(user);
+}
+
+// Links an already-obtained OAuthCredential (from microsoftCredentialFromResult)
+// onto whichever account is CURRENTLY signed in — used right after signing
+// into the employee's real (old) account with their password, to attach
+// Microsoft to it. Distinct from linkMicrosoftCredential/linkMicrosoftPopup
+// above, which build a credential themselves for the manual Profile-page flow.
+export function linkMicrosoftOAuthCredential(credential) {
+  const user = auth?.currentUser;
+  if (!user) throw new Error('You are not signed in.');
+  return linkWithCredential(user, credential);
 }
 
 export function signIn(email, password) {

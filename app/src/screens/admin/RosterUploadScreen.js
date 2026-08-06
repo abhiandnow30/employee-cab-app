@@ -36,7 +36,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import Dropdown from '../../components/Dropdown';
 import {
-  parseRosterFile, validateRoster, downloadTemplate, ERROR_KINDS,
+  parseRosterFile, validateRoster, ERROR_KINDS,
+  fetchMonthRosters, summariseStoredRoster, downloadStoredRoster,
 } from '../../services/roster';
 import { subscribeEmployees, adminInviteEmployees } from '../../services/profile';
 import { ALL_SHIFT_CODES, SHIFT_COLORS, shiftSummary } from '../../data/shifts';
@@ -97,6 +98,13 @@ export default function RosterUploadScreen({ navigation }) {
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [deleteFor, setDeleteFor] = useState(null); // history entry pending removal confirmation
   const [deleting, setDeleting] = useState(false);
+  // "Show me what actually landed" — the history entry being inspected, the
+  // per-employee summary read back from Firestore, and the raw docs (kept so the
+  // sheet can be rebuilt for download without a second read).
+  const [verifyFor, setVerifyFor] = useState(null);
+  const [verifyRows, setVerifyRows] = useState(null); // null = still loading
+  const [verifyRaw, setVerifyRaw] = useState([]);
+  const [verifyError, setVerifyError] = useState('');
   const [importProgress, setImportProgress] = useState(null); // { done, total } while writing
   const [showAllErrors, setShowAllErrors] = useState(false);
   // Closed by default. This grid is a diagnostic for "did you read my file
@@ -228,10 +236,14 @@ export default function RosterUploadScreen({ navigation }) {
     clearDraft();
   }
 
-  // Create accounts for the people this sheet names who don't have one. Their
-  // shifts then import on the next render — the report re-derives as soon as the
-  // employees subscription reports the new documents, so there is nothing to
-  // re-upload and no second button to press.
+  // Invite the people this sheet names who don't have a profile yet. No account
+  // and no password is created — each invite is claimed automatically the first
+  // time that person signs in with Microsoft (see services/profile.js).
+  //
+  // Their shifts import once they have signed in at least once, because a shift
+  // document is keyed by uid and a uid only exists from then on. The report
+  // re-derives live off the employees subscription, so the sheet on screen
+  // picks them up as they arrive — nothing to re-upload.
   async function doInvite() {
     const people = (report?.creatable || []).map((r) => ({
       email: r.email,
@@ -252,8 +264,8 @@ export default function RosterUploadScreen({ navigation }) {
       setInviteResult(res);
       setSnack(
         res.failedCount
-          ? `Created ${res.createdCount}, ${res.failedCount} could not be created`
-          : `Created ${res.createdCount} employee${res.createdCount === 1 ? '' : 's'} — each has been emailed a link to set their password`
+          ? `Invited ${res.createdCount}, ${res.failedCount} could not be invited`
+          : `Invited ${res.createdCount} employee${res.createdCount === 1 ? '' : 's'} — they sign in with Microsoft, no password needed`
       );
     } catch (e) {
       setError(e.message || 'Could not create the accounts.');
@@ -420,6 +432,49 @@ export default function RosterUploadScreen({ navigation }) {
     if (!res?.ok) setError(res?.message || 'Could not remove that record.');
   }
 
+  // Live directory names, keyed by uid — the fallback when a roster row carries
+  // no name of its own (rows written before `employeeName` existed).
+  const namesByUid = useMemo(
+    () => new Map((employees || []).map((e) => [e.uid, (e.name || '').trim()])),
+    [employees]
+  );
+
+  // --- Verify an import ------------------------------------------------------
+  //
+  // "Success" only tells you the write didn't throw. It can't tell you a row
+  // imported with every cell blank, or that a person the sheet named never
+  // matched an account — both of which look identical in the history table and
+  // produce no rides. So this reads the rosters/<month>_<uid> documents back out
+  // of Firestore: what's here is what the coordinator's board will see.
+  async function openVerify(entry) {
+    setVerifyFor(entry);
+    setVerifyRows(null);
+    setVerifyError('');
+    try {
+      const stored = await fetchMonthRosters(entry.month);
+      setVerifyRows(summariseStoredRoster(stored, shiftPolicy, namesByUid));
+      setVerifyRaw(stored);
+    } catch (e) {
+      setVerifyError(e?.message || 'Could not read that month back.');
+    }
+  }
+
+  // Download what's STORED, not what was uploaded — the original file's bytes
+  // are only ever kept in the local draft, which is cleared on import.
+  function downloadVerified() {
+    if (!verifyRaw?.length) return;
+    try {
+      const { fileName, rowCount } = downloadStoredRoster(
+        verifyFor.month,
+        verifyRaw,
+        namesByUid
+      );
+      setSnack(`Downloaded ${fileName} — ${rowCount} employee row(s) as stored.`);
+    } catch (e) {
+      setVerifyError(e?.message || 'Could not build that file.');
+    }
+  }
+
   // --- Web-only guard -------------------------------------------------------
   if (Platform.OS !== 'web') {
     return (
@@ -556,16 +611,13 @@ export default function RosterUploadScreen({ navigation }) {
               <Button mode="contained" icon="folder-open" onPress={pickFile} disabled={busy}>
                 Choose file
               </Button>
-              <Button
-                mode="text"
-                icon="download"
-                onPress={() => {
-                  const name = downloadTemplate(year, new Date().getMonth());
-                  setSnack(`Template downloaded: ${name}`);
-                }}
-              >
-                Download sample template
-              </Button>
+              {/* No "Download sample template" here, at HR's request: it sat
+                  next to Choose file and read as "download the sheet I just
+                  uploaded", which it never was. To see what a month actually
+                  holds, use the eye button on its Import history row — that
+                  rebuilds a sheet from what's stored. buildTemplate() in
+                  services/roster.js is still there if a blank starter sheet is
+                  ever wanted again. */}
             </View>
 
             {/* What happened to the file you just chose — right here, not buried
@@ -1309,7 +1361,12 @@ export default function RosterUploadScreen({ navigation }) {
                       <DataTable.Header>
                         <DataTable.Title style={styles.histColMonth}>Month</DataTable.Title>
                         <DataTable.Title style={styles.histColFile}>File</DataTable.Title>
-                        <DataTable.Title style={styles.histColImported} numeric>
+                        {/* NOT `numeric`. Right-aligning this pushed "11
+                            Employees" flush against the left-aligned Date cell
+                            beside it, so the two read as one run-together value
+                            ("11 Employees06 Aug 2026") and the headers as
+                            "ImportedDate". */}
+                        <DataTable.Title style={styles.histColImported}>
                           Imported
                         </DataTable.Title>
                         <DataTable.Title style={styles.histColDate}>Date</DataTable.Title>
@@ -1333,8 +1390,8 @@ export default function RosterUploadScreen({ navigation }) {
                                 </Text>
                               </View>
                             </DataTable.Cell>
-                            <DataTable.Cell style={styles.histColImported} numeric>
-                              {ok ? `${h.importedCount ?? h.valid} Employees` : '—'}
+                            <DataTable.Cell style={styles.histColImported}>
+                              {ok ? `${h.importedCount ?? h.valid} employees` : '—'}
                             </DataTable.Cell>
                             <DataTable.Cell style={styles.histColDate}>
                               {formatDateOnly(h.uploadedAt)}
@@ -1355,6 +1412,17 @@ export default function RosterUploadScreen({ navigation }) {
                               </View>
                             </DataTable.Cell>
                             <DataTable.Cell style={styles.histColActions}>
+                              {/* "Success" only means the write didn't error.
+                                  This opens what actually landed in Firestore
+                                  for that month, which is the thing worth
+                                  checking. */}
+                              <IconButton
+                                icon="table-eye"
+                                size={18}
+                                iconColor={colors.primary}
+                                onPress={() => openVerify(h)}
+                                accessibilityLabel="See what was imported for this month"
+                              />
                               <IconButton
                                 icon="delete"
                                 size={18}
@@ -1410,6 +1478,116 @@ export default function RosterUploadScreen({ navigation }) {
           </Dialog.Content>
           <Dialog.Actions>
             <Button onPress={() => setHelpOpen(false)}>Got it</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      {/* What actually landed for this month — read back out of Firestore */}
+      <Portal>
+        <Dialog
+          visible={!!verifyFor}
+          onDismiss={() => setVerifyFor(null)}
+          style={styles.verifyDialog}
+        >
+          <Dialog.Title>
+            What's stored for {verifyFor?.monthLabel || verifyFor?.month}
+          </Dialog.Title>
+          <Dialog.ScrollArea>
+            <ScrollView contentContainerStyle={styles.verifyBody}>
+              <Text variant="bodySmall" style={styles.verifyIntro}>
+                Read straight from the roster documents the coordinator's board
+                uses — not from the upload log. If somebody isn't listed here,
+                they have no shifts this month whatever the upload said.
+              </Text>
+
+              {verifyError ? (
+                <Text variant="bodyMedium" style={styles.verifyError}>
+                  {verifyError}
+                </Text>
+              ) : verifyRows === null ? (
+                <View style={styles.verifyLoading}>
+                  <ActivityIndicator />
+                  <Text variant="bodySmall" style={styles.verifyIntro}>
+                    Reading {verifyFor?.month}…
+                  </Text>
+                </View>
+              ) : verifyRows.length === 0 ? (
+                <Text variant="bodyMedium" style={styles.verifyError}>
+                  Nothing is stored for this month. The upload was logged as
+                  successful but wrote no roster rows — re-upload the sheet and
+                  check the validation summary before importing.
+                </Text>
+              ) : (
+                <>
+                  <Text variant="bodyMedium" style={styles.verifyCount}>
+                    {verifyRows.length} employee row(s) stored ·{' '}
+                    {verifyRows.filter((r) => r.rideDays > 0).length} generate rides
+                  </Text>
+                  {/* Two numbers, because they fail differently: a row can import
+                      with every cell blank (codedDays 0), and a row can be full of
+                      Evening/Week Off codes that legitimately produce no cab
+                      (rideDays 0). "Success" hides both. */}
+                  <DataTable>
+                    <DataTable.Header>
+                      <DataTable.Title style={styles.vColName}>Employee</DataTable.Title>
+                      <DataTable.Title style={styles.vColRoute}>Route</DataTable.Title>
+                      <DataTable.Title style={styles.vColNum}>Days</DataTable.Title>
+                      <DataTable.Title style={styles.vColNum}>Rides</DataTable.Title>
+                    </DataTable.Header>
+                    {verifyRows.map((r) => (
+                      <DataTable.Row key={r.employeeId}>
+                        <DataTable.Cell style={styles.vColName}>
+                          <View>
+                            <Text variant="bodySmall" numberOfLines={1}>
+                              {r.name}
+                            </Text>
+                            <Text variant="bodySmall" style={styles.histFileMeta}>
+                              {r.empId || 'no ID'}
+                            </Text>
+                          </View>
+                        </DataTable.Cell>
+                        <DataTable.Cell style={styles.vColRoute}>
+                          <Text
+                            variant="bodySmall"
+                            style={r.route ? undefined : styles.verifyWarn}
+                            numberOfLines={1}
+                          >
+                            {r.route || 'No route set'}
+                          </Text>
+                        </DataTable.Cell>
+                        <DataTable.Cell style={styles.vColNum}>
+                          <Text
+                            variant="bodySmall"
+                            style={r.codedDays ? undefined : styles.verifyWarn}
+                          >
+                            {r.codedDays}
+                          </Text>
+                        </DataTable.Cell>
+                        <DataTable.Cell style={styles.vColNum}>
+                          <Text
+                            variant="bodySmall"
+                            style={r.rideDays ? undefined : styles.verifyWarn}
+                          >
+                            {r.rideDays}
+                          </Text>
+                        </DataTable.Cell>
+                      </DataTable.Row>
+                    ))}
+                  </DataTable>
+                </>
+              )}
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button onPress={() => setVerifyFor(null)}>Close</Button>
+            <Button
+              mode="contained"
+              icon="download"
+              onPress={downloadVerified}
+              disabled={!verifyRaw?.length}
+            >
+              Download as .xlsx
+            </Button>
           </Dialog.Actions>
         </Dialog>
       </Portal>
@@ -1697,13 +1875,27 @@ const styles = StyleSheet.create({
   progressBar: { height: 8, borderRadius: 4 },
   progressText: { color: colors.muted, textAlign: 'center' },
 
-  historyTable: { minWidth: 640 },
+  verifyDialog: { width: '100%', maxWidth: 640, alignSelf: 'center' },
+  verifyBody: { paddingBottom: 8 },
+  verifyIntro: { color: colors.muted, marginBottom: 8, lineHeight: 18 },
+  verifyCount: { fontWeight: 'bold', marginBottom: 4 },
+  verifyError: { color: colors.danger, lineHeight: 20 },
+  verifyLoading: { alignItems: 'center', paddingVertical: 24, gap: 8 },
+  // Amber, not red: a zero here is worth looking at but is sometimes correct
+  // (a month of Week Offs), so it flags rather than accuses.
+  verifyWarn: { color: '#B26A00', fontWeight: '700' },
+  vColName: { flex: 2.2 },
+  vColRoute: { flex: 1.6 },
+  vColNum: { flex: 0.7, justifyContent: 'center' },
+  historyTable: { minWidth: 720 },
   histColMonth: { flex: 1.1 },
   histColFile: { flex: 2 },
-  histColImported: { flex: 1.4 },
+  // paddingRight keeps the count clear of the date column even if this table is
+  // ever squeezed narrower than its minWidth.
+  histColImported: { flex: 1.4, paddingRight: 12 },
   histColDate: { flex: 1.2 },
   histColStatus: { flex: 1.2 },
-  histColActions: { flex: 0.6, justifyContent: 'flex-end' },
+  histColActions: { flex: 1, justifyContent: 'flex-end' },
   histFileName: { fontWeight: '600', color: colors.text },
   histFileMeta: { color: colors.muted, marginTop: 1 },
   histStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },

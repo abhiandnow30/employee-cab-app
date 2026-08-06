@@ -70,10 +70,67 @@ service cloud.firestore {
     // cab: a driver with no cab (cabId == null) must NOT match unassigned
     // bookings (whose assignedCabId is also null), or they'd be able to read
     // every pending booking in the company.
+    //
+    // Both sides of the link are checked, not just my own profile's `cabId`.
+    // The desk is the only writer of `cabs/<cabId>.driverUid` (see the `cabs`
+    // match block), so cross-checking it here is what makes "a driver gets
+    // access to a cab only once the desk assigns it" an actual server-side
+    // guarantee rather than something that merely holds as long as no other
+    // rule or client bug lets a stray `cabId` land on a driver's profile.
     function isDriverForCab(cabId) {
       return cabId != null
         && myRole() == 'driver'
-        && myData().get('cabId', null) == cabId;
+        && myData().get('cabId', null) == cabId
+        && get(/databases/$(database)/documents/cabs/$(cabId)).data.get('driverUid', null)
+             == request.auth.uid;
+    }
+
+    // The email on the caller's ID token, lowercased — the key an invite is
+    // filed under (see the employeeInvites block below). Firebase puts this
+    // claim on the token itself from the identity provider; it is not
+    // something the client can set.
+    function myEmail() {
+      return signedIn() ? request.auth.token.get('email', '').lower() : '';
+    }
+
+    // Is the email on this token good enough to prove WHO the caller is?
+    //
+    // This gate is the whole security of invite-claiming. Without it, anyone
+    // could self-register an email/password account using a colleague's
+    // address (the Sign Up screen lets drivers self-register) and then claim
+    // that colleague's invite, inheriting their role and home address.
+    //
+    // Two ways to satisfy it:
+    //   • the provider asserted the address is verified, or
+    //   • the caller signed in through Microsoft — our single-tenant Entra
+    //     directory, so the address it asserts IS the company's own record of
+    //     who this person is. Named explicitly because Firebase does not
+    //     always mark an OIDC provider's email verified, and a claim that
+    //     silently fails here would surface as "Account not set up".
+    function emailIsTrusted() {
+      return signedIn() && (
+        request.auth.token.get('email_verified', false) == true
+        || signedInWithDirectory()
+      );
+    }
+
+    // Did this caller authenticate through the COMPANY DIRECTORY (Microsoft
+    // Entra), as opposed to any other method?
+    //
+    // This is a stronger claim than emailIsTrusted() and the two are not
+    // interchangeable. `email_verified` only proves the person can read that
+    // mailbox — someone can verify their own personal address and satisfy it.
+    // This proves the identity came from our own Entra tenant, which is why it
+    // is the gate on self-provisioning below: the app registration in Azure is
+    // SINGLE-TENANT, so Microsoft itself refuses to issue a token for anyone
+    // outside the company directory.
+    //
+    // IF THAT AZURE REGISTRATION IS EVER CHANGED to multi-tenant or 'common',
+    // this stops meaning "works here" and every Microsoft account on the
+    // internet can self-provision. See MICROSOFT_SIGNIN_SETUP.md step 1.3.
+    function signedInWithDirectory() {
+      return signedIn()
+        && request.auth.token.get('firebase', {}).get('sign_in_provider', '') == 'microsoft.com';
     }
 
     // `createdAt`-style fields must be the server's clock, never the device's —
@@ -116,7 +173,9 @@ service cloud.firestore {
         && request.resource.data.uploadedBy == request.auth.uid
         && isServerTime('uploadedAt');
       allow update: if isAdmin(); // status: importing → imported
-      allow delete: if false;     // keep the history
+      // Deleting a log entry does not touch the rosters/<month>_<uid> rows the
+      // import wrote — this only lets HR tidy the list, not undo an import.
+      allow delete: if isAdmin();
     }
     // --- Change requests (the exception workflow) ---------------------------
     // How reality differs from the roster on one day: leave, absent, a shift that
@@ -132,13 +191,12 @@ service cloud.firestore {
     //   delete → never: these are the record of why a rostered ride didn't run.
     match /changeRequests/{reqId} {
 
-      // The one routing decision an employee is allowed to express is the one the
-      // policy already dictates for the type they picked.
+      // Every request goes to the coordinator — nothing an employee can raise
+      // commits a cab beyond the two scheduled rides, so there is no HR queue to
+      // aim at. Pinned here as well as in the client so a stale bundle (or a
+      // hand-rolled write) can't route one somewhere nobody is looking.
       function correctlyRouted() {
-        let d = request.resource.data;
-        return d.type == 'shift_extended'
-          ? d.routedTo == 'admin'
-          : d.routedTo == 'coordinator';
+        return request.resource.data.routedTo == 'coordinator';
       }
 
       allow read: if signedIn()
@@ -220,15 +278,181 @@ service cloud.firestore {
           ));
       }
 
+      // No CREATE may plant a `cabId` — linking a driver to a cab is exclusively
+      // a coordinator UPDATE (`coordinatorLinkingCab()` below), so every new
+      // profile (self-registered, desk-created, or admin-created) starts
+      // unlinked. Without this a self-registering driver could set
+      // `role: 'driver', cabId: '<any real cab id>'` in the very same write
+      // that creates their profile and skip the desk's assignment entirely —
+      // the `role` pin alone does not stop that, since it says nothing about
+      // any other field.
+      function createsUnlinked() {
+        return request.resource.data.get('cabId', null) == null;
+      }
+
+      // CLAIMING AN INVITE — how an employee's profile gets created without
+      // anyone ever typing a password.
+      //
+      // HR files the person's details under employeeInvites/<their email>. The
+      // first time they sign in with Microsoft, Firebase gives them a brand-new
+      // uid, and this rule lets THAT uid create its own profile — but only by
+      // copying the invite HR wrote for their own verified email. So the
+      // account is still provisioned by HR; the employee merely picks up what
+      // is already addressed to them.
+      //
+      // Why this cannot be used to get in off the street:
+      //   • an invite must already exist for this exact email — HR's decision,
+      //     and nobody else can write that collection;
+      //   • emailIsTrusted() means the address came from our own Entra
+      //     directory (or was verified), so it cannot be borrowed;
+      //   • `role` is copied FROM the invite, and the invite block below
+      //     refuses to store role 'admin' — so this can never mint a desk
+      //     account, no matter what the client sends.
+      function myInvite() {
+        return get(/databases/$(database)/documents/employeeInvites/$(myEmail())).data;
+      }
+      function createsFromInvite() {
+        return request.auth.uid == uid
+          && emailIsTrusted()
+          && myEmail() != ''
+          && exists(/databases/$(database)/documents/employeeInvites/$(myEmail()))
+          && request.resource.data.get('role', '') == myInvite().get('role', '')
+          && request.resource.data.get('role', '') != 'admin'
+          && request.resource.data.get('email', '') == myEmail();
+      }
+
+      // SELF-PROVISIONING FROM THE COMPANY DIRECTORY.
+      //
+      // Anyone who signs in with their company Microsoft account gets an
+      // employee profile, invite or not. The reason is operational: an employee
+      // who is NOT on this month's roster still needs to be able to open the app
+      // and ask the desk for a cab. Making that wait on HR adding them first is
+      // what left people with no way to ask.
+      //
+      // What keeps this from being open registration:
+      //   • signedInWithDirectory() — the token must come from our single-tenant
+      //     Entra directory. Not `email_verified`: that only proves mailbox
+      //     access, so anyone could verify a personal address and walk in.
+      //   • `role` is pinned to 'employee'. Desk and driver roles are
+      //     unreachable this way, no matter what the client sends.
+      //   • hasOnly() pins the whole document to identity fields the token
+      //     itself supplies. In particular there is no `roster` — a rider must
+      //     not choose their own pickup route, since that decides which cab
+      //     collects them — and no `empId`, `phone` or `address`, which stay
+      //     HR-owned (address changes go through addressChangeRequests).
+      //   • `selfProvisioned` marks them, so the desk can tell an unvetted
+      //     walk-up from someone HR entered: they arrive with no route and no
+      //     address, and cannot be picked up until the desk fills those in.
+      //
+      // CONSEQUENCE FOR OFFBOARDING: deleting an employees/<uid> document no
+      // longer locks anyone out — they recreate it on their next sign-in. Access
+      // ends when IT disables the person's Microsoft account. That is a
+      // deliberate trade, made because the directory is the company's real
+      // record of who works here; do not "fix" it by deleting profiles.
+      function selfProvisionsFromDirectory() {
+        return request.auth.uid == uid
+          && signedInWithDirectory()
+          && myEmail() != ''
+          && request.resource.data.get('email', '') == myEmail()
+          && request.resource.data.get('role', '') == 'employee'
+          && request.resource.data.get('selfProvisioned', false) == true
+          && request.resource.data.keys().hasOnly([
+               'name', 'email', 'role', 'selfProvisioned', 'createdAt', 'updatedAt',
+             ]);
+      }
+
       // Either desk role can read the directory: HR to manage it, the coordinator
       // to see which drivers exist and who is on which route.
       allow read: if signedIn() && (request.auth.uid == uid || isDesk());
-      allow create: if signedIn() && (
+      allow create: if signedIn() && createsUnlinked() && (
         (request.auth.uid == uid && request.resource.data.get('role', '') == 'driver') ||
+        createsFromInvite() ||
+        selfProvisionsFromDirectory() ||
+        // The coordinator runs the fleet, so they add the drivers for it — but
+        // ONLY drivers. The role is pinned here, so this can never mint an
+        // employee (who would then be rostered) or another desk account.
+        (isCoordinator() && request.resource.data.get('role', '') == 'driver') ||
         isAdmin()
       );
       allow update: if isAdmin() || coordinatorLinkingCab() || coordinatorSettingRoute();
-      allow delete: if isAdmin();
+      // The coordinator adds the drivers, so they retire them too — drivers ONLY.
+      // Employee and desk records stay HR's to remove.
+      allow delete: if isAdmin()
+        || (isCoordinator() && resource.data.get('role', '') == 'driver');
+    }
+
+    // --- Cab service requests -----------------------------------------------
+    // HOW SOMEONE WHO ISN'T ON THE ROSTER ASKS FOR CAB SERVICE.
+    //
+    // An employee who signed in from the directory without an invite has no
+    // employee id, no home address and no pickup route (see
+    // selfProvisionsFromDirectory above), so they cannot be grouped into a cab
+    // — and had no way to ask. They fill in those details here; the desk
+    // reviews it, and approving copies them onto the profile along with a route
+    // chosen from the address.
+    //
+    // The request is NOT the profile. An employee filling this in is asking,
+    // not writing: identity and route still land on employees/<uid> only when
+    // an admin approves. That is the whole point of routing it through a
+    // request rather than letting them edit their own profile — the same reason
+    // addressChangeRequests exists.
+    //
+    //   read   → the owner (to see status), or either desk role (both watch the
+    //            queue; the coordinator is who knows which route an address is on).
+    //   create → the employee, for THEMSELVES, and only as "Pending".
+    //   update → admin (approve/reject), or a coordinator proposing the route.
+    //            The coordinator cannot approve: approval writes identity onto
+    //            the profile, which stays HR-owned.
+    //   delete → never. A rejected request is the record of why someone still
+    //            has no cab, and deleting it hides that.
+    match /cabServiceRequests/{reqId} {
+      function isMine() {
+        return signedIn() && resource.data.get('employeeId', '') == request.auth.uid;
+      }
+      // The coordinator's one write: suggesting the route for this address, so
+      // the admin approves with it already filled in. Mirrors
+      // coordinatorSettingRoute() on the profile — same person, same field,
+      // same reason.
+      function coordinatorProposingRoute() {
+        return isCoordinator() && touchedKeys().hasOnly(['proposedRoute']);
+      }
+      allow read: if isDesk() || isMine();
+      allow create: if signedIn()
+        && request.resource.data.get('employeeId', '') == request.auth.uid
+        && request.resource.data.get('status', '') == 'Pending'
+        && isServerTime('requestedAt');
+      allow update: if isAdmin() || coordinatorProposingRoute();
+      allow delete: if false;
+    }
+
+    // --- Employee invites ---------------------------------------------------
+    // HOW AN EMPLOYEE GETS AN ACCOUNT WITHOUT A PASSWORD.
+    //
+    // The document ID is the person's lowercased email address, which is what
+    // lets the invite be found by someone who has just signed in with
+    // Microsoft and has no profile yet — at that moment their email is the
+    // ONLY thing that connects them to anything HR entered.
+    //
+    // HR writes the invite (name, employee id, phone, address, route, role).
+    // No Firebase Auth account is created and no password exists. The person
+    // clicks "Sign in with Microsoft", and `createsFromInvite()` in the
+    // employees block above lets them copy this into their own profile. The
+    // invite is deleted in the same batch, so it is single-use.
+    //
+    //   read   → either desk role, or the invitee (needed to claim it).
+    //   create → admin ONLY, and never with role 'admin' — an invite that
+    //            could carry role 'admin' would be a self-promotion path,
+    //            since the invitee is the one who writes the profile.
+    //   delete → admin (revoke an invite), or the invitee (claiming it).
+    match /employeeInvites/{emailKey} {
+      function inviteRoleAllowed() {
+        return request.resource.data.get('role', '') in ['employee', 'driver', 'coordinator'];
+      }
+      allow read: if isDesk() || (signedIn() && emailKey == myEmail());
+      allow create, update: if isAdmin()
+        && inviteRoleAllowed()
+        && request.resource.data.get('email', '') == emailKey;
+      allow delete: if isAdmin() || (signedIn() && emailKey == myEmail());
     }
 
     // --- Address change requests -------------------------------------------

@@ -21,6 +21,7 @@ import { theme, colors } from './src/theme';
 import { AppProvider, useApp } from './src/context/AppContext';
 import AppDrawer, {
   DRAWER_ITEMS, ADMIN_DRAWER_ITEMS, DRIVER_DRAWER_ITEMS, COORDINATOR_DRAWER_ITEMS,
+  CAB_SERVICE_ITEM,
 } from './src/components/AppDrawer';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { companyLogo, SUPPORT_HELPLINE } from './src/branding';
@@ -53,6 +54,8 @@ import CoordinatorDashboardScreen from './src/screens/coordinator/CoordinatorDas
 import RequestsScreen from './src/screens/coordinator/RequestsScreen';
 import ChangeRequestScreen from './src/screens/employee/ChangeRequestScreen';
 import NotificationsScreen from './src/screens/employee/NotificationsScreen';
+import CabServiceRequestScreen from './src/screens/employee/CabServiceRequestScreen';
+import CabRequestsScreen from './src/screens/admin/CabRequestsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -77,6 +80,7 @@ const linking = {
       EmployeeHome: 'home',
       MySchedule: 'my-schedule',
       ChangeRequest: 'change-request',
+      CabServiceRequest: 'cab-service-request',
       Notifications: 'notifications',
       Feedback: 'feedback',
       MyRides: 'my-rides',
@@ -96,6 +100,7 @@ const linking = {
       FeedbackInbox: 'feedback-inbox',
       EmployeeManagement: 'employees',
       AddressRequests: 'address-requests',
+      CabRequests: 'cab-requests',
       Messages: 'messages',
       // Coordinator
       CoordinatorHome: 'coordinator',
@@ -107,11 +112,20 @@ const linking = {
   },
 };
 
+// The employee menu, plus a "Cab Service" row while that still means something:
+// they have no address/route yet, or a request is in flight and they'll want to
+// check on it. A fully set-up rider never sees the row.
+function employeeItems(isEmployee, needsCabSetup, pendingRequest) {
+  if (!isEmployee || (!needsCabSetup && !pendingRequest)) return DRAWER_ITEMS;
+  return [...DRAWER_ITEMS, CAB_SERVICE_ITEM];
+}
+
 // A custom header that shows the screen title and a Log out action on the right.
 // We use Paper's Appbar so the header matches the app's look.
 function AppHeader({ navigation, route, options, back }) {
   const {
     logout, currentUser, changePassword, sendMessage, unreadCount, menuCounts,
+    needsCabSetup, myPendingCabRequest,
   } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { width } = useWindowDimensions();
@@ -165,7 +179,7 @@ function AppHeader({ navigation, route, options, back }) {
     ? COORDINATOR_DRAWER_ITEMS
     : isDriver
     ? DRIVER_DRAWER_ITEMS
-    : DRAWER_ITEMS;
+    : employeeItems(isEmployee, needsCabSetup, myPendingCabRequest);
   const hasPermanentSidebar = hasDrawer && width >= WIDE_BREAKPOINT;
   // Which screen "home" means for this role.
   const homeRoute =
@@ -295,11 +309,14 @@ function AppHeader({ navigation, route, options, back }) {
 // again. Now the session stops with an explanation.
 function UnprovisionedScreen() {
   const { logout, firebaseUser } = useApp();
-  // A Microsoft sign-in that's never been LINKED to an existing account mints
-  // a brand-new Firebase uid with no employees/{uid} doc — same symptom as a
-  // genuinely unprovisioned account, but a completely different fix (sign in
-  // with email/password and link Microsoft from Profile, vs. ask HR to add
-  // you). Tell them apart by what's the ONLY provider on this session's user.
+  // In the normal case, a fresh Microsoft sign-in with no matching profile
+  // never actually lands here — AppContext's loginWithMicrosoftPopup/
+  // loginWithMicrosoftCredential delete that throwaway account and show
+  // MicrosoftConfirmScreen instead (see below). This branch is a fallback for
+  // the rare case something interrupts that (e.g. a network hiccup between
+  // the profile check and the cleanup) leaving a signed-in, profile-less
+  // Microsoft session — tell it apart from a true "never provisioned at all"
+  // account by what's the ONLY provider on this session's user.
   const isMicrosoftOnly =
     (firebaseUser?.providerData?.length || 0) > 0 &&
     firebaseUser.providerData.every((p) => p.providerId === 'microsoft.com');
@@ -312,10 +329,11 @@ function UnprovisionedScreen() {
         </Text>
         {isMicrosoftOnly ? (
           <Text variant="bodyMedium" style={styles.lockedBody}>
-            This Microsoft account isn't linked to an employee profile yet. If you
-            already have an account here, sign out and sign in with your email and
-            password instead, then link Microsoft from your Profile screen. If you
-            don't have an account yet, ask the transport desk to add you first.
+            We couldn't match this Microsoft account to an employee profile
+            automatically. If you already have an account here, sign out and
+            sign in with your email and password instead — you can link
+            Microsoft from your Profile screen from there. If you're new, ask
+            the transport desk to add you first.
           </Text>
         ) : (
           <Text variant="bodyMedium" style={styles.lockedBody}>
@@ -328,6 +346,86 @@ function UnprovisionedScreen() {
         </Text>
         <Button mode="contained" icon="logout" onPress={logout} style={styles.lockedBtn}>
           Sign out
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+// Shown (signed OUT, not signed in) right after a fresh Microsoft sign-in
+// turns out to match nobody by uid but DOES have an email — AppContext has
+// already deleted that throwaway Microsoft-only account by this point.
+// One password entry links Microsoft onto the employee's REAL existing
+// account (same uid, no data ever moves) — see confirmMicrosoftLink in
+// AppContext.js. This is what makes "Sign in with Microsoft" work directly
+// from then on, without a separate trip to Profile, all without needing any
+// server-side code (Cloud Functions require the paid Blaze plan to deploy at
+// all, which this project deliberately avoids).
+function MicrosoftConfirmScreen() {
+  const { microsoftConfirm, confirmMicrosoftLink, cancelMicrosoftConfirm } = useApp();
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function handleConfirm() {
+    setError('');
+    if (!password) {
+      setError('Enter your password to continue.');
+      return;
+    }
+    setBusy(true);
+    const res = await confirmMicrosoftLink(password);
+    setBusy(false);
+    if (!res.ok) setError(res.message);
+    // On success, microsoftConfirm clears itself and the normal auth listener
+    // picks up the now-linked, now-signed-in account automatically.
+  }
+
+  return (
+    <View style={styles.splash}>
+      <View style={styles.lockedCard}>
+        <MaterialCommunityIcons name="microsoft" size={56} color={colors.primary} />
+        <Text variant="headlineSmall" style={styles.lockedTitle}>
+          Confirm your Microsoft sign-in
+        </Text>
+        <Text variant="bodyMedium" style={styles.lockedBody}>
+          We found an account for {microsoftConfirm?.email}. Enter its password once
+          to link Microsoft to it — after this, "Sign in with Microsoft" will work
+          directly, every time.
+        </Text>
+        <TextInput
+          label="Password"
+          value={password}
+          onChangeText={setPassword}
+          mode="outlined"
+          secureTextEntry={!showPassword}
+          right={
+            <TextInput.Icon
+              icon={showPassword ? 'eye-off' : 'eye'}
+              onPress={() => setShowPassword((s) => !s)}
+            />
+          }
+          style={styles.confirmInput}
+          onSubmitEditing={handleConfirm}
+          autoFocus
+        />
+        {error ? (
+          <HelperText type="error" visible style={styles.confirmError}>
+            {error}
+          </HelperText>
+        ) : null}
+        <Button
+          mode="contained"
+          onPress={handleConfirm}
+          loading={busy}
+          disabled={busy}
+          style={styles.lockedBtn}
+        >
+          Confirm &amp; link
+        </Button>
+        <Button mode="text" onPress={cancelMicrosoftConfirm} disabled={busy}>
+          Cancel
         </Button>
       </View>
     </View>
@@ -387,7 +485,7 @@ function DataErrorBanner() {
 function RootNavigator() {
   const {
     currentUser, authReady, profileMissing, profileError, changePassword, logout,
-    menuCounts,
+    menuCounts, microsoftConfirm, needsCabSetup, myPendingCabRequest,
   } = useApp();
   const { width } = useWindowDimensions();
   const navRef = useNavigationContainerRef();
@@ -404,7 +502,18 @@ function RootNavigator() {
     ? COORDINATOR_DRAWER_ITEMS
     : isDriver
     ? DRIVER_DRAWER_ITEMS
-    : DRAWER_ITEMS;
+    : employeeItems(
+        currentUser?.role === 'employee',
+        needsCabSetup,
+        myPendingCabRequest
+      );
+
+  // An employee the directory let in but the desk has never entered has no home
+  // address and no pickup route, so every screen below would be an empty list.
+  // Hold them at the request form until they've asked; submitting unlocks the
+  // rest of the app (see CabServiceRequestScreen).
+  const holdForCabSetup =
+    currentUser?.role === 'employee' && needsCabSetup && !myPendingCabRequest;
 
   // While Firebase checks for an existing session, show a spinner instead of
   // briefly flashing the login screen.
@@ -415,6 +524,12 @@ function RootNavigator() {
       </View>
     );
   }
+
+  // A fresh Microsoft sign-in is waiting on a one-time password confirmation
+  // (see AppContext.js) — checked before everything else below, since by this
+  // point the throwaway account has already been deleted and currentUser is
+  // back to null, which would otherwise just show the plain login screen.
+  if (microsoftConfirm) return <MicrosoftConfirmScreen />;
 
   // Couldn't reach the database → say so, and offer a retry. Checked BEFORE
   // profileMissing, because a failed read tells us nothing about provisioning.
@@ -466,6 +581,17 @@ function RootNavigator() {
               options={{ headerShown: false }}
             />
           </>
+        ) : holdForCabSetup ? (
+          // ---- Employee, not set up for cab service yet ----
+          // Deliberately the ONLY registered screen, so a deep link to /home or
+          // /my-schedule can't land them on an empty dashboard either. The app
+          // header is still there, which is what keeps "call the transport desk"
+          // and "log out" reachable.
+          <Stack.Screen
+            name="CabServiceRequest"
+            component={CabServiceRequestScreen}
+            options={{ title: 'Request Cab Service' }}
+          />
         ) : currentUser.role === 'employee' ? (
           // ---- Employee screens ----
           <>
@@ -473,6 +599,11 @@ function RootNavigator() {
               name="EmployeeHome"
               component={EmployeeHomeScreen}
               options={{ title: 'Home' }}
+            />
+            <Stack.Screen
+              name="CabServiceRequest"
+              component={CabServiceRequestScreen}
+              options={{ title: 'Cab Service' }}
             />
             <Stack.Screen
               name="MySchedule"
@@ -593,6 +724,14 @@ function RootNavigator() {
                 />
               </>
             )}
+            {/* Both desk roles: HR approves, the coordinator sets the route.
+                Registered outside the role-specific groups above because it is
+                genuinely shared — see CabRequestsScreen's header. */}
+            <Stack.Screen
+              name="CabRequests"
+              component={CabRequestsScreen}
+              options={{ title: 'Cab Requests' }}
+            />
             <Stack.Screen
               name="Bookings"
               component={BookingsScreen}
@@ -703,6 +842,8 @@ const styles = StyleSheet.create({
   lockedBody: { marginTop: 10, textAlign: 'center', color: colors.muted, lineHeight: 20 },
   lockedHelp: { marginTop: 12, color: colors.muted },
   lockedBtn: { marginTop: 20 },
+  confirmInput: { marginTop: 18, alignSelf: 'stretch' },
+  confirmError: { alignSelf: 'stretch' },
   dataError: {
     flexDirection: 'row',
     alignItems: 'center',

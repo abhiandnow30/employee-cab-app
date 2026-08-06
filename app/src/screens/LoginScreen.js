@@ -47,8 +47,15 @@ export default function LoginScreen({ navigation }) {
 
   // Web uses a plain popup; a phone has no popup, so it drives the OAuth
   // flow itself via useMicrosoftAuthRequest and hands Firebase the resulting
-  // token. Either way, success flows through the same auth listener as
-  // email/password — same as handleLogin above.
+  // token. Either way, loginWithMicrosoftPopup/loginWithMicrosoftCredential
+  // (AppContext.js) handle everything from there: if this Microsoft identity
+  // already matches an employee, success flows through the same auth
+  // listener as email/password (same as handleLogin above) with nothing more
+  // to do here. If it's the first time and matches nobody by uid, those
+  // functions delete the throwaway account and set microsoftConfirm instead —
+  // App.js then shows a one-time password prompt (MicrosoftConfirmScreen) to
+  // link Microsoft onto the employee's real existing account. Either way,
+  // `result.ok` is true unless something genuinely went wrong.
   async function handleMicrosoftLogin() {
     setError('');
     setInfo('');
@@ -186,10 +193,16 @@ export default function LoginScreen({ navigation }) {
               <Divider style={styles.dividerLine} />
             </View>
 
-            {/* Only usable once an admin has created the account (email/password)
-                AND the employee has linked Microsoft from their Profile screen —
-                see ProfileScreen.js. A never-linked Microsoft account signing in
-                here lands on UnprovisionedScreen with an explanation of that. */}
+            {/* Works directly for anyone the admin already created in Employee
+                Management — no prior trip to Profile required. The first time,
+                if this Microsoft account doesn't match anyone yet by uid,
+                loginWithMicrosoftPopup/loginWithMicrosoftCredential
+                (AppContext.js) delete the throwaway account and prompt for a
+                one-time password confirmation instead (App.js,
+                MicrosoftConfirmScreen) — entirely client-side, no server code
+                involved. Every sign-in after that is instant. The manual
+                link-from-Profile flow (ProfileScreen.js) still exists too, as
+                an alternative for anyone who'd rather set it up proactively. */}
             <Button
               mode="outlined"
               icon="microsoft"
