@@ -40,6 +40,9 @@ const ICON = {
   [NOTIFY.REQUEST_RESOLVED]: { icon: 'clipboard-check-outline', color: colors.primary },
   [NOTIFY.ADDRESS_RESOLVED]: { icon: 'home-edit', color: colors.primary },
   [NOTIFY.ROSTER_PUBLISHED]: { icon: 'calendar-month', color: colors.primary },
+  // Same icon as the "Cab Service" drawer item (AppDrawer.js), so the notice
+  // and the screen it's about read as the same thing.
+  [NOTIFY.CAB_SERVICE_RESOLVED]: { icon: 'car-clock', color: colors.primary },
 };
 
 export default function NotificationsScreen({ navigation }) {
