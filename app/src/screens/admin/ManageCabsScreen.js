@@ -19,12 +19,18 @@
 // which produced rides no driver account could see while the rider had already
 // been told a cab was on the way. A typed-in driver NAME is not a link.
 //
+// LINKING ALSO ISSUES THE DRIVER'S LOGIN CODE — the last 4 digits of this cab's
+// number plus their phone, which is the only thing they type to sign in (see
+// utils/driverLogin.js). It is shown on the card below, because the moment the
+// link is made is the moment somebody has to read it out. Two consequences worth
+// knowing: renaming a cab changes its driver's code, and unlinking revokes it.
+//
 // Removing a vehicle is refused while it still has upcoming rides, so no rider
 // silently loses their cab.
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View, FlatList } from 'react-native';
+import { StyleSheet, View, FlatList, Platform } from 'react-native';
 import {
   Text, Card, Button, Portal, Dialog, Snackbar, Chip, Divider, TextInput,
   HelperText, IconButton,
@@ -36,6 +42,7 @@ import { subscribeCabs, cabCapacity } from '../../services/cabs';
 import { subscribeDrivers } from '../../services/profile';
 import { DEFAULT_CAB_CAPACITY, STATUS } from '../../data/mockData';
 import { todayKey } from '../../utils/datetime';
+import { formatLoginCode, isShareableCode, driverLoginCode } from '../../utils/driverLogin';
 import { colors } from '../../theme';
 
 // A ride in one of these states is over, whatever its date says.
@@ -109,7 +116,9 @@ export default function ManageCabsScreen() {
     if (!d) return 'Select driver';
     // Flag a driver already on another cab — picking them moves them.
     const holding = cabs.find((c) => c.driverUid === uid);
-    return `${d.name || d.email}${holding ? ` · on ${holding.cabNumber}` : ''}`;
+    // Falls back to the PHONE, not the stored email: a driver's address is
+    // synthesized (utils/driverLogin.js) and would be gibberish in a dropdown.
+    return `${d.name || d.phone || 'Unnamed driver'}${holding ? ` · on ${holding.cabNumber}` : ''}`;
   };
 
   function openAdd() {
@@ -135,7 +144,14 @@ export default function ManageCabsScreen() {
     setBusy(false);
     if (res?.ok) {
       setFormOpen(false);
-      setSnack(editingId ? 'Cab updated.' : `${form.cabNumber} added to the fleet.`);
+      // Renaming a cab changes its driver's login code, because the last 4 digits
+      // are half of it. Say so, so the desk knows to pass the new one on.
+      if (res.codeWarning) setError(res.codeWarning);
+      setSnack(
+        editingId
+          ? 'Cab updated. Check the login code below — renaming a cab changes it.'
+          : `${form.cabNumber} added to the fleet.`
+      );
     } else {
       setFormError(res?.message || 'Could not save the cab.');
     }
@@ -154,14 +170,27 @@ export default function ManageCabsScreen() {
   }
 
   // Make the link. Split out from handleLink so the confirmation below can call it.
+  //
+  // Linking also issues the driver's login code, so `codeWarning` is a real
+  // outcome and not noise: the link went through, but the code did not follow it.
+  // It goes to `error` rather than the snackbar because the desk has to act on it
+  // before telling anyone a code.
   async function doLink(cabId, uid) {
     setError('');
     setBusy(true);
     const res = await assignDriverToCab(cabId, uid === NO_DRIVER ? null : uid);
     setBusy(false);
     setMoveFor(null);
-    if (res?.ok) setSnack(uid === NO_DRIVER ? 'Driver detached.' : 'Driver linked — live tracking on.');
-    else setError(res?.message || 'Could not link that driver.');
+    if (!res?.ok) {
+      setError(res?.message || 'Could not link that driver.');
+      return;
+    }
+    if (res.codeWarning) setError(res.codeWarning);
+    setSnack(
+      uid === NO_DRIVER
+        ? 'Driver detached — their login code no longer works.'
+        : 'Driver linked — live tracking on, login code issued.'
+    );
   }
 
   // A driver drives one cab at a time, so putting them on this one TAKES THEM OFF
@@ -187,9 +216,10 @@ export default function ManageCabsScreen() {
     setBusy(false);
     setDeleteFor(null);
     if (res?.ok) {
+      if (res.codeWarning) setError(res.codeWarning);
       setSnack(
         res.unlinkedDrivers
-          ? `${cab.cabNumber} removed. ${res.unlinkedDrivers} driver link cleared.`
+          ? `${cab.cabNumber} removed. ${res.unlinkedDrivers} driver link cleared, and their login code with it.`
           : `${cab.cabNumber} removed.`
       );
     } else {
@@ -205,6 +235,12 @@ export default function ManageCabsScreen() {
 
   function renderCab({ item }) {
     const linked = !!item.driverUid;
+    const driver = linked ? drivers.find((d) => d.uid === item.driverUid) : null;
+    const driverCode = isShareableCode(driver?.loginCode) ? driver.loginCode : '';
+    // The code this cab SHOULD imply, computed only to compare — a mismatch means a
+    // rotation stopped halfway, and handing out either value would be a guess.
+    const codeDrifted =
+      !!driver && driver.loginCode !== driverLoginCode(item.cabNumber, driver.phone);
     return (
       <Card style={styles.card} mode="outlined">
         <Card.Content>
@@ -267,9 +303,32 @@ export default function ManageCabsScreen() {
           {!linked ? (
             <Text variant="bodySmall" style={styles.warn}>
               {readOnly
-                ? 'No driver linked, so no rides can be assigned to this cab and employees cannot follow it. The coordinator links one on the Fleet screen.'
+                ? 'No driver linked, so no rides can be assigned to this cab and employees cannot follow it. The coordinator links one on the Cabs tab.'
                 : 'Link a driver so employees can follow this cab on the map.'}
             </Text>
+          ) : null}
+
+          {/* THE DRIVER'S LOGIN CODE, right where the link that created it was
+              made. Shown from the driver's stored value rather than recomputed
+              here: the stored code is the actual Firebase password, so a locally
+              derived one could look right while signing nobody in. */}
+          {linked ? (
+            driverCode && !codeDrifted ? (
+              <View style={styles.codeBox}>
+                <MaterialCommunityIcons name="dialpad" size={16} color={colors.primaryDark} />
+                <Text variant="bodySmall" style={styles.codeLabel}>
+                  Login code
+                </Text>
+                <Text variant="titleSmall" style={styles.codeValue} selectable>
+                  {formatLoginCode(driverCode)}
+                </Text>
+              </View>
+            ) : (
+              <Text variant="bodySmall" style={styles.warn}>
+                This driver’s login code doesn’t match this cab. Press “Fix code” on
+                their card in the Drivers tab before handing anything out.
+              </Text>
+            )
           ) : null}
         </Card.Content>
       </Card>
@@ -283,7 +342,7 @@ export default function ManageCabsScreen() {
           <Text variant="bodySmall" style={styles.hint}>
             {readOnly
               ? "The fleet and who is driving each vehicle. The coordinator maintains this — you're seeing it as it stands."
-              : "The vehicles you assign each day. Linking a driver switches on that cab's live tracking."}
+              : "The vehicles you assign each day. Linking a driver switches on that cab's live tracking and gives them their login code."}
           </Text>
           {readOnly ? null : (
             <Button mode="contained" icon="plus" onPress={openAdd}>
@@ -472,6 +531,26 @@ const styles = StyleSheet.create({
   linkLabel: { opacity: 0.8 },
   linkPicker: { flex: 1, maxWidth: 260 },
   warn: { color: '#E65100', marginTop: 8 },
+  codeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    backgroundColor: '#F3F0FA',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 10,
+  },
+  codeLabel: { color: colors.muted },
+  // Monospaced and loosely tracked: this gets read aloud and typed by hand, so
+  // 0/O and 1/l must not be a guess.
+  codeValue: {
+    color: colors.text,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
   error: { color: colors.danger, paddingHorizontal: 14, paddingBottom: 8 },
   empty: { alignItems: 'center', marginTop: 50, gap: 12, paddingHorizontal: 24 },
   emptyText: { color: colors.muted },

@@ -3,17 +3,21 @@
 // A user's profile (name, role, employee id / phone / cab) lives in Firestore
 // at employees/<uid>. Passwords are NEVER stored here — Firebase Auth owns those.
 //
-//   • On DRIVER SIGN UP, the app stashes the new profile via setPendingProfile(),
-//     then creates the auth account. When Firebase reports the new user,
-//     getOrCreateProfile() writes that pending profile as their document.
-//   • Employees and drivers are normally provisioned by an admin
-//     (adminCreateAccount), which writes the document directly.
+//   • Employees are INVITED (adminCreateInvite) and claim their own profile the
+//     first time they sign in with Microsoft — see claimInvite below.
+//   • Drivers are created by the desk (adminCreateDriver), which is also what
+//     mints the numeric login code they sign in with.
 //   • On later logins, getOrCreateProfile() just READS the existing document.
 //
+// Nobody self-registers. Drivers used to (the old Sign Up screen), which is why
+// getOrCreateProfile() carried a "pending profile" branch and firestore.rules
+// allowed a self-created driver document; both are gone. The desk creates every
+// account, so an account that arrives with no profile and no invite has nothing
+// to claim.
+//
 // IMPORTANT: getOrCreateProfile() never invents a profile for an account it
-// doesn't recognise. It used to, which meant an employee the admin had removed
-// got a brand-new working profile the next time they signed in. Now an account
-// with no profile stays locked out until an admin provisions it.
+// doesn't recognise, EXCEPT for a company Microsoft sign-in (see
+// selfProvisionFromDirectory). Anything else stays locked out.
 //
 // Admins are created in the Firebase console (see the header of
 // firestore.rules) — the security rules do not allow self-promotion.
@@ -25,69 +29,52 @@ import {
 } from 'firebase/firestore';
 import { initializeApp, getApp } from 'firebase/app';
 import {
-  getAuth, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail,
+  getAuth, createUserWithEmailAndPassword, signOut,
+  signInWithEmailAndPassword, updatePassword,
 } from 'firebase/auth';
 import { firestore, firebaseConfig } from './firebase';
+import {
+  driverEmail, driverPhone, unassignedLoginCode, loginCodeCandidates,
+} from '../utils/driverLogin';
 
 // The roles an admin may hand out from the app. 'admin' is deliberately absent:
 // HR/Admin access is granted in the Firebase console only, so nobody can create
 // a second HR account from inside the app.
 export const ASSIGNABLE_ROLES = ['employee', 'driver', 'coordinator'];
 
-// Set by AppContext.signup() right before creating the account.
-let pendingProfile = null;
-export function setPendingProfile(profile) {
-  pendingProfile = profile;
-}
-
-// Returns the user's profile, or null if this account has no profile document.
-// A pending sign-up (driver self-registration) is written on first sight; any
-// other unknown account returns null so the app can show "not provisioned"
-// instead of silently minting an employee.
+// Returns the user's profile, or null if this account has no profile document —
+// so the app can show "not provisioned" instead of silently minting an employee.
 export async function getOrCreateProfile(user) {
-  const email = (user.email || '').toLowerCase();
-  const pending = pendingProfile;
-  pendingProfile = null;
-
-  if (!firestore) return pending;
+  if (!firestore) return null;
 
   const ref = doc(firestore, 'employees', user.uid);
   const snap = await getDoc(ref);
   if (snap.exists()) return snap.data();
 
-  // No document, and no sign-up in flight → this may be someone HR invited but
-  // who has never signed in before. Their invite is filed under their email
-  // (the only thing that links a brand-new Microsoft uid to anything HR
-  // entered), so try to claim it. This is what makes "Sign in with Microsoft"
-  // work the very first time with no password — see claimInvite below.
-  if (!pending) {
-    // An invite comes FIRST because it carries what the token can't: employee
-    // id, phone, home address and pickup route.
-    const claimed = await claimInvite(user);
-    if (claimed) return claimed;
+  // No document → this may be someone HR invited but who has never signed in
+  // before. Their invite is filed under their email (the only thing that links a
+  // brand-new Microsoft uid to anything HR entered), so try to claim it. This is
+  // what makes "Sign in with Microsoft" work the very first time with no
+  // password — see claimInvite below.
+  //
+  // An invite comes FIRST because it carries what the token can't: employee id,
+  // phone, home address and pickup route.
+  const claimed = await claimInvite(user);
+  if (claimed) return claimed;
 
-    // No invite, but they signed in with a company Microsoft account → they
-    // work here, so let them in. See selfProvisionFromDirectory below.
-    const selfMade = await selfProvisionFromDirectory(user);
-    if (selfMade) return selfMade;
+  // No invite, but they signed in with a company Microsoft account → they work
+  // here, so let them in. See selfProvisionFromDirectory below.
+  const selfMade = await selfProvisionFromDirectory(user);
+  if (selfMade) return selfMade;
 
-    // A Microsoft sign-in runs this function twice, concurrently: once from the
-    // sign-in call itself and once from the auth-state listener. Both may reach
-    // the writes above, and only one can win — the loser's write is an UPDATE to
-    // a doc it doesn't own, which the rules refuse. Re-read before reporting
-    // nothing: returning null here would light up "Account not set up" for an
-    // employee whose profile had just been created fine by the other caller.
-    const after = await getDoc(ref);
-    return after.exists() ? after.data() : null;
-  }
-
-  // First time we've seen this user → create their profile document from what
-  // they entered at sign-up. The admin sets their cab / roster afterwards. We
-  // stamp createdAt server-side but keep it off the returned object (it's a
-  // write-only sentinel — no screen reads it).
-  const data = { ...pending, email };
-  await setDoc(ref, { ...data, createdAt: serverTimestamp() });
-  return data;
+  // A Microsoft sign-in runs this function twice, concurrently: once from the
+  // sign-in call itself and once from the auth-state listener. Both may reach
+  // the writes above, and only one can win — the loser's write is an UPDATE to
+  // a doc it doesn't own, which the rules refuse. Re-read before reporting
+  // nothing: returning null here would light up "Account not set up" for an
+  // employee whose profile had just been created fine by the other caller.
+  const after = await getDoc(ref);
+  return after.exists() ? after.data() : null;
 }
 
 // --- Invites: provisioning WITHOUT a password ------------------------------
@@ -387,6 +374,125 @@ export async function adminCreateAccount({ email, password, role = 'employee', p
   }
 }
 
+// --- Drivers: the numeric login code ----------------------------------------
+//
+// A driver has no email and no password of their own. They sign in with one
+// number — last 4 digits of their cab + their phone — which IS their Firebase
+// password; utils/driverLogin.js explains the whole scheme and why it has to work
+// that way. Two things live here:
+//
+//   adminCreateDriver()      the account, created with no usable code
+//   rotateDriverLoginCode()  changing the code when the cab link changes
+//
+// The current code is mirrored on employees/<uid>.loginCode so the desk can read
+// it back out to the driver — and, just as importantly, so rotating it later is
+// possible at all: changing a Firebase password requires signing in with the
+// CURRENT one, and this is the only record of it.
+
+// Create a driver's account. Name and phone are all the desk types.
+//
+// Deliberately NOT routed through adminInviteEmployees: that path finishes by
+// emailing a set-your-own-password link, and a driver's address is a synthesized
+// one on an unroutable domain. There is nobody to email and no password for them
+// to set.
+export async function adminCreateDriver({ name, phone }) {
+  const digits = driverPhone(phone);
+  if (!digits) throw new Error('A 10-digit phone number is required.');
+  // Not a login code — see unassignedLoginCode(). They cannot sign in until the
+  // desk links them to a cab, which is what turns this into a real code.
+  const code = unassignedLoginCode(digits);
+  const uid = await adminCreateAccount({
+    email: driverEmail(digits),
+    password: code,
+    role: 'driver',
+    profile: {
+      name: String(name || '').trim(),
+      phone: digits,
+      empId: '',
+      // No cab yet, so no shareable code yet. The desk links one on the Cabs
+      // screen and linkCabDriver() rotates this into a real code.
+      loginCode: code,
+    },
+  });
+  return uid;
+}
+
+// Change a driver's login code, in Firebase Auth and on their profile together.
+// Called whenever the cab link changes — see services/cabs.js.
+//
+// HOW IT CAN DO THIS WITHOUT THE ADMIN SDK. Firebase will change a password only
+// for the user who is signed in, and only if they signed in recently. Both are
+// satisfiable from the client: the driver's email never changes, the code
+// currently in force is on their profile, and signing in on the throwaway
+// SECONDARY app (the same one adminCreateAccount uses) leaves the coordinator's
+// own session untouched. A fresh sign-in is as recent as it gets.
+//
+// ORDER MATTERS. The password is changed first and the profile second, so a
+// failure in between leaves a stale `loginCode` rather than a code that unlocks
+// nothing — and the candidate walk below picks that up next time, which is what
+// makes retrying safe.
+//
+// WHY IT TRIES SEVERAL PASSWORDS. Every password this system issues is
+// RECOMPUTABLE (a real code from cab + phone, or the phone alone before a cab is
+// assigned — see unassignedLoginCode), so "what is this account's password right
+// now" has a short, knowable answer even when the mirror on the profile is wrong.
+// That is deliberate and load-bearing: the mirror used to be the only record of a
+// randomly generated placeholder, which meant one refused write — a rules change
+// that hadn't been deployed yet, say — left the account impossible to sign into or
+// repair, and the driver had to be deleted and re-created.
+export async function rotateDriverLoginCode(uid, { phone, currentCode, nextCode }) {
+  if (!firestore) throw new Error('Backend not configured.');
+  const email = driverEmail(phone);
+  if (!email) throw new Error('That driver has no valid phone number on file.');
+  if (!nextCode) throw new Error('No new login code to set.');
+
+  let secondary;
+  try {
+    secondary = getApp(PROVISIONER_APP);
+  } catch {
+    secondary = initializeApp(firebaseConfig, PROVISIONER_APP);
+  }
+  const secondaryAuth = getAuth(secondary);
+
+  try {
+    const candidates = loginCodeCandidates({ phone, currentCode, nextCode });
+    let signedIn = null;
+    let lastError = null;
+    for (const candidate of candidates) {
+      try {
+        signedIn = await signInWithEmailAndPassword(secondaryAuth, email, candidate);
+        break;
+      } catch (e) {
+        lastError = e;
+        // Anything other than "that isn't the password" is not worth retrying
+        // against the remaining candidates — a network failure or a disabled
+        // account will fail identically for all of them.
+        if (
+          e?.code !== 'auth/wrong-password' &&
+          e?.code !== 'auth/invalid-credential' &&
+          e?.code !== 'auth/missing-password' &&
+          e?.code !== 'auth/user-not-found'
+        ) {
+          throw e;
+        }
+      }
+    }
+    if (!signedIn) throw lastError || new Error('Could not sign in as that driver.');
+
+    // Set it even when it is already in force. Re-setting a password to its own
+    // value is harmless, and the mirror on the profile may be the thing that is
+    // wrong — repairing that is half of what this function is for.
+    await updatePassword(signedIn.user, nextCode);
+    // Through the PRIMARY connection, so the rules authorise it as the desk.
+    await updateDoc(doc(firestore, 'employees', uid), {
+      loginCode: nextCode,
+      updatedAt: serverTimestamp(),
+    });
+  } finally {
+    await signOut(secondaryAuth).catch(() => {});
+  }
+}
+
 // --- Admin: provision a whole roster's worth of people ----------------------
 //
 // HR's monthly sheet already names everyone, with their id, email, phone and home
@@ -451,7 +557,16 @@ function inviteError(e) {
 // `people`: [{ email, name, empId, phone, address, route }]
 // `onProgress(done, total, label)` is called as each one finishes, so a long batch
 // can show real progress rather than an indeterminate spinner.
+//
+// EMPLOYEES AND COORDINATORS ONLY — everyone this creates signs in with Microsoft.
+// It used to have a driver branch that made an email/password account and mailed a
+// set-your-own-password link; drivers have no mailbox now (their address is
+// synthesized on an unroutable domain), so they go through adminCreateDriver
+// instead and that branch is gone rather than left to bounce.
 export async function adminInviteEmployees(people, { onProgress, role = 'employee' } = {}) {
+  if (role === 'driver') {
+    throw new Error('Drivers are created with adminCreateDriver, not invited.');
+  }
   if (!firestore) throw new Error('Backend not configured.');
   const list = Array.isArray(people) ? people : [];
   const created = [];
@@ -472,57 +587,29 @@ export async function adminInviteEmployees(people, { onProgress, role = 'employe
         route: p.route ? String(p.route).trim() : '',
       };
 
-      if (role === 'driver') {
-        // Drivers are not in the company Microsoft directory, so they still get
-        // a real login plus a set-your-own-password email (see the invite
-        // section above for why employees no longer do).
-        const uid = await adminCreateAccount({
-          email,
-          password: throwawayPassword(),
-          role,
-          profile: {
-            name: profile.name,
-            empId: profile.empId,
-            phone: profile.phone,
-            address: profile.address,
-            // The route the sheet named, if any — the coordinator groups rides by it.
-            ...(profile.route ? { roster: { route: profile.route } } : {}),
-          },
-        });
-        // The account exists; now let them set their own password. A failure here is
-        // NOT a failed creation — the account is real and HR can resend the email —
-        // so it is reported separately rather than rolled back.
-        let invited = true;
-        try {
-          await sendPasswordResetEmail(getAuth(), email);
-        } catch {
-          invited = false;
-        }
-        created.push({ uid, email, name, empId: p.empId, invited });
-      } else {
-        // Employees: file an invite, create nothing. There is no account and no
-        // password, so there is also nothing that can half-succeed the way
-        // "login created but profile write failed" used to — and no set-password
-        // email to send, because they sign in with Microsoft instead.
-        await adminCreateInvite({ email, role, profile });
-        // `uid` is genuinely not known yet — it comes into existence when they
-        // first sign in. Null rather than absent so callers reading it get a
-        // clear value instead of undefined.
-        created.push({ uid: null, email, name, empId: p.empId, invited: true });
-      }
+      // File an invite, create nothing. There is no account and no password, so
+      // there is also nothing that can half-succeed the way "login created but
+      // profile write failed" used to — and no set-password email to send,
+      // because they sign in with Microsoft instead.
+      await adminCreateInvite({ email, role, profile });
+      // `uid` is genuinely not known yet — it comes into existence when they
+      // first sign in. Null rather than absent so callers reading it get a
+      // clear value instead of undefined.
+      created.push({ uid: null, email, name, empId: p.empId });
     } catch (e) {
       failed.push({ email, name, empId: p?.empId, reason: inviteError(e) });
     }
     onProgress?.(i + 1, list.length, name || email);
   }
 
+  // No `notInvited` any more: it counted accounts whose "set your password" email
+  // didn't send, which only ever happened on the driver path. Nothing this creates
+  // is emailed at all now, so the field could only ever be empty.
   return {
     created,
     failed,
     createdCount: created.length,
     failedCount: failed.length,
-    // Accounts that exist but whose "set your password" email didn't send.
-    notInvited: created.filter((c) => !c.invited),
   };
 }
 

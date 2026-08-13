@@ -23,14 +23,15 @@ import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, SectionList, Pressable } from 'react-native';
 import {
   Text, Card, Chip, Button, SegmentedButtons, Portal, Dialog, RadioButton,
-  Snackbar, IconButton, Divider, TextInput,
+  Snackbar, IconButton,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
+import Dropdown from '../../components/Dropdown';
 import { groupByRoute, groupByShift, rideStats } from '../../services/rides';
 import { cabCapacity } from '../../services/cabs';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
-import { SHIFT_COLORS } from '../../data/shifts';
+import { SHIFT_COLORS, legsForShift, shiftSummary } from '../../data/shifts';
 import { statusColors, colors } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -46,7 +47,8 @@ function prettyDate(dateKey) {
 export default function CoordinatorDashboardScreen({ navigation }) {
   const {
     ridesOn, assignCabToRides, cabs, rosterMonth, setRosterMonth, monthRosters,
-    routeOptions, setEmployeeRoute,
+    routeOptions, setEmployeeRoute, employeeCancellationsOn, getCabById,
+    employees, shiftPolicy, addRiderToDay,
   } = useApp();
 
   const [date, setDate] = useState(() => todayKey());
@@ -63,6 +65,11 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   // is on no route at all — and a ride nobody can group is a ride nobody drives.
   const [routeFor, setRouteFor] = useState(null);
   const [routeChoice, setRouteChoice] = useState(null);
+  // "Add a rider" — the employee picked and the shift chosen for them, for the
+  // day currently on screen.
+  const [addRiderOpen, setAddRiderOpen] = useState(false);
+  const [addRiderUid, setAddRiderUid] = useState(null);
+  const [addRiderCode, setAddRiderCode] = useState(null);
 
   // The derived rides for the chosen day, and the sections to show them in.
   const rides = useMemo(() => ridesOn(date), [ridesOn, date]);
@@ -74,6 +81,17 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   const sections = useMemo(
     () => (groupMode === 'route' ? groupByRoute(visible) : groupByShift(visible)),
     [visible, groupMode]
+  );
+
+  // Rides the riders themselves called off for this day. They are deliberately
+  // NOT in `rides` above — ridesOn() drops cancelled rides so the board shows
+  // only what still has to be driven, which is what frees the seat. But a seat
+  // silently vanishing from a cab is exactly the kind of change the coordinator
+  // has to know about: it may empty a carpool, or leave room for someone who was
+  // waiting. So they are listed separately, with the reason the rider gave.
+  const riderCancellations = useMemo(
+    () => employeeCancellationsOn(date),
+    [employeeCancellationsOn, date]
   );
 
   // Moving off the loaded month has to move the subscription too, or the day
@@ -96,16 +114,95 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     setSelected((prev) => Array.from(new Set([...prev, ...keys])));
   }
 
+  // --- "Add a rider" ---------------------------------------------------------
+
+  // Anyone with a ride already on this day is not a candidate — offering them
+  // again would just overwrite the shift code they already have, which is a
+  // different action (a shift change) belonging to the request queue.
+  const ridersToday = useMemo(
+    () => new Set(rides.map((r) => r.employeeId)),
+    [rides]
+  );
+  const addRiderOptions = useMemo(
+    () =>
+      (employees || [])
+        .filter((e) => e.role === 'employee' && !ridersToday.has(e.uid))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        .map((e) => e.uid),
+    [employees, ridersToday]
+  );
+  // Only codes that put a cab on the road ON THE DAY BEING VIEWED. Three things
+  // get filtered out, and all three would otherwise look like the button did
+  // nothing: a Week Off (writes a day, generates no ride), an Evening shift
+  // ("working" but outside the 20:00–06:00 service window, so no leg), and — if
+  // HR ever configures one — a shift whose only cab is a drop the NEXT morning,
+  // which would correctly appear on tomorrow's board rather than this one.
+  // Mirrors the leg/date logic in ridesForDate(); keep them in step.
+  const addRiderCodes = useMemo(() => {
+    const policy = shiftPolicy || {};
+    return Object.keys(policy).filter((code) => {
+      const legs = legsForShift(policy, code);
+      if (!legs) return false;
+      return legs.providePickup || (legs.provideDrop && !legs.dropNextDay);
+    });
+  }, [shiftPolicy]);
+
+  const addRiderEmployee = useMemo(
+    () => (employees || []).find((e) => e.uid === addRiderUid) || null,
+    [employees, addRiderUid]
+  );
+
+  function openAddRider() {
+    setAddRiderUid(null);
+    setAddRiderCode(null);
+    setAddRiderOpen(true);
+  }
+
+  // Writes the one day's shift code. The board is derived from the roster and the
+  // month is already subscribed (see the effect above), so the ride appears by
+  // itself — there is nothing to refresh.
+  async function confirmAddRider() {
+    if (!addRiderUid || !addRiderCode) return;
+    setBusy(true);
+    const res = await addRiderToDay(addRiderUid, date, addRiderCode);
+    setBusy(false);
+    if (!res?.ok) {
+      setError(res?.message || 'Could not add that rider.');
+      return;
+    }
+    const name = addRiderEmployee?.name || 'Rider';
+    const label = shiftPolicy?.[addRiderCode]?.label || addRiderCode;
+    setAddRiderOpen(false);
+    setAddRiderUid(null);
+    setAddRiderCode(null);
+    setSnack(
+      `${name} added to ${prettyDate(date)} on ${label}.` +
+        (addRiderEmployee?.roster?.route ? '' : ' No route set — group them by hand.')
+    );
+  }
+
   // Put this rider on a route. Saved on their PROFILE, so it holds for every
   // remaining day of the roster instead of just today's board.
   async function confirmRoute() {
     if (!routeFor || !routeChoice) return;
     setBusy(true);
-    const res = await setEmployeeRoute(routeFor.employeeId, routeChoice);
+    const rider = routeFor;
+    const res = await setEmployeeRoute(rider.employeeId, routeChoice);
     setBusy(false);
     setRouteFor(null);
     if (res?.ok) {
-      setSnack(`${routeFor.employeeName} added to ${routeChoice}.`);
+      // Tick their still-unassigned rides straight away. Routing someone was
+      // only ever step one of "get this person into a cab" — without this they
+      // silently drop out of "No route set" into a group further down the
+      // board, and the coordinator has to go hunting for the person they were
+      // just looking at. Only unassigned rides, matching selectGroup().
+      const theirs = rides
+        .filter((r) => r.employeeId === rider.employeeId && !r.assignedCabId)
+        .map((r) => r.key);
+      if (theirs.length) {
+        setSelected((prev) => Array.from(new Set([...prev, ...theirs])));
+      }
+      setSnack(`${rider.employeeName} added to ${routeChoice} — selected, ready to assign.`);
     } else {
       setError(res?.message || 'Could not save that route.');
     }
@@ -309,6 +406,46 @@ export default function CoordinatorDashboardScreen({ navigation }) {
           <Stat label="In / Out" value={`${stats.inbound}/${stats.outbound}`} tone="muted" />
         </View>
 
+        {/* Riders who stood their own cab down today. Above the board rather
+            than inside it: this is news, and it changes what the cabs below
+            should be carrying. */}
+        {riderCancellations.length ? (
+          <Card mode="outlined" style={styles.cancelCard}>
+            <Card.Content>
+              <View style={styles.cancelHead}>
+                <MaterialCommunityIcons name="account-cancel" size={18} color={colors.danger} />
+                <Text variant="titleSmall" style={styles.cancelTitle}>
+                  {riderCancellations.length} rider
+                  {riderCancellations.length === 1 ? '' : 's'} cancelled
+                </Text>
+              </View>
+              <Text variant="bodySmall" style={styles.cancelIntro}>
+                These rides are already off the board below — the seats are free.
+              </Text>
+              {riderCancellations.map((b) => {
+                const cab = b.assignedCabId ? getCabById(b.assignedCabId) : null;
+                return (
+                  <View key={b.id} style={styles.cancelRow}>
+                    <Text variant="bodyMedium" style={styles.cancelName}>
+                      {b.employeeName || 'Employee'}
+                      {b.empId ? ` · ${b.empId}` : ''}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.cancelMeta}>
+                      {b.direction} · {b.shift}
+                      {/* Which cab has the seat back. Cancelled rides keep their
+                          assignedCabId precisely so this can be said. */}
+                      {cab ? ` · seat free on ${cab.cabNumber}` : ''}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.cancelWhy}>
+                      “{b.cancellationReason || b.cancelReason || 'No reason given'}”
+                    </Text>
+                  </View>
+                );
+              })}
+            </Card.Content>
+          </Card>
+        ) : null}
+
         <View style={styles.controls}>
           <SegmentedButtons
             value={groupMode}
@@ -327,6 +464,13 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             onPress={() => setOnlyPending((v) => !v)}
           >
             {onlyPending ? 'Waiting only' : 'All rides'}
+          </Button>
+          {/* Someone needs a cab tonight who the month's roster doesn't have
+              working today. Without this the coordinator can see that and not
+              fix it — the roster is HR's screen and they may well have gone
+              home. One day only; a stretch of days is still HR's call. */}
+          <Button compact mode="text" icon="account-plus" onPress={openAddRider}>
+            Add a rider
           </Button>
         </View>
 
@@ -347,6 +491,13 @@ export default function CoordinatorDashboardScreen({ navigation }) {
               <Text variant="bodyMedium" style={styles.emptyText}>
                 {noRoster
                   ? `No roster imported for ${date.slice(0, 7)}.`
+                  : /* "Every ride has a cab" is only true when there ARE rides.
+                       This branch used to ignore the count, so a day that
+                       generated nothing — a weekend, or a month imported wrong —
+                       reported itself as fully assigned and the coordinator
+                       moved on. Zero rides is its own state, not a success. */
+                  stats.total === 0
+                  ? 'No rides on this day.'
                   : onlyPending
                   ? 'Every ride today has a cab.'
                   : 'No rides on this day.'}
@@ -355,6 +506,14 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                 <Text variant="bodySmall" style={styles.emptyHint}>
                   Ask HR to upload the monthly shift roster — rides are generated
                   from it.
+                </Text>
+              ) : stats.total === 0 ? (
+                /* The roster IS loaded, so an empty day is a rostering answer,
+                   not a missing one. Saying which answers are possible saves
+                   the coordinator checking whether the upload went wrong. */
+                <Text variant="bodySmall" style={styles.emptyHint}>
+                  The roster is loaded — nobody is down to travel today. Week off,
+                  holiday, leave, or a shift the company runs no cab for.
                 </Text>
               ) : null}
             </View>
@@ -435,6 +594,90 @@ export default function CoordinatorDashboardScreen({ navigation }) {
         </Dialog>
       </Portal>
 
+      {/* Add a rider to THIS day only. HR owns the month; this is the one-off. */}
+      <Portal>
+        <Dialog
+          visible={addRiderOpen}
+          onDismiss={() => setAddRiderOpen(false)}
+          style={styles.dialog}
+        >
+          <Dialog.Title>Add a rider — {prettyDate(date)}</Dialog.Title>
+          <Dialog.ScrollArea>
+            <View style={styles.dialogBody}>
+              <Text variant="bodySmall" style={styles.dialogHint}>
+                Puts this person on today&apos;s board only. For a run of days, HR adds
+                them on Roster Upload.
+              </Text>
+
+              {addRiderOptions.length === 0 ? (
+                <Text variant="bodyMedium">
+                  Everyone with an account already has a ride today.
+                </Text>
+              ) : (
+                <>
+                  <Text variant="labelLarge" style={styles.dialogLabel}>
+                    Employee
+                  </Text>
+                  <Dropdown
+                    compact={false}
+                    value={addRiderUid}
+                    options={addRiderOptions}
+                    onSelect={setAddRiderUid}
+                    placeholder="Select employee"
+                    format={(uid) => {
+                      const e = (employees || []).find((x) => x.uid === uid);
+                      if (!e) return 'Select employee';
+                      return e.empId ? `${e.name} · ${e.empId}` : e.name || 'Unnamed';
+                    }}
+                  />
+
+                  {addRiderEmployee ? (
+                    <Text variant="bodySmall" style={styles.dialogHint}>
+                      {addRiderEmployee.roster?.route
+                        ? `Route: ${addRiderEmployee.roster.route}`
+                        : 'No route set — they land under “No route set”.'}
+                      {addRiderEmployee.address ? `\nHome: ${addRiderEmployee.address}` : ''}
+                    </Text>
+                  ) : null}
+
+                  <Text variant="labelLarge" style={styles.dialogLabel}>
+                    Shift
+                  </Text>
+                  {addRiderCodes.length === 0 ? (
+                    <Text variant="bodyMedium">
+                      No shift currently runs a cab. HR sets that on Shift Policy.
+                    </Text>
+                  ) : (
+                    <RadioButton.Group onValueChange={setAddRiderCode} value={addRiderCode}>
+                      {addRiderCodes.map((code) => (
+                        <RadioButton.Item
+                          key={code}
+                          label={shiftSummary(shiftPolicy, code)}
+                          value={code}
+                        />
+                      ))}
+                    </RadioButton.Group>
+                  )}
+                </>
+              )}
+            </View>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button onPress={() => setAddRiderOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              onPress={confirmAddRider}
+              loading={busy}
+              disabled={busy || !addRiderUid || !addRiderCode}
+            >
+              Add to today
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
       {/* Route picker — the one employee field the rules let a coordinator write.
           It saves to the profile, so it also fixes every other day this month. */}
       <Portal>
@@ -507,6 +750,15 @@ function Stat({ label, value, tone }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   col: { flex: 1, width: '100%', maxWidth: 820, alignSelf: 'center' },
+
+  cancelCard: { marginHorizontal: 8, marginBottom: 8, borderColor: colors.danger },
+  cancelHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cancelTitle: { color: colors.danger },
+  cancelIntro: { opacity: 0.7, marginTop: 2 },
+  cancelRow: { marginTop: 8 },
+  cancelName: { fontWeight: 'bold' },
+  cancelMeta: { opacity: 0.75, marginTop: 1 },
+  cancelWhy: { fontStyle: 'italic', marginTop: 2, color: colors.text },
 
   dateBar: {
     flexDirection: 'row',
@@ -606,4 +858,5 @@ const styles = StyleSheet.create({
   dialog: { width: '100%', maxWidth: 480, alignSelf: 'center' },
   dialogBody: { paddingVertical: 8 },
   dialogHint: { color: colors.muted, marginTop: 10, lineHeight: 18 },
+  dialogLabel: { marginTop: 14, marginBottom: 4, color: colors.text },
 });

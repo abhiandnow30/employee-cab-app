@@ -8,6 +8,11 @@
 // Layout: company brand at top, nav items in the middle, and the signed-in
 // employee at the BOTTOM — showing just the name, which expands on tap to reveal
 // Employee ID, email, and a "Change password" action.
+//
+// EXCEPT FOR DRIVERS, who get neither: they have no password of their own and no
+// real email address. See the comment in UserCard for why offering "Change
+// password" to a driver would lock them out permanently rather than merely being
+// useless.
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
@@ -195,34 +200,125 @@ const ROLE_LABEL = {
 };
 
 // The signed-in user card at the bottom: name + role, expands on tap.
-function UserCard({ user, onChangePassword }) {
+// Logout lives HERE, inside the expanded panel — not as a nav row and not in
+// the header. Signing out is an account action, so it belongs with the account,
+// alongside Change password, rather than sitting in the list of places to go.
+function UserCard({ user, onChangePassword, onLogout }) {
   const [expanded, setExpanded] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const u = user || {};
   const roleLabel = ROLE_LABEL[u.role] || 'Employee';
 
+  // A DRIVER HAS NO PASSWORD OF THEIR OWN, so this card must not offer to change
+  // one. It isn't merely a pointless row: their Firebase password IS the login code
+  // the desk issued, so changing it would succeed and leave them holding a secret
+  // the login screen cannot accept (it takes 14 digits and nothing else) and that no
+  // recovery candidate matches — locking them out for good, fixable only by deleting
+  // and re-creating the account. Their email is hidden for the same family of
+  // reasons: it is synthesized on an unroutable domain (see utils/driverLogin.js),
+  // so showing it only invites someone to write to it. Their phone is the identity
+  // that actually means something here.
+  const isDriver = u.role === 'driver';
+  const showEmail = !!u.email && !isDriver;
+  const showPhone = isDriver && !!u.phone;
+  const hasMeta = !!u.empId || showEmail || showPhone;
+
   return (
     <View style={styles.userBox}>
       {/* Expanded details appear ABOVE the name (since the card sits at the
-          bottom of the sidebar, details open upward). */}
+          bottom of the sidebar, details open upward).
+
+          Every row here — meta, action, profile — uses the SAME 30px icon
+          column as the nav items above, so all the text in the sidebar lines up
+          on one edge instead of the account block sitting at its own indent. */}
       {expanded ? (
         <View style={styles.userDetails}>
           {u.empId ? (
-            <Text style={styles.userMeta}>Employee ID: {u.empId}</Text>
+            <View style={styles.metaRow}>
+              <MaterialCommunityIcons
+                name="card-account-details-outline"
+                size={18}
+                color="#D6E4FF"
+                style={styles.rowIcon}
+              />
+              <Text style={styles.userMeta} numberOfLines={1}>
+                Employee ID: {u.empId}
+              </Text>
+            </View>
           ) : null}
-          {u.email ? (
-            <Text style={styles.userMeta}>{u.email}</Text>
+          {showEmail ? (
+            <View style={styles.metaRow}>
+              <MaterialCommunityIcons
+                name="email-outline"
+                size={18}
+                color="#D6E4FF"
+                style={styles.rowIcon}
+              />
+              {/* Left to wrap rather than truncated — a half-shown address is
+                  no use to someone checking which account they're signed into. */}
+              <Text style={styles.userMeta}>{u.email}</Text>
+            </View>
           ) : null}
-          <Pressable style={styles.changePw} onPress={() => setPwOpen(true)}>
-            <MaterialCommunityIcons name="lock-reset" size={18} color="#FFFFFF" />
-            <Text style={styles.changePwText}>Change password</Text>
-          </Pressable>
+          {showPhone ? (
+            <View style={styles.metaRow}>
+              <MaterialCommunityIcons
+                name="phone-outline"
+                size={18}
+                color="#D6E4FF"
+                style={styles.rowIcon}
+              />
+              <Text style={styles.userMeta}>{u.phone}</Text>
+            </View>
+          ) : null}
+
+          {/* Hairline between what the rows SAY and what they DO, so the tappable
+              rows below read as actions rather than more detail. */}
+          {hasMeta ? <View style={styles.detailDivider} /> : null}
+
+          {/* Both actions share one row shape — same gutter, size and weight —
+              so neither looks like the odd one out. */}
+          {isDriver ? null : (
+            <Pressable
+              style={styles.accountAction}
+              onPress={() => setPwOpen(true)}
+              android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
+            >
+              <MaterialCommunityIcons
+                name="lock-reset"
+                size={20}
+                color="#FFFFFF"
+                style={styles.rowIcon}
+              />
+              <Text style={styles.accountActionText}>Change password</Text>
+            </Pressable>
+          )}
+
+          {onLogout ? (
+            <Pressable
+              style={styles.accountAction}
+              onPress={onLogout}
+              android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
+            >
+              <MaterialCommunityIcons
+                name="logout"
+                size={20}
+                color="#FFFFFF"
+                style={styles.rowIcon}
+              />
+              <Text style={styles.accountActionText}>Logout</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
       {/* Name + role row — tap to expand/collapse the details above. */}
       <Pressable style={styles.userTop} onPress={() => setExpanded((e) => !e)}>
-        <MaterialCommunityIcons name="account-circle" size={32} color="#FFFFFF" />
+        <MaterialCommunityIcons
+          name="account-circle"
+          size={24}
+          color="#FFFFFF"
+          style={styles.rowIcon}
+        />
         <View style={styles.userNameCol}>
           {/* Admins show just "Admin" (no account name / second line);
               other roles show their name with the role beneath it. */}
@@ -237,16 +333,20 @@ function UserCard({ user, onChangePassword }) {
         </View>
         <MaterialCommunityIcons
           name={expanded ? 'chevron-down' : 'chevron-up'}
-          size={22}
+          size={20}
           color="#FFFFFF"
         />
       </Pressable>
 
-      <ChangePasswordDialog
-        visible={pwOpen}
-        onDismiss={() => setPwOpen(false)}
-        onChangePassword={onChangePassword}
-      />
+      {/* Not mounted at all for a driver, so there is no path to it even if the row
+          above were ever restored by accident. */}
+      {isDriver ? null : (
+        <ChangePasswordDialog
+          visible={pwOpen}
+          onDismiss={() => setPwOpen(false)}
+          onChangePassword={onChangePassword}
+        />
+      )}
     </View>
   );
 }
@@ -307,21 +407,13 @@ function DrawerBody({
           );
         })}
 
-        {/* Logout — shown when a handler is provided (admin sidebar). */}
-        {onLogout ? (
-          <Pressable
-            style={[styles.item, styles.logoutItem]}
-            onPress={onLogout}
-            android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
-          >
-            <MaterialCommunityIcons name="logout" size={20} color="#FFFFFF" style={styles.itemIcon} />
-            <Text style={styles.itemText}>Logout</Text>
-          </Pressable>
-        ) : null}
+        {/* Nav is places to GO only. Logout is an account action and lives in
+            the profile card below — it was a row here, which put it in the same
+            list as the screens and gave the sidebar two kinds of thing. */}
       </ScrollView>
 
-      {/* Signed-in user — at the bottom */}
-      <UserCard user={user} onChangePassword={onChangePassword} />
+      {/* Signed-in user — at the bottom. Carries the app's ONLY logout. */}
+      <UserCard user={user} onChangePassword={onChangePassword} onLogout={onLogout} />
     </View>
   );
 }
@@ -425,11 +517,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   itemActive: { backgroundColor: colors.primary }, // highlight current screen
-  logoutItem: {
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.15)',
-  },
   itemIcon: { width: 30 },
   itemText: { color: '#FFFFFF', fontSize: 16, flex: 1 },
   itemTextActive: { fontWeight: 'bold' },
@@ -443,31 +530,50 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   countText: { color: colors.primaryDark, fontSize: 12, fontWeight: 'bold' },
+  // Account block. paddingHorizontal matches `item` above (20) so the icon
+  // column starts on the same edge as every nav row; paddingVertical is kept
+  // tight so the collapsed card is a slim strip rather than a deep footer.
   userBox: {
     backgroundColor: colors.primaryLight,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.2)',
   },
-  userTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  // The shared 30px icon gutter — same width as `itemIcon`, so meta text,
+  // "Change password" and the profile name all begin at the same x as the nav
+  // labels. Changing one of these without the other is what made the block
+  // look bolted on.
+  rowIcon: { width: 30 },
+  userTop: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
   userNameCol: { flex: 1 },
-  userName: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
+  userName: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 },
   userRole: { color: '#E3F0FF', fontSize: 12, marginTop: 1 },
-  userDetails: { marginBottom: 12 },
-  userMeta: { color: '#E3F0FF', fontSize: 12, marginBottom: 4 },
-  changePw: {
+  // Hairline separating the details from the profile row, so the expanded card
+  // reads as two grouped parts instead of one long list.
+  userDetails: {
+    paddingBottom: 6,
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.18)',
+  },
+  metaRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
+  userMeta: { color: '#E3F0FF', fontSize: 13, flex: 1 },
+  // Separates the read-only meta rows from the tappable ones below.
+  detailDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  // Shared by Change password and Logout — one shape for both, so the account
+  // panel doesn't invent a second row style for its second action.
+  accountAction: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 8,
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingVertical: 8,
   },
-  changePwText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
+  accountActionText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600', flex: 1 },
   pwInput: { marginBottom: 10 },
   pwDialog: { width: '100%', maxWidth: 400, alignSelf: 'center' },
 });

@@ -214,21 +214,21 @@ export default function LoginScreen({ navigation }) {
               Sign in with Microsoft
             </Button>
 
-            {/* Drivers register themselves; employees are added by the transport
-                desk. Without this link the sign-up screen was only reachable by
-                typing its URL, so on a phone a driver could never create an
-                account at all. */}
+            {/* Drivers don't sign in here at all: they have no email and no
+                password, just the numeric code the desk issues when it links them
+                to a cab (see DriverLoginScreen). This link is the only way to
+                that screen on a phone, so it can't be dropped. */}
             <View style={styles.signupRow}>
               <Text variant="bodySmall" style={styles.signupHint}>
-                Driver without an account?
+                Are you a driver?
               </Text>
               <Button
                 mode="text"
                 compact
-                onPress={() => navigation.navigate('SignUp')}
+                onPress={() => navigation.navigate('DriverLogin')}
                 disabled={loading}
               >
-                Sign up
+                Driver sign in
               </Button>
             </View>
           </Card.Content>

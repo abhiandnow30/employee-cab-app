@@ -20,6 +20,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import ScreenContainer from '../../components/ScreenContainer';
 import { REQUEST_STATUS } from '../../services/addressRequests';
+import { formatLoginCode, isShareableCode } from '../../utils/driverLogin';
 import { colors } from '../../theme';
 import useMicrosoftAuthRequest from '../../utils/useMicrosoftAuthRequest';
 
@@ -61,6 +62,10 @@ export default function ProfileScreen() {
   } = useApp();
   const u = currentUser || {};
   const isEmployee = u.role === 'employee';
+  const isDriver = u.role === 'driver';
+  // Only ever the code stored on the profile, which is the real Firebase password.
+  // The phone-only value a driver on no cab holds is not a code and must not show.
+  const loginCode = isDriver && isShareableCode(u.loginCode) ? u.loginCode : '';
   const roleLabel = u.role === 'admin' ? 'Transport Desk' : u.role === 'driver' ? 'Driver' : 'Employee';
   const address = homeAddressOf(u);
 
@@ -152,14 +157,39 @@ export default function ProfileScreen() {
 
       {/* All fields are read-only — the admin manages profile data. */}
       <Card mode="outlined" style={styles.card}>
-        <List.Item title="Email" description={u.email || '—'} left={(p) => <List.Icon {...p} icon="email" />} />
+        {/* A DRIVER SEES THEIR LOGIN CODE, not an email. Their stored address is
+            synthesized on an unroutable domain (see utils/driverLogin.js) — it
+            would only invite them to try mailing it — and the code is the one thing
+            they actually need to know, especially after a cab change. */}
+        {isDriver ? (
+          <List.Item
+            title="Login code"
+            description={
+              loginCode
+                ? formatLoginCode(loginCode)
+                : 'None yet — the transport desk gives you one when they assign your cab'
+            }
+            descriptionStyle={loginCode ? styles.codeValue : undefined}
+            left={(p) => <List.Icon {...p} icon="dialpad" />}
+          />
+        ) : (
+          <List.Item
+            title="Email"
+            description={u.email || '—'}
+            left={(p) => <List.Icon {...p} icon="email" />}
+          />
+        )}
         <Divider />
-        <List.Item
-          title="Employee ID"
-          description={u.empId || 'Not set'}
-          left={(p) => <List.Icon {...p} icon="identifier" />}
-        />
-        <Divider />
+        {isDriver ? null : (
+          <>
+            <List.Item
+              title="Employee ID"
+              description={u.empId || 'Not set'}
+              left={(p) => <List.Icon {...p} icon="identifier" />}
+            />
+            <Divider />
+          </>
+        )}
         <List.Item
           title="Phone"
           description={u.phone || 'Not set'}
@@ -340,6 +370,15 @@ const styles = StyleSheet.create({
   name: { marginTop: 12, fontWeight: 'bold' },
   role: { opacity: 0.7 },
   card: { marginBottom: 20 },
+  // The driver reads this off the screen and types it into a login box, so 0/O
+  // and 1/l must not be a guess.
+  codeValue: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    color: colors.text,
+  },
   help: { opacity: 0.7, marginTop: 4, marginBottom: 12 },
   requestBtn: { marginTop: 4 },
   requestsTitle: { marginBottom: 8 },

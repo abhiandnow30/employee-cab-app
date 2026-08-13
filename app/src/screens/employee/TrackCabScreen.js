@@ -36,6 +36,16 @@ import {
 import { STATUS } from '../../data/mockData';
 import TrackMap from '../../components/TrackMap';
 import { colors } from '../../theme';
+import { callNumber } from '../../utils/externalLinks';
+
+// A route is only ever true of the ONE point it was computed to. Every route is
+// tagged with this key and nothing is displayed unless its tag matches the point
+// the screen is currently talking about — which is what stops the pickup route's
+// ETA appearing under "Reaching your drop in" while the drop route is still
+// being fetched.
+function targetKeyOf(t) {
+  return t ? `${t.latitude},${t.longitude}` : '';
+}
 
 // "45s ago" / "3m ago" / "2h ago" — how old the last fix is.
 function timeAgo(updatedAt, now) {
@@ -79,19 +89,38 @@ export default function TrackCabScreen({ navigation }) {
   const driverUid = cab?.driverUid || null;
 
   const [location, setLocation] = useState(null); // { latitude, longitude, updatedAt }
-  const [route, setRoute] = useState(null); // { durationSec, distanceMeters, coordinates, source }
+  // { durationSec, distanceMeters, coordinates, source, targetKey } — targetKey
+  // records which point this route leads to, so it can't be read as a route to
+  // somewhere else. See routeForTarget below.
+  const [route, setRoute] = useState(null);
   const [now, setNow] = useState(() => Date.now());
 
   // Before the driver arrives, the cab is on its way to the PICKUP point; after
   // that it's heading to the trip's destination.
   const onBoard = trackedBooking?.status === STATUS.ARRIVED;
   const pickupPoint = trackedBooking ? tripPickupPoint(trackedBooking) : null;
+  // Two places the home pin can live, and neither is reliably populated on its
+  // own: the booking's own copy is what the DRIVER was given (and is null on
+  // every roster-generated ride — see bookingFromRide), while the profile is the
+  // live one (and is empty for anyone the desk hasn't pinned yet). Prefer the
+  // copy, since that is where the cab was actually sent, and fall back to the
+  // profile. If both are empty the trip has no known destination, and
+  // tripDestination says so by returning null rather than inventing one.
+  const homePin = trackedBooking?.employeeHome || currentUser?.home || null;
   const target = !trackedBooking
     ? null
     : onBoard
-    ? tripDestination(trackedBooking.direction, currentUser?.home, trackedBooking.pickup)
+    ? tripDestination(trackedBooking.direction, homePin, trackedBooking.pickup)
     : pickupPoint?.coords || null;
   const targetLabel = onBoard ? 'Reaching your drop in' : 'Arriving in';
+  const targetKey = targetKeyOf(target);
+
+  // The route in hand, but ONLY if it leads where the screen says it does. On the
+  // pickup → drop switch the old route is dropped here even before the new one is
+  // requested, so the ETA falls back to "Calculating route…" rather than showing
+  // the pickup number under the drop label. Everything below reads this, never
+  // `route` directly.
+  const routeForTarget = route && route.targetKey === targetKey ? route : null;
 
   const lastFetchRef = useRef({ time: 0, lat: 0, lng: 0, target: '' });
 
@@ -100,6 +129,9 @@ export default function TrackCabScreen({ navigation }) {
       setLocation(null);
       return;
     }
+    // A different cab means a different starting point, so whatever route was on
+    // screen described a journey nobody is making any more.
+    setRoute(null);
     return subscribeDriverLocation(driverUid, setLocation, (e) =>
       console.warn('[tracking] subscription error:', e?.message)
     );
@@ -119,25 +151,37 @@ export default function TrackCabScreen({ navigation }) {
   // "Arrived", the target flips from the pickup point to the drop, and the label
   // changes with it — so a throttled skip would show the old pickup route under
   // "Reaching your drop in", i.e. a confidently wrong number.
+  //
+  // Requesting a fresh route immediately isn't enough on its own, though: the
+  // request is a network round-trip to OSRM with no timeout, and until it lands
+  // the OLD route is still in state. So the old one is thrown away first, and the
+  // new one arrives tagged with the point it was computed to.
   useEffect(() => {
     if (!location || !target) return;
     const stamp = Date.now();
     const last = lastFetchRef.current;
-    const targetKey = `${target.latitude},${target.longitude}`;
-    const targetChanged = last.target !== targetKey;
+    const key = targetKeyOf(target);
+    const targetChanged = last.target !== key;
     const movedFar =
       distanceMeters(location, { latitude: last.lat, longitude: last.lng }) > 80;
     if (route && !targetChanged && stamp - last.time < 8000 && !movedFar) return;
+
+    // Pickup → drop (or any other change of destination): the route on screen
+    // leads to the wrong place, so it goes now rather than lingering until its
+    // replacement arrives.
+    if (targetChanged) setRoute(null);
 
     lastFetchRef.current = {
       time: stamp,
       lat: location.latitude,
       lng: location.longitude,
-      target: targetKey,
+      target: key,
     };
     let cancelled = false;
     getRoute(location, target).then((r) => {
-      if (!cancelled) setRoute(r);
+      // `cancelled` covers the reply that is superseded before it lands; the tag
+      // covers the rest — a route can only ever be shown against its own target.
+      if (!cancelled && r) setRoute({ ...r, targetKey: key });
     });
     return () => {
       cancelled = true;
@@ -212,26 +256,49 @@ export default function TrackCabScreen({ navigation }) {
             Pickup: {pickupPoint?.label || trackedBooking.pickup || '—'}
           </Text>
 
-          {/* Driver */}
+          {/* Driver. The number is a BUTTON, not text — this is the screen a
+              rider has open while the cab approaches, so "where are you?" has
+              to be one tap, not a number to memorise and retype. */}
           <Text variant="bodyMedium" style={styles.driver}>
-            Driver: {cab.driverName || '—'} · {cab.driverPhone || '—'}
+            Driver: {cab.driverName || '—'}
           </Text>
+          {cab.driverPhone ? (
+            <Button
+              mode="text"
+              icon="phone"
+              compact
+              onPress={() => callNumber(cab.driverPhone)}
+              style={styles.callBtn}
+              contentStyle={styles.callBtnContent}
+            >
+              {cab.driverPhone}
+            </Button>
+          ) : null}
 
           {/* ETA — only while the fix is fresh AND we know where the cab is
               headed. A stale position would give a confidently wrong number. */}
-          {live && route && target ? (
+          {live && routeForTarget && target ? (
             <View style={styles.etaRow}>
               <MaterialCommunityIcons name="map-marker-distance" size={18} color={colors.primary} />
               <Text variant="titleSmall" style={styles.eta}>
-                {targetLabel} {formatEta(route.durationSec)} ·{' '}
-                {formatDistance(route.distanceMeters)}
-                {route.source === 'estimate' ? ' (approx)' : ''}
+                {targetLabel} {formatEta(routeForTarget.durationSec)} ·{' '}
+                {formatDistance(routeForTarget.distanceMeters)}
+                {routeForTarget.source === 'estimate' ? ' (approx)' : ''}
               </Text>
             </View>
           ) : live && !target ? (
-            <Text variant="bodySmall" style={styles.coords}>
-              Your pickup point isn't pinned yet, so we can't estimate an arrival
-              time. The map still shows where the cab is.
+            // No known point to route to. Said plainly, and differently for each
+            // leg, because "we don't know where you're going" and "we don't know
+            // where to collect you" are different problems with different fixes.
+            // Neither ever shows a number: an ETA to a place the rider didn't
+            // ask for is worse than no ETA at all.
+            <Text variant="bodySmall" style={styles.unavailable}>
+              {onBoard
+                ? "Drop location unavailable — your home isn't pinned on your " +
+                  "profile, so we can't estimate when you'll get there. The map " +
+                  'still shows where the cab is. Ask the transport desk to add it.'
+                : "Your pickup point isn't pinned yet, so we can't estimate an " +
+                  'arrival time. The map still shows where the cab is.'}
             </Text>
           ) : live ? (
             <Text variant="bodySmall" style={styles.coords}>
@@ -254,7 +321,9 @@ export default function TrackCabScreen({ navigation }) {
         <TrackMap
           latitude={location?.latitude}
           longitude={location?.longitude}
-          route={live ? route?.coordinates : null}
+          // Same guard as the ETA: the drawn line has to lead to the pin beside
+          // it, or the map shows a route to the pickup with the drop marked.
+          route={live ? routeForTarget?.coordinates : null}
           destination={target}
         />
       </View>
@@ -283,10 +352,16 @@ const styles = StyleSheet.create({
   trip: { marginTop: 2 },
   detail: { opacity: 0.8, marginTop: 2 },
   driver: { marginTop: 8 },
+  // Sits directly under the driver's name as part of the same block.
+  callBtn: { alignSelf: 'flex-start', marginLeft: -8, marginTop: 2 },
+  callBtnContent: { paddingHorizontal: 4 },
   etaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
   eta: { color: colors.primary },
   coords: { opacity: 0.7, marginTop: 4 },
   stale: { color: '#E65100', marginTop: 6 },
+  // Amber, not muted grey: no destination on file is a gap somebody has to fix,
+  // not a routine "still loading" note to be skimmed past.
+  unavailable: { color: colors.warning, marginTop: 6 },
   mapWrap: { flex: 1 },
   homeBtn: { marginTop: 12, paddingVertical: 4 },
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },

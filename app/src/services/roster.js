@@ -26,8 +26,8 @@
 // ---------------------------------------------------------------------------
 
 import {
-  collection, doc, getDocs, setDoc, onSnapshot, query, where, orderBy, limit,
-  writeBatch, serverTimestamp, addDoc, deleteDoc,
+  collection, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot, query, where,
+  orderBy, limit, writeBatch, serverTimestamp, addDoc, deleteDoc,
 } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 import { firestore } from './firebase';
@@ -965,6 +965,71 @@ export async function setRosterDay(month, employeeId, day, code) {
     { days: { [day]: code }, updatedAt: serverTimestamp() },
     { merge: true }
   );
+}
+
+// --- Coordinator: put one rider on ONE day's board --------------------------
+
+// The 9 PM problem. Somebody needs a cab tonight and isn't on the board, because
+// the roster the month was built from doesn't have them working today. Until this
+// existed the only fix was phoning HR to add a roster row, so the person running
+// the day could see the problem and not solve it.
+//
+// This is deliberately NOT addSingleEmployeeRoster() with a one-day range:
+//   • that one is admin-only and lives on the Roster Upload screen;
+//   • it logs a rosterImports row, which the rules only let an admin write;
+//   • and its day range invites rostering someone for the rest of the month.
+// This writes exactly one day, from the screen where the problem is visible.
+//
+// TWO SHAPES, because the rules draw the line in a different place for each:
+//   • the employee already HAS a roster document for this month → update only
+//     `days`, which is precisely what a coordinator is allowed to touch
+//     (onlyDaysTouched() in firestore.rules);
+//   • they DON'T → this write creates it, so it must carry the same identity
+//     fields importRoster() writes. Without `employeeId` the rider cannot read
+//     their own schedule (the read rule matches on it) and ridesForDate() can't
+//     attribute the ride; without `month` the derivation skips the document
+//     entirely.
+// Returns { created } so the caller can word the confirmation honestly.
+export async function addRiderForDay(
+  { month, employee, day, code },
+  { addedBy, addedByName } = {}
+) {
+  if (!firestore) throw new Error('Backend not configured.');
+  if (!employee?.uid) throw new Error('Pick an employee first.');
+  if (!code) throw new Error('Pick a shift first.');
+  if (!/^\d{2}$/.test(String(day))) throw new Error('Bad day.');
+  if (!/^\d{4}-\d{2}$/.test(String(month))) throw new Error('Bad month.');
+
+  const ref = doc(firestore, ROSTERS, rosterId(month, employee.uid));
+  const existing = await getDoc(ref);
+
+  if (existing.exists()) {
+    // A dotted path so only this one day moves — a whole-map write would wipe
+    // the rest of their month, and the merge that avoids that reports the same
+    // affected key to the rules anyway.
+    await updateDoc(ref, { [`days.${day}`]: code, updatedAt: serverTimestamp() });
+    return { created: false };
+  }
+
+  await setDoc(ref, {
+    employeeId: employee.uid,
+    employeeName: employee.name || '',
+    empId: employee.empId || '',
+    month,
+    days: { [day]: code },
+    // Route and address are copied off the profile exactly as an import would.
+    // AppContext.ridesOn() overlays the live profile route on top of this, so a
+    // rider who gets routed later still groups correctly without a rewrite.
+    route: employee.roster?.route || null,
+    address: employee.address || '',
+    // Provenance, because a roster row that nobody can account for is worse than
+    // no roster row. The import path logs to rosterImports for this reason; a
+    // coordinator may not write that collection, so it is stamped here instead.
+    addedBy: addedBy || null,
+    addedByName: addedByName || '',
+    addedAt: serverTimestamp(),
+  });
+  return { created: true };
 }
 
 // --- Manual single-employee add (no spreadsheet) ----------------------------

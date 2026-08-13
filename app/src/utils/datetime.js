@@ -89,6 +89,41 @@ export function canRequestCancel(dateKey, timeStr, cutoffHours = 4) {
   return h >= cutoffHours;
 }
 
+// The exact INSTANT that cancellation closes: `cutoffHours` before the ride.
+// Returns a Date, or null when the ride's time can't be parsed.
+//
+// This is the same moment canRequestCancel() compares against, only named rather
+// than folded into a boolean — a screen that tells someone "you have until 5:00
+// PM" must be quoting the deadline the check actually uses, or the two disagree
+// at the edge and the button greys out at a time the page never mentioned.
+// Derived from toDateTime() for exactly that reason: one parse of date + shift,
+// used by both.
+//
+// Subtracting on the millisecond value is also what makes overnight shifts come
+// out right — a 12:30 AM ride's deadline is 8:30 PM the PREVIOUS evening, and
+// the Date arithmetic rolls the day (and month, and year) back on its own. Doing
+// it on the clock reading instead would land on 8:30 PM of the same morning.
+export function cancelDeadline(dateKey, timeStr, cutoffHours = 4) {
+  const rideAt = toDateTime(dateKey, timeStr);
+  if (!rideAt) return null;
+  return new Date(rideAt.getTime() - cutoffHours * 60 * 60 * 1000);
+}
+
+// "5:00 PM on Tue 12 Aug" — the deadline, written the way someone reads it back.
+export function formatDeadline(date) {
+  if (!date) return '';
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  let h = date.getHours();
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  const mins = String(date.getMinutes()).padStart(2, '0');
+  return `${h}:${mins} ${ap} on ${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`;
+}
+
 // True if a ride at `dateKey` + `timeStr` is far enough in the future to be
 // booked (default: at least 9 hours of lead time). Non-time values (e.g. "NA")
 // aren't gated. Rides too soon — or in the past — return false.

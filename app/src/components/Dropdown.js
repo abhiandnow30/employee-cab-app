@@ -28,6 +28,10 @@ export default function Dropdown({
   groupBy,
   groupOrder,
   status, // 'error' | 'success' | undefined — tints the (non-compact) field border
+  // (option) => true to show it greyed and unselectable. For options that are
+  // worth SEEING but can't be picked yet — leaving them out entirely reads as
+  // "this is broken", while letting them through would fail further downstream.
+  optionDisabled,
 }) {
   const [visible, setVisible] = useState(false);
   const hasValue = value != null && value !== '';
@@ -95,13 +99,18 @@ export default function Dropdown({
   // Build the menu body — optionally split into labelled groups.
   function renderItem(opt) {
     const selected = hasValue && String(value) === String(opt);
+    const itemDisabled = !!optionDisabled?.(opt);
     return (
       <Menu.Item
         key={String(opt)}
         title={format(opt)}
+        disabled={itemDisabled}
         trailingIcon={selected ? 'check' : undefined}
-        titleStyle={selected ? styles.itemSelected : undefined}
+        titleStyle={
+          itemDisabled ? styles.itemDisabled : selected ? styles.itemSelected : undefined
+        }
         onPress={() => {
+          if (itemDisabled) return;
           onSelect(opt);
           setVisible(false);
         }}
@@ -197,4 +206,5 @@ const styles = StyleSheet.create({
   },
   groupDivider: { marginTop: 4 },
   itemSelected: { color: colors.primary, fontWeight: '700' },
+  itemDisabled: { color: colors.muted },
 });

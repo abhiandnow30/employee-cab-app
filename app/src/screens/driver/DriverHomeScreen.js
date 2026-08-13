@@ -6,11 +6,16 @@
 // each trip's status: Cab assigned → On the way → Arrived → Completed.
 // A "Share Live Location" button broadcasts the driver's GPS for the cab.
 //
-// RIDERS ARE IDENTIFIED BY EMPLOYEE ID HERE, NOT BY NAME. The driver needs to know
-// who to collect and where; a name on a screen a driver carries around adds nothing
-// operationally and is more of the rider's identity than the job requires. The ID
-// is on the booking (`empId`) because the security rules don't let a driver read
-// employee profiles to look one up.
+// RIDERS ARE IDENTIFIED BY NAME HERE. (Reversed Aug 2026, at explicit request —
+// this screen used to show only `empId`, on the reasoning that a name adds nothing
+// operationally and is more of the rider's identity than the job requires. The
+// counter-argument won: a driver calling out "Employee 1415?" at a gate is not how
+// anyone finds the person they are collecting.)
+//
+// The name comes from `employeeName` on the BOOKING, denormalised there when the
+// ride was created — the security rules deliberately don't let a driver read
+// employee profiles, so there is nothing to look up. The ID stays as the fallback
+// for older bookings written before the name was carried across.
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from 'react';
@@ -30,12 +35,15 @@ function navigateToPickup(booking) {
   openDirections(tripPickupPoint(booking));
 }
 
-// How a rider appears on the driver's screen. Bookings created before the ID was
-// carried onto them have no `empId`, and falling back to the name would quietly
-// undo the point of this — so those read as an unknown ID instead.
+// How a rider appears on the driver's screen: their name, falling back to their
+// employee ID and then to a plain label. Both fallbacks matter — a card with no
+// heading at all reads as a rendering fault, and the driver still has to collect
+// whoever this is.
 function riderLabel(booking) {
+  const name = String(booking?.employeeName || '').trim();
+  if (name) return name;
   const id = String(booking?.empId || '').trim();
-  return id ? `Employee ID ${id}` : 'Employee ID not on record';
+  return id ? `Employee ID ${id}` : 'Employee (name not on record)';
 }
 
 // What the driver can do next, per current status.
@@ -109,8 +117,10 @@ export default function DriverHomeScreen({ navigation }) {
       if (byDate) return byDate;
       const byTime = (timeToMinutes(a.shift) ?? 0) - (timeToMinutes(b.shift) ?? 0);
       if (byTime) return byTime;
-      // Same date and time (a carpool) — keep the order stable and predictable.
-      return String(a.empId || '').localeCompare(String(b.empId || ''));
+      // Same date and time (a carpool) — order by the SAME label the cards show, so
+      // the sequence on screen is one the driver can scan. Sorting by empId while
+      // displaying names put the list in an order nothing visible explained.
+      return riderLabel(a).localeCompare(riderLabel(b));
     });
     // Number the stops within each run (same date + time + direction).
     // How many stops each run has, so a card can say "of 4".

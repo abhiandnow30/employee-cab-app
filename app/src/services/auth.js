@@ -5,11 +5,15 @@
 //   • signOutUser   — sign out
 //   • watchAuth     — get notified whenever the login state changes
 // Firebase securely stores & checks the passwords; we never see them.
+//
+// DRIVERS SIGN IN DIFFERENTLY — one number, no email and no password of their
+// own (signInWithDriverCode below). It is still an email/password sign-in
+// underneath; utils/driverLogin.js explains how the code becomes the credentials
+// and why it has to.
 // ---------------------------------------------------------------------------
 
 import {
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   updatePassword,
@@ -25,6 +29,7 @@ import {
   deleteUser,
 } from 'firebase/auth';
 import { auth } from './firebase';
+import { driverEmail, phoneFromLoginCode, isDriverLoginCode } from '../utils/driverLogin';
 
 // --- Microsoft (Entra ID / Azure AD) sign-in --------------------------------
 // Company work accounts only — see the tenant id below. Added ALONGSIDE
@@ -153,17 +158,26 @@ export function signIn(email, password) {
   return signInWithEmailAndPassword(auth, email.trim(), password);
 }
 
+// --- Driver sign-in ---------------------------------------------------------
+// The driver types ONE number — last 4 digits of their cab + their phone — and
+// both halves of a normal email/password sign-in are worked out from it: the last
+// 10 digits give the account's email, the whole thing is the password. See
+// utils/driverLogin.js for why it is built this way.
+//
+// Nothing is read from Firestore first, so this needs no rule that would let an
+// unauthenticated caller look a driver up.
+export function signInWithDriverCode(code) {
+  if (!auth) throw new Error('Backend not configured.');
+  const digits = String(code ?? '').replace(/[^0-9]/g, '');
+  if (!isDriverLoginCode(digits)) throw new Error('That login code is not complete.');
+  return signInWithEmailAndPassword(auth, driverEmail(phoneFromLoginCode(digits)), digits);
+}
+
 // Send a password-reset email. Firebase mails a secure link the user follows to
 // set a new password — we never see or handle the password ourselves.
 export function sendPasswordReset(email) {
   if (!auth) throw new Error('Backend not configured.');
   return sendPasswordResetEmail(auth, email.trim());
-}
-
-// Create a brand-new account (used by Sign Up). Firebase stores the password
-// securely and signs the new user in automatically.
-export function signUp(email, password) {
-  return createUserWithEmailAndPassword(auth, email.trim(), password);
 }
 
 export function signOutUser() {
@@ -192,14 +206,26 @@ export function watchAuth(callback) {
 }
 
 // Turn Firebase error codes into friendly messages for the UI.
-export function friendlyAuthError(e) {
+//
+// Pass { driver: true } from the driver login screen: a driver never typed an
+// email or a password, so telling them one of those is wrong sends them looking
+// for something that doesn't exist. Every other caller omits it and reads exactly
+// as before.
+export function friendlyAuthError(e, { driver = false } = {}) {
   switch (e?.code) {
     case 'auth/invalid-credential':
     case 'auth/wrong-password':
     case 'auth/user-not-found':
-      return 'Wrong email or password.';
+      // Firebase collapses "no such account" into invalid-credential when email
+      // enumeration protection is on (the default), so one message has to cover
+      // both — which is also the right thing not to leak.
+      return driver
+        ? 'That login code was not recognised. Check it with the transport desk — it changes whenever your cab changes.'
+        : 'Wrong email or password.';
     case 'auth/invalid-email':
-      return 'Please enter a valid email address.';
+      return driver
+        ? 'That login code is not valid. It is the last 4 digits of your cab number followed by your 10-digit phone number.'
+        : 'Please enter a valid email address.';
     case 'auth/too-many-requests':
       return 'Too many attempts. Please wait a moment and try again.';
     case 'auth/operation-not-allowed':

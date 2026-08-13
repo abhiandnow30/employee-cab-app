@@ -204,9 +204,10 @@ export function bookingFromRide(ride, departAt) {
     rideKey: ride.key,
     employeeId: ride.employeeId,
     employeeName: ride.employeeName,
-    // The company employee ID, carried onto the booking because the DRIVER'S trip
-    // list identifies riders by ID rather than by name, and the rules (rightly) do
-    // not let a driver read employee profiles to look one up.
+    // Both the name above and this ID are carried onto the booking for the DRIVER'S
+    // trip list: the rules (rightly) don't let a driver read employee profiles, so
+    // whatever their screen shows has to already be here. The name is what they see;
+    // the ID is the fallback for bookings written before it was copied across.
     empId: ride.empId || '',
     employeeAddress: ride.employeeAddress || null,
     employeeHome: null,

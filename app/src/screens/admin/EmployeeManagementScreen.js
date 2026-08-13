@@ -42,8 +42,10 @@ function draftOf(emp, homeAddressOf) {
 // matter which admin creates the employee.
 const DEFAULT_EMPLOYEE_PHONE = '9848094029';
 
+// No `password`: nobody provisioned from here gets one. Employees and coordinators
+// sign in with Microsoft; drivers sign in with the code their cab link issues.
 const EMPTY_NEW = {
-  role: 'employee', email: '', password: '', empId: '', name: '', phone: '', address: '',
+  role: 'employee', email: '', empId: '', name: '', phone: '', address: '',
   route: null,
 };
 
@@ -191,15 +193,21 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
     setError('');
     // Validate up front so the admin gets a clear message instead of a raw
     // Firebase error after a round-trip.
-    if (!form.email.trim()) {
+    //
+    // A DRIVER HAS NO EMAIL. Their phone derives the address Firebase keys the
+    // account by and is half of the code they sign in with, so it is the required
+    // field for them and the email is not asked for at all.
+    if (isDriver) {
+      if (!form.name.trim()) {
+        setError("The driver's name is required.");
+        return;
+      }
+      if (form.phone.replace(/[^0-9]/g, '').length !== 10) {
+        setError('A 10-digit phone number is required — it is half of their login code.');
+        return;
+      }
+    } else if (!form.email.trim()) {
       setError('Email is required.');
-      return;
-    }
-    // Only a driver gets a password: they aren't in the company Microsoft
-    // directory. Employees and coordinators are invited instead and sign in
-    // with Microsoft, so there is no password to set or share.
-    if (isDriver && (form.password || '').length < 6) {
-      setError('Temporary password must be at least 6 characters.');
       return;
     }
     if (needsRiderFields && !form.empId.trim()) {
@@ -226,7 +234,7 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
           <View style={styles.dialogBody}>
             <Text variant="bodySmall" style={styles.dialogHint}>
               {isDriver
-                ? 'Creates a login account and profile. Share the email and temporary password with them; they can change the password after signing in.'
+                ? 'A name and a phone number is all it takes. No email, no password: they sign in with a code — the last 4 digits of their cab number plus this phone — which is issued when the coordinator links them to a cab.'
                 : 'No password is created. They sign in with their company Microsoft account and their profile is set up automatically the first time — just make sure the email below is right.'}
             </Text>
 
@@ -243,8 +251,9 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
             />
             {isDriver ? (
               <HelperText type="info" visible style={styles.pwHint}>
-                The coordinator links this driver to a cab on the Fleet screen —
-                that's what turns on their live location.
+                The coordinator links this driver to a cab on the Cabs tab — that's
+                what turns on their live location AND gives them a login code. Until
+                then they cannot sign in.
               </HelperText>
             ) : null}
             {isCoordinator ? (
@@ -253,32 +262,22 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
                 requests. They can't upload rosters or change policy.
               </HelperText>
             ) : null}
-            <TextInput
-              label="Email (login)"
-              value={form.email}
-              onChangeText={(t) => setField('email')(t.trim())}
-              mode="outlined"
-              autoCapitalize="none"
-              keyboardType="email-address"
-              style={styles.input}
-            />
-            {/* Drivers only — everyone else signs in with Microsoft, so there is
-                no password for HR to invent, share, or for anyone to reuse. */}
-            {isDriver ? (
-              <>
-                <TextInput
-                  label="Temporary password"
-                  value={form.password}
-                  onChangeText={setField('password')}
-                  mode="outlined"
-                  autoCapitalize="none"
-                  style={styles.input}
-                />
-                <HelperText type="info" visible style={styles.pwHint}>
-                  At least 6 characters. They can change it after signing in.
-                </HelperText>
-              </>
-            ) : null}
+            {/* Everyone EXCEPT a driver. Employees and coordinators are identified
+                by their company address (it is what their Microsoft sign-in has to
+                match); a driver's address is synthesized from their phone and
+                nobody ever types or reads it. There is no password field for anyone
+                any more — see the dialog hint above. */}
+            {isDriver ? null : (
+              <TextInput
+                label="Email (login)"
+                value={form.email}
+                onChangeText={(t) => setField('email')(t.trim())}
+                mode="outlined"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                style={styles.input}
+              />
+            )}
             {/* Only employees ride, so only they get an ID and home address. */}
             {needsRiderFields ? (
               <TextInput
@@ -298,7 +297,7 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
               style={styles.input}
             />
             <TextInput
-              label="Phone"
+              label={isDriver ? 'Phone (part of their login code)' : 'Phone'}
               value={form.phone}
               onChangeText={(t) => setField('phone')(t.replace(/[^0-9]/g, ''))}
               mode="outlined"

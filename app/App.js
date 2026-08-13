@@ -27,7 +27,7 @@ import ErrorBoundary from './src/components/ErrorBoundary';
 import { companyLogo, SUPPORT_HELPLINE } from './src/branding';
 
 import LoginScreen from './src/screens/LoginScreen';
-import SignUpScreen from './src/screens/SignUpScreen';
+import DriverLoginScreen from './src/screens/DriverLoginScreen';
 import EmployeeHomeScreen from './src/screens/employee/EmployeeHomeScreen';
 import FeedbackScreen from './src/screens/employee/FeedbackScreen';
 import MyRidesScreen from './src/screens/employee/MyRidesScreen';
@@ -75,7 +75,7 @@ const linking = {
   config: {
     screens: {
       Login: '',
-      SignUp: 'signup',
+      DriverLogin: 'driver-login',
       // Employee
       EmployeeHome: 'home',
       MySchedule: 'my-schedule',
@@ -115,8 +115,18 @@ const linking = {
 // The employee menu, plus a "Cab Service" row while that still means something:
 // they have no address/route yet, or a request is in flight and they'll want to
 // check on it. A fully set-up rider never sees the row.
+//
+// The one case that is NOT "the normal menu plus a row" is the hold state below:
+// while an employee is held at the request form, RootNavigator registers
+// CabServiceRequest as the ONLY screen, so Home / My Rides / Track Cab / Profile
+// etc. have nothing to navigate to. Listing them there gave seven rows that did
+// nothing when tapped, so the menu is cut down to the one screen that exists.
+// The condition MUST stay in step with holdForCabSetup in RootNavigator — the
+// menu and the registered stack are two views of the same decision.
 function employeeItems(isEmployee, needsCabSetup, pendingRequest) {
-  if (!isEmployee || (!needsCabSetup && !pendingRequest)) return DRAWER_ITEMS;
+  if (!isEmployee) return DRAWER_ITEMS;
+  if (needsCabSetup && !pendingRequest) return [CAB_SERVICE_ITEM];
+  if (!needsCabSetup && !pendingRequest) return DRAWER_ITEMS;
   return [...DRAWER_ITEMS, CAB_SERVICE_ITEM];
 }
 
@@ -181,6 +191,10 @@ function AppHeader({ navigation, route, options, back }) {
     ? DRIVER_DRAWER_ITEMS
     : employeeItems(isEmployee, needsCabSetup, myPendingCabRequest);
   const hasPermanentSidebar = hasDrawer && width >= WIDE_BREAKPOINT;
+  // Same decision as holdForCabSetup in RootNavigator: this employee has only
+  // the request form registered, so anything else the header points at is a tap
+  // that goes nowhere.
+  const heldForCabSetup = isEmployee && needsCabSetup && !myPendingCabRequest;
   // Which screen "home" means for this role.
   const homeRoute =
     currentUser?.role === 'admin'
@@ -189,6 +203,8 @@ function AppHeader({ navigation, route, options, back }) {
       ? 'CoordinatorHome'
       : currentUser?.role === 'driver'
       ? 'DriverHome'
+      : heldForCabSetup
+      ? 'CabServiceRequest'
       : 'EmployeeHome';
   // After login the brand name stays fixed; before login use the screen title.
   const title = currentUser ? BRAND : options.title ?? route.name;
@@ -224,36 +240,42 @@ function AppHeader({ navigation, route, options, back }) {
           // Tapping the brand title returns to the role's home screen.
           onPress={currentUser ? () => navigation.navigate(homeRoute) : undefined}
         />
-        {/* Notifications, message + call the transport desk — employees only. */}
+        {/* Notifications, message + call the transport desk — employees only.
+            While held at the request form the bell is hidden along with the rest
+            of the menu (Notifications isn't registered yet), but message and
+            call stay: reaching the desk is exactly what someone stuck here
+            needs, and neither of those navigates anywhere. */}
         {isEmployee ? (
           <>
             {/* The badge is the whole point of in-app notifications: an employee
                 shouldn't have to go looking to find out a cab was assigned. */}
-            <View style={styles.bellWrap}>
-              <Appbar.Action
-                icon="bell"
-                color="#FFFFFF"
-                onPress={() => navigation.navigate('Notifications')}
-                accessibilityLabel={
-                  unreadCount ? `Notifications, ${unreadCount} unread` : 'Notifications'
-                }
-              />
-              {unreadCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
+            {!heldForCabSetup ? (
+              <View style={styles.bellWrap}>
+                <Appbar.Action
+                  icon="bell"
+                  color="#FFFFFF"
+                  onPress={() => navigation.navigate('Notifications')}
+                  accessibilityLabel={
+                    unreadCount ? `Notifications, ${unreadCount} unread` : 'Notifications'
+                  }
+                />
+                {unreadCount > 0 ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
             <Appbar.Action icon="message-text" color="#FFFFFF" onPress={openMsg} />
             <Appbar.Action icon="phone" color="#FFFFFF" onPress={callDesk} />
           </>
         ) : null}
-        {/* Log out — shown for every role (employee, admin, driver). */}
-        {currentUser ? (
-          <Appbar.Action icon="logout" color="#FFFFFF" onPress={logout} />
-        ) : null}
+        {/* Log out lives in the drawer/sidebar ONLY — see AppDrawer. It used to
+            also sit here, which meant admins saw two Logouts on the same screen
+            (header icon + sidebar item). Removed rather than dropping the
+            sidebar one, because the labelled item is the discoverable one. */}
       </Appbar.Header>
 
       <AppDrawer
@@ -262,7 +284,9 @@ function AppHeader({ navigation, route, options, back }) {
         user={currentUser}
         items={drawerItems}
         onChangePassword={changePassword}
-        onLogout={isAdmin || isCoordinator ? logout : undefined}
+        // Every role, not just the desk: the header icon that used to cover
+        // employees and drivers is gone, so this is now the only way out.
+        onLogout={logout}
         activeScreen={route.name}
         counts={menuCounts}
         onNavigate={(item) => {
@@ -552,7 +576,8 @@ function RootNavigator() {
             user={currentUser}
             items={sidebarItems}
             onChangePassword={changePassword}
-            onLogout={isAdmin || isCoordinator ? logout : undefined}
+            // Every role — same reason as the overlay drawer above.
+            onLogout={logout}
             activeScreen={activeRoute}
             counts={menuCounts}
             onNavigate={(item) => navRef.navigate(item.screen, item.params)}
@@ -568,7 +593,11 @@ function RootNavigator() {
             }}
           >
         {!currentUser ? (
-          // ---- Logged out: email/password → OTP ----
+          // ---- Logged out ----
+          // Two ways in, because the two kinds of person hold different things.
+          // Employees and admins have an email (or a company Microsoft account);
+          // drivers have neither, only the numeric code the desk issues with
+          // their cab.
           <>
             <Stack.Screen
               name="Login"
@@ -576,8 +605,8 @@ function RootNavigator() {
               options={{ headerShown: false }}
             />
             <Stack.Screen
-              name="SignUp"
-              component={SignUpScreen}
+              name="DriverLogin"
+              component={DriverLoginScreen}
               options={{ headerShown: false }}
             />
           </>

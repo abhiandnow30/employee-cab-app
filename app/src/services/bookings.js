@@ -205,6 +205,40 @@ export async function requestCancelBooking(bookingId, reason = '') {
   });
 }
 
+// The employee cancels a ride outright — the "I'm on leave, I don't need the
+// cab" case — rather than asking the desk to. Allowed up to the same 4-hour
+// cutoff every other cancellation path uses; the caller checks it before getting
+// here and `firestore.rules` checks it again against the server clock, because a
+// disabled button is not a permission.
+//
+// The ride's cab is deliberately LEFT on the document. The seat frees itself the
+// moment the status is Cancelled — every consumer that counts a cab's load
+// already skips cancelled rides (ridesSharingCab here, the driver's trip list,
+// ridesOn for the coordinator's board) — while keeping `assignedCabId` is what
+// lets the desk still see WHICH cab was freed and by whom. Nulling it would free
+// the same seat and lose that.
+//
+// Two sets of fields are written for one event, on purpose:
+//   • cancelledAt / cancelledBy / cancellationReason — this feature's record of
+//     who cancelled and why.
+//   • cancelStatus / cancelReason / cancelResolvedAt — what the desk's existing
+//     screens (Cancelled Rides, All Bookings) already read. Writing them means
+//     an employee cancellation shows up there with its reason without those
+//     screens having to learn a second field name. 'Approved' is the same value
+//     changeRequests.js stamps for a cancellation that has actually happened.
+export async function cancelAssignedBooking(bookingId, { reason, uid }) {
+  const text = String(reason || '').trim();
+  return updateDoc(doc(firestore, COL, bookingId), {
+    status: STATUS.CANCELLED,
+    cancelledAt: serverTimestamp(),
+    cancelledBy: uid || null,
+    cancellationReason: text,
+    cancelStatus: 'Approved',
+    cancelReason: text,
+    cancelResolvedAt: serverTimestamp(),
+  });
+}
+
 // Admin approves or rejects a pending cancellation request.
 //   approve → the booking is Cancelled and the request marked Approved
 //   reject  → the request is marked Rejected; the booking stays active

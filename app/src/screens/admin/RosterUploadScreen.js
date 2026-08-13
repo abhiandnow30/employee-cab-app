@@ -26,7 +26,7 @@
 // desk. On a phone this screen explains that instead of half-working.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, Platform, ScrollView } from 'react-native';
 import {
   Text, Card, Button, Chip, Divider, DataTable, HelperText, Snackbar,
@@ -39,7 +39,7 @@ import {
   parseRosterFile, validateRoster, ERROR_KINDS,
   fetchMonthRosters, summariseStoredRoster, downloadStoredRoster,
 } from '../../services/roster';
-import { subscribeEmployees, adminInviteEmployees } from '../../services/profile';
+import { subscribeEmployees, adminInviteEmployees, subscribeInvites } from '../../services/profile';
 import { ALL_SHIFT_CODES, SHIFT_COLORS, shiftSummary } from '../../data/shifts';
 import {
   saveDraft, loadDraft, clearDraft, describeAge, encodeBytes, decodeBytes,
@@ -76,6 +76,8 @@ export default function RosterUploadScreen({ navigation }) {
   // an empty list every row reads "Unknown employee". The screen shows a spinner
   // rather than a summary it would have to immediately correct.
   const [employeesLoaded, setEmployeesLoaded] = useState(false);
+  // Invited, never signed in — shown in the employee picker but unselectable.
+  const [invites, setInvites] = useState([]);
   const [year, setYear] = useState(() => thisYear());
   const [busy, setBusy] = useState(false);
   // The PARSED sheet, not the validation report. The report is derived below, so
@@ -94,6 +96,9 @@ export default function RosterUploadScreen({ navigation }) {
   const [singleStartDay, setSingleStartDay] = useState(() => new Date().getDate());
   const [singleEndDay, setSingleEndDay] = useState(null); // filled in by the effect below
   const [singleBusy, setSingleBusy] = useState(false);
+  // Set when the chosen range would replace days this employee already has —
+  // { emp, month, monthLabel, days: [{ day, from, to }] }. Null = nothing to ask.
+  const [overwriteFor, setOverwriteFor] = useState(null);
   const [history, setHistory] = useState([]);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [deleteFor, setDeleteFor] = useState(null); // history entry pending removal confirmation
@@ -103,8 +108,18 @@ export default function RosterUploadScreen({ navigation }) {
   // sheet can be rebuilt for download without a second read).
   const [verifyFor, setVerifyFor] = useState(null);
   const [verifyRows, setVerifyRows] = useState(null); // null = still loading
-  const [verifyRaw, setVerifyRaw] = useState([]);
+  // The documents behind the Download button, TAGGED with the month they were
+  // read for — { month, docs } — rather than a bare array. The download builds
+  // its filename from the month on screen and its contents from these docs, so
+  // the two must be provably the same month; when they were separate values they
+  // drifted, and a failed or still-loading read left July's rows to be
+  // downloaded as August's file. Nulled the moment a new read starts.
+  const [verifyData, setVerifyData] = useState(null);
   const [verifyError, setVerifyError] = useState('');
+  // One token per open. A reply that isn't the current one is discarded: two
+  // clicks on a slow connection otherwise land in either order, and the loser
+  // paints its month's rows under the winner's title.
+  const verifySeq = useRef(0);
   const [importProgress, setImportProgress] = useState(null); // { done, total } while writing
   const [showAllErrors, setShowAllErrors] = useState(false);
   // Closed by default. This grid is a diagnostic for "did you read my file
@@ -142,6 +157,21 @@ export default function RosterUploadScreen({ navigation }) {
         // Failing open here would validate against nothing and blame every row.
         setEmployeesLoaded(true);
       }
+    );
+    return unsub;
+  }, []);
+
+  // People HR has invited who have never signed in. They have NO uid yet — a
+  // roster document is keyed by uid, so they genuinely cannot be rostered. But
+  // leaving them out of the picker entirely is what made this look broken:
+  // HR invites someone, comes straight here, and they're simply absent with no
+  // explanation. Listed and greyed out, the reason is on screen instead.
+  useEffect(() => {
+    const unsub = subscribeInvites(
+      (list) => setInvites(list.filter((i) => (i.role || 'employee') === 'employee')),
+      // Non-fatal: without invites the picker just shows real employees, which
+      // is what it did before. Not worth blocking the whole screen over.
+      () => setInvites([])
     );
     return unsub;
   }, []);
@@ -233,6 +263,9 @@ export default function RosterUploadScreen({ navigation }) {
     setShowSheet(false);
     setShowAllSheetRows(false);
     setFileBytes(null);
+    // Same reasoning as handleFile: don't leave a previous month's read-back
+    // behind on a screen that has just been emptied.
+    closeVerify();
     clearDraft();
   }
 
@@ -310,6 +343,10 @@ export default function RosterUploadScreen({ navigation }) {
     setShowSheet(false);
     setShowAllSheetRows(false);
     setFileBytes(null);
+    // A new file means anything read back for an earlier month is history. Kept
+    // around it is a downloadable sheet of last month's data sitting behind a
+    // screen that now talks about this month.
+    closeVerify();
     if (!file) return;
 
     setPicked({ name: file.name, size: file.size, state: 'reading' });
@@ -345,6 +382,54 @@ export default function RosterUploadScreen({ navigation }) {
     }
   }
 
+  // Re-read the sheet in hand whenever HR changes the year.
+  //
+  // The year is never in the spreadsheet — its headers only say "01-Aug" — so it
+  // is supplied here, at parse time, and it decides three things: the month key
+  // the rows are written under (`rosters/2026-08_<uid>` vs `rosters/2025-08_<uid>`),
+  // how many days the month has, and which day headers are therefore out of range.
+  //
+  // Changing the dropdown used to move nothing but the label: the reading on
+  // screen kept whatever year it was parsed with, so the page said 2025 while
+  // Import wrote 2026 — landing on, and overwriting, a month HR never chose. A
+  // 29-Feb column read as a leap year survived the switch to a non-leap one the
+  // same way. Re-parsing is a few milliseconds and keeps the two in step.
+  function changeYear(nextYear) {
+    if (nextYear === year) return;
+    setYear(nextYear);
+    // No sheet in hand — the next file chosen simply parses with the new year.
+    if (!parsed) return;
+
+    const bytes = fileBytes ? decodeBytes(fileBytes) : null;
+    if (!bytes) {
+      // A sheet with no bytes behind it (too large to stash, or a draft saved
+      // before the bytes were kept) cannot be re-read, and leaving it on screen
+      // under the new year would show a reading that isn't true of it. Drop it
+      // rather than let Import write the month the old year built.
+      dismiss();
+      setError(
+        `Year changed to ${nextYear}. Choose the file again so it can be read for that year.`
+      );
+      return;
+    }
+
+    setError('');
+    try {
+      const fresh = parseRosterFile(bytes, { year: nextYear, fileName: picked?.name || '' });
+      setParsed(fresh);
+      // NOTE: restoredAt is deliberately left alone. These are the bytes as they
+      // were when HR chose the file, so "this is what the file looked like then"
+      // is still true and still worth saying.
+      saveDraft({ parsed: fresh, picked, year: nextYear, fileBytes });
+      setSnack(`Re-read for ${nextYear} — this sheet will import as ${fresh.monthLabel}.`);
+    } catch (e) {
+      // The same bytes parsed a moment ago, so this is close to unreachable — but
+      // silently keeping the old-year reading is the one outcome we can't allow.
+      setParsed(null);
+      setError(e.message || `Could not re-read that file for ${nextYear}.`);
+    }
+  }
+
   function pickFile() {
     if (Platform.OS !== 'web') return;
     const input = document.createElement('input');
@@ -365,6 +450,18 @@ export default function RosterUploadScreen({ navigation }) {
 
   async function doImport() {
     if (!report?.canImport) return;
+    // The year on screen and the year the sheet was read with must agree. The
+    // month key is built from the latter and never shown, so a mismatch writes a
+    // month HR didn't pick — on top of whatever is already stored there.
+    // changeYear() keeps them in step; this refuses the write if they ever aren't,
+    // because an overwritten month cannot be undone from this screen.
+    if (!String(report.month || '').startsWith(`${year}-`)) {
+      setError(
+        `This sheet was read for ${String(report.month).slice(0, 4)}, not ${year}. ` +
+          'Choose the file again before importing.'
+      );
+      return;
+    }
     setBusy(true);
     setImportProgress({ done: 0, total: report.valid });
     const res = await importRoster(report, {
@@ -390,16 +487,34 @@ export default function RosterUploadScreen({ navigation }) {
 
   // Add one employee's roster for a day range — the walk-in case, no
   // spreadsheet. Shows up in Import history exactly like a real upload.
-  async function submitSingleEmployee() {
+  //
+  // The write MERGES day-by-day, so any day already in the chosen range is
+  // silently replaced. That's correct for a mid-month shift change and wrong
+  // for a slip of the "From day" picker, and the two look identical until the
+  // rides change. So days that would be overwritten are counted first and
+  // confirmed; a range that only ADDS days writes straight through.
+  async function submitSingleEmployee({ confirmed = false } = {}) {
     const emp = employees.find((e) => e.uid === singleEmployeeUid);
     if (!emp || !singleCode) return;
     if (singleEndDay < singleStartDay) {
       setError('End day must be on or after the start day.');
       return;
     }
-    setSingleBusy(true);
     const month = `${singleYear}-${String(singleMonth).padStart(2, '0')}`;
     const monthLabel = `${MONTH_NAMES[singleMonth - 1].slice(0, 3)} ${singleYear}`;
+
+    if (!confirmed) {
+      setSingleBusy(true);
+      const clashes = await daysAlreadySet(month, emp.uid);
+      setSingleBusy(false);
+      if (clashes.length) {
+        setOverwriteFor({ emp, month, monthLabel, days: clashes });
+        return;
+      }
+    }
+
+    setOverwriteFor(null);
+    setSingleBusy(true);
     const res = await addSingleEmployeeRoster({
       month,
       monthLabel,
@@ -418,6 +533,29 @@ export default function RosterUploadScreen({ navigation }) {
       setSingleCode(null);
     } else {
       setError(res?.message || 'Could not add that roster row.');
+    }
+  }
+
+  // Which days in the chosen range this employee ALREADY has a code for.
+  // Returns [{ day, from, to }] for the ones that would actually change — a day
+  // already carrying the same code isn't a loss, so it isn't worth a warning.
+  async function daysAlreadySet(month, uid) {
+    try {
+      const rows = await fetchMonthRosters(month);
+      const mine = rows.find((r) => r.employeeId === uid);
+      if (!mine?.days) return [];
+      const clashes = [];
+      for (let d = singleStartDay; d <= singleEndDay; d += 1) {
+        const existing = mine.days[String(d).padStart(2, '0')];
+        if (existing && existing !== singleCode) {
+          clashes.push({ day: d, from: existing, to: singleCode });
+        }
+      }
+      return clashes;
+    } catch {
+      // A failed read must not block the write — this check is a courtesy, and
+      // treating "couldn't look" as "nothing there" keeps the old behaviour.
+      return [];
     }
   }
 
@@ -447,26 +585,59 @@ export default function RosterUploadScreen({ navigation }) {
   // produce no rides. So this reads the rosters/<month>_<uid> documents back out
   // of Firestore: what's here is what the coordinator's board will see.
   async function openVerify(entry) {
+    const seq = verifySeq.current + 1;
+    verifySeq.current = seq;
     setVerifyFor(entry);
+    // Clear the PREVIOUS month's read-back before this one starts, not after it
+    // succeeds. Left in place it survives a read that fails or is merely still
+    // running, which kept Download enabled next to the new month's title and
+    // handed HR the old month's rows under the new month's filename.
     setVerifyRows(null);
+    setVerifyData(null);
     setVerifyError('');
     try {
       const stored = await fetchMonthRosters(entry.month);
+      if (seq !== verifySeq.current) return; // superseded or closed meanwhile
       setVerifyRows(summariseStoredRoster(stored, shiftPolicy, namesByUid));
-      setVerifyRaw(stored);
+      setVerifyData({ month: entry.month, docs: stored });
     } catch (e) {
+      if (seq !== verifySeq.current) return;
       setVerifyError(e?.message || 'Could not read that month back.');
     }
   }
 
+  // Closing throws the read-back away rather than leaving it for the next open
+  // to inherit, and retires the token so an in-flight read can't land afterwards.
+  function closeVerify() {
+    verifySeq.current += 1;
+    setVerifyFor(null);
+    setVerifyRows(null);
+    setVerifyData(null);
+    setVerifyError('');
+  }
+
+  // Is there a read-back on hand that genuinely belongs to the month on screen?
+  // Both halves matter: docs to write, and proof they came from THIS month.
+  const canDownloadVerified =
+    !!verifyData?.docs?.length && !!verifyFor && verifyData.month === verifyFor.month;
+
   // Download what's STORED, not what was uploaded — the original file's bytes
   // are only ever kept in the local draft, which is cleared on import.
   function downloadVerified() {
-    if (!verifyRaw?.length) return;
+    // Re-checked here and not just on the button: writing one month's rows into
+    // another month's file is the one outcome that leaves HR holding a wrong
+    // sheet with no sign anything went wrong.
+    if (!canDownloadVerified) {
+      setVerifyError(
+        "Nothing has been read back for this month yet, so there's nothing to " +
+          'download. Close this and open it again.'
+      );
+      return;
+    }
     try {
       const { fileName, rowCount } = downloadStoredRoster(
-        verifyFor.month,
-        verifyRaw,
+        verifyData.month,
+        verifyData.docs,
         namesByUid
       );
       setSnack(`Downloaded ${fileName} — ${rowCount} employee row(s) as stored.`);
@@ -519,12 +690,28 @@ export default function RosterUploadScreen({ navigation }) {
 
   const singleDaysInMonth = new Date(singleYear, singleMonth, 0).getDate();
   const singleDayOptions = Array.from({ length: singleDaysInMonth }, (_, i) => i + 1);
-  const employeeOptions = employees
+  const rosterableUids = employees
     .filter((e) => e.role === 'employee')
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
     .map((e) => e.uid);
-  const employeeLabel = (uid) => {
-    const emp = employees.find((e) => e.uid === uid);
+  // Invites are keyed by email and carry no uid, so they're prefixed to keep
+  // them distinguishable from a real uid in every consumer below.
+  const INVITE_PREFIX = 'invite:';
+  const pendingInviteOptions = invites
+    .slice()
+    .sort((a, b) => (a.name || a.email || '').localeCompare(b.name || b.email || ''))
+    .map((i) => `${INVITE_PREFIX}${i.email}`);
+  const isInviteOption = (opt) => String(opt).startsWith(INVITE_PREFIX);
+  // Real employees first — the ones that actually work. The pending block is
+  // reference material, not a menu.
+  const employeeOptions = [...rosterableUids, ...pendingInviteOptions];
+  const employeeLabel = (opt) => {
+    if (isInviteOption(opt)) {
+      const inv = invites.find((i) => `${INVITE_PREFIX}${i.email}` === opt);
+      if (!inv) return 'Invited';
+      return `${inv.name || inv.email} — hasn't signed in yet`;
+    }
+    const emp = employees.find((e) => e.uid === opt);
     if (!emp) return 'Select employee';
     return emp.empId ? `${emp.name} · ${emp.empId}` : emp.name;
   };
@@ -565,10 +752,13 @@ export default function RosterUploadScreen({ navigation }) {
                   Year
                 </Text>
                 <View style={styles.yearPicker}>
+                  {/* changeYear, not setYear — picking a year has to re-read the
+                      sheet, because the year is what builds the month key the
+                      rows are written under. */}
                   <Dropdown
                     value={year}
                     options={yearOptions}
-                    onSelect={setYear}
+                    onSelect={changeYear}
                     format={(y) => String(y)}
                   />
                 </View>
@@ -592,7 +782,9 @@ export default function RosterUploadScreen({ navigation }) {
               </View>
             </View>
             <Text variant="bodySmall" style={styles.yearHint}>
-              The month is read from the file's own date headers, not picked here.
+              The month is read from the file's own date headers. The year is picked
+              here because those headers never carry one — changing it re-reads the
+              sheet.
             </Text>
 
             {/* Drop zone. `dataSet` reaches the DOM node on react-native-web. */}
@@ -766,6 +958,9 @@ export default function RosterUploadScreen({ navigation }) {
                 options={employeeOptions}
                 onSelect={setSingleEmployeeUid}
                 format={employeeLabel}
+                // Listed so HR can see they exist, greyed because there is no
+                // uid to key a roster document to until they sign in once.
+                optionDisabled={isInviteOption}
                 placeholder={
                   employeesLoaded && employeeOptions.length === 0
                     ? 'No employees on file yet'
@@ -773,6 +968,14 @@ export default function RosterUploadScreen({ navigation }) {
                 }
                 disabled={employeeOptions.length === 0}
               />
+              {pendingInviteOptions.length ? (
+                <HelperText type="info" visible style={styles.inviteHint}>
+                  {pendingInviteOptions.length} invited{' '}
+                  {pendingInviteOptions.length === 1 ? 'person is' : 'people are'} greyed
+                  out — a roster is saved against the account they get on their first
+                  Microsoft sign-in, so they can be rostered right after that.
+                </HelperText>
+              ) : null}
             </View>
 
             <View style={styles.fieldsRow}>
@@ -850,7 +1053,7 @@ export default function RosterUploadScreen({ navigation }) {
             <Button
               mode="contained"
               icon="calendar-plus"
-              onPress={submitSingleEmployee}
+              onPress={() => submitSingleEmployee()}
               loading={singleBusy}
               disabled={singleBusy || !singleEmployeeUid || !singleCode}
               style={styles.singleAddBtn}
@@ -1020,8 +1223,16 @@ export default function RosterUploadScreen({ navigation }) {
         {/* ---- People in the sheet with no account yet ----------------------
             The sheet names everyone with their id, email, phone and address, so
             "10 unknown employees" is a job the app can do rather than ten dialogs
-            HR has to fill in by hand. Nobody is issued a password: each account is
-            created with a throwaway one and Firebase emails a set-your-own link. */}
+            HR has to fill in by hand.
+
+            What this button does is FILE AN INVITE (employeeInvites/<email>) —
+            it creates no login, issues no password, and sends no email. The
+            invite is claimed automatically the first time that person signs in
+            with Microsoft. The copy below has to say exactly that: it used to
+            promise "each person is emailed a link to set their own password",
+            which was left over from the old adminCreateAccount flow and had HR
+            waiting on an email that was never sent, and telling new hires to go
+            looking for it. See adminInviteEmployees in services/profile.js. */}
         {report && (report.creatableCount > 0 || report.uncreatableCount > 0) ? (
           <Card mode="elevated" style={styles.card}>
             <Card.Content>
@@ -1035,7 +1246,7 @@ export default function RosterUploadScreen({ navigation }) {
                 <>
                   <Divider style={styles.divider} />
                   <Text variant="labelLarge" style={styles.legendLabel}>
-                    {report.creatableCount} can be created from this file
+                    {report.creatableCount} can be invited from this file
                   </Text>
                   <View style={styles.inviteList}>
                     {report.creatable.slice(0, 12).map((r) => (
@@ -1060,7 +1271,7 @@ export default function RosterUploadScreen({ navigation }) {
                     <View style={styles.waitRow}>
                       <ActivityIndicator size={16} />
                       <Text variant="bodySmall" style={styles.waitText}>
-                        Creating {inviteProgress.done} of {inviteProgress.total}
+                        Inviting {inviteProgress.done} of {inviteProgress.total}
                         {inviteProgress.label ? ` — ${inviteProgress.label}` : ''}…
                       </Text>
                     </View>
@@ -1074,13 +1285,15 @@ export default function RosterUploadScreen({ navigation }) {
                     disabled={inviting}
                     style={styles.inviteBtn}
                   >
-                    Create {report.creatableCount} employee
+                    Invite {report.creatableCount} employee
                     {report.creatableCount === 1 ? '' : 's'}
                   </Button>
                   <HelperText type="info" visible>
-                    Each person is emailed a link to set their own password. No
-                    temporary passwords are created or shared. Their shifts import
-                    straight after — this list updates itself.
+                    No email is sent and no password is created — tell them to
+                    open the app and choose "Sign in with Microsoft", and their
+                    details here are picked up automatically on that first
+                    sign-in. Their shifts import once they have signed in at
+                    least once, and this list updates itself as they do.
                   </HelperText>
                 </>
               ) : null}
@@ -1098,28 +1311,24 @@ export default function RosterUploadScreen({ navigation }) {
                 </View>
               ) : null}
 
-              {inviteResult?.notInvited?.length ? (
-                <View style={styles.warnBox}>
-                  <MaterialCommunityIcons name="email-alert-outline" size={15} color="#B26A00" />
-                  <Text variant="bodySmall" style={styles.warnText}>
-                    {inviteResult.notInvited.length} account
-                    {inviteResult.notInvited.length === 1 ? ' was' : 's were'} created but
-                    the set-password email didn't send. They can use “Forgot password”
-                    on the login screen.
-                  </Text>
-                </View>
-              ) : null}
+              {/* A "the set-password email didn't send" warning used to sit here.
+                  It could never appear: this screen invites employees, and an
+                  invite sends nothing that could fail to send. Removed rather than
+                  left in — a warning that cannot fire is one nobody can trust, and
+                  this one described a password flow employees don't have. Real
+                  failures still surface in the block above. */}
 
               {report.uncreatableCount > 0 ? (
                 <>
                   <Divider style={styles.divider} />
                   <Text variant="labelLarge" style={styles.legendLabel}>
-                    {report.uncreatableCount} can't be created — no email in the file
+                    {report.uncreatableCount} can't be invited — no email in the file
                   </Text>
                   <Text variant="bodySmall" style={styles.sub}>
-                    An account needs an email address to log in with. Add an Email
-                    column to your roster for these people, or add them by hand in
-                    Employees.
+                    An invite is filed under the person's email address — that
+                    address is what matches them to it when they first sign in, so
+                    there is nothing to file without one. Add an Email column to
+                    your roster for these people, or add them by hand in Employees.
                   </Text>
                   <Button mode="text" icon="download" onPress={downloadMissingList}>
                     Download the list of {report.uncreatableCount}
@@ -1486,7 +1695,7 @@ export default function RosterUploadScreen({ navigation }) {
       <Portal>
         <Dialog
           visible={!!verifyFor}
-          onDismiss={() => setVerifyFor(null)}
+          onDismiss={closeVerify}
           style={styles.verifyDialog}
         >
           <Dialog.Title>
@@ -1579,12 +1788,15 @@ export default function RosterUploadScreen({ navigation }) {
             </ScrollView>
           </Dialog.ScrollArea>
           <Dialog.Actions>
-            <Button onPress={() => setVerifyFor(null)}>Close</Button>
+            <Button onPress={closeVerify}>Close</Button>
             <Button
               mode="contained"
               icon="download"
               onPress={downloadVerified}
-              disabled={!verifyRaw?.length}
+              // Enabled only while the rows on hand are this month's. It used to
+              // be enabled by the mere existence of rows, whichever month they
+              // came from.
+              disabled={!canDownloadVerified}
             >
               Download as .xlsx
             </Button>
@@ -1616,6 +1828,52 @@ export default function RosterUploadScreen({ navigation }) {
               disabled={deleting}
             >
               Remove
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      {/* Confirm replacing days this employee is already rostered for. Shown
+          only when something would actually CHANGE — a range that just fills in
+          blank days never reaches here. */}
+      <Portal>
+        <Dialog visible={!!overwriteFor} onDismiss={() => setOverwriteFor(null)}>
+          <Dialog.Title>Replace {overwriteFor?.days.length} existing day
+            {overwriteFor?.days.length === 1 ? '' : 's'}?</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium">
+              {overwriteFor?.emp?.name} is already rostered on{' '}
+              {overwriteFor?.days.length} day
+              {overwriteFor?.days.length === 1 ? '' : 's'} in {overwriteFor?.monthLabel}
+              {' '}within day {singleStartDay}–{singleEndDay}. Saving replaces{' '}
+              {overwriteFor?.days.length === 1 ? 'it' : 'them'}, and any ride
+              already generated changes with it.
+            </Text>
+            <View style={styles.overwriteList}>
+              {(overwriteFor?.days || []).slice(0, 8).map((d) => (
+                <Text key={d.day} variant="bodySmall" style={styles.overwriteRow}>
+                  Day {d.day}: {shiftPolicy?.[d.from]?.label || d.from} →{' '}
+                  {shiftPolicy?.[d.to]?.label || d.to}
+                </Text>
+              ))}
+              {(overwriteFor?.days.length || 0) > 8 ? (
+                <Text variant="bodySmall" style={styles.overwriteRow}>
+                  …and {overwriteFor.days.length - 8} more
+                </Text>
+              ) : null}
+            </View>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setOverwriteFor(null)} disabled={singleBusy}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              onPress={() => submitSingleEmployee({ confirmed: true })}
+              loading={singleBusy}
+              disabled={singleBusy}
+            >
+              Replace
             </Button>
           </Dialog.Actions>
         </Dialog>
@@ -1729,6 +1987,9 @@ const styles = StyleSheet.create({
   fieldsRow: { flexDirection: 'row', gap: 20, marginTop: 14, flexWrap: 'wrap' },
   fieldGroup: { gap: 6 },
   soloFieldGroup: { gap: 6, marginTop: 14 },
+  inviteHint: { paddingHorizontal: 0 },
+  overwriteList: { marginTop: 10, gap: 2 },
+  overwriteRow: { color: colors.muted },
   yearLabel: { color: colors.text },
   yearPicker: { width: 160 },
   dayPicker: { width: 90 },

@@ -16,7 +16,7 @@
 
 import {
   collection, addDoc, doc, getDocs, onSnapshot, query, where, orderBy, limit,
-  writeBatch, updateDoc, serverTimestamp,
+  writeBatch, serverTimestamp,
 } from 'firebase/firestore';
 import { firestore } from './firebase';
 import {

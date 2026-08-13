@@ -16,7 +16,8 @@ import {
   STATUS, CANCEL_STATUS, CANCEL_CUTOFF_HOURS, CAB_ROUTES,
 } from '../data/mockData';
 import {
-  watchAuth, signIn, signUp, signOutUser, friendlyAuthError,
+  watchAuth, signIn, signOutUser, friendlyAuthError,
+  signInWithDriverCode,
   changePassword as changePasswordSvc, sendPasswordReset,
   signInWithMicrosoftPopup, signInWithMicrosoftCredential,
   linkMicrosoftPopup, linkMicrosoftCredential, unlinkMicrosoft as unlinkMicrosoftSvc,
@@ -24,10 +25,14 @@ import {
   linkMicrosoftOAuthCredential, microsoftCredentialFromError,
 } from '../services/auth';
 import {
-  getOrCreateProfile, setPendingProfile, subscribeProfile, adminUpdateEmployee,
-  adminCreateAccount, adminInviteEmployees, adminDeleteEmployee, subscribeEmployees,
-  updateEmployeeRoute, adminCreateInvite,
+  getOrCreateProfile, subscribeProfile, adminUpdateEmployee,
+  adminDeleteEmployee, subscribeEmployees,
+  updateEmployeeRoute, adminCreateInvite, adminCreateDriver,
+  rotateDriverLoginCode,
 } from '../services/profile';
+import {
+  driverLoginCode, driverPhone, isDriverLoginCode, cabCodePart, unassignedLoginCode,
+} from '../utils/driverLogin';
 import {
   createAddressChangeRequest, subscribeMyAddressRequests,
   subscribeAllAddressRequests, REQUEST_STATUS as ADDRESS_STATUS,
@@ -49,6 +54,7 @@ import {
   markBookingNoShow,
   requestCancelBooking,
   resolveCancelRequest,
+  cancelAssignedBooking,
   subscribeMyBookings,
   subscribeAllBookings,
   subscribeCabBookings,
@@ -70,6 +76,7 @@ import {
   subscribeMonthRosters, subscribeMyRosters, subscribeImportHistory,
   importRoster as importRosterSvc, setRosterDay, deleteImportHistoryEntry,
   addSingleEmployeeRoster as addSingleEmployeeRosterSvc,
+  addRiderForDay,
 } from '../services/roster';
 import { ridesForDate, bookingFromRide, excuseResolvedRequests } from '../services/rides';
 import {
@@ -81,12 +88,14 @@ import {
   notify, notifyMany, subscribeMyNotifications, markRead, markAllRead,
   NOTIFY, cabAssignedMessage, rideCancelledMessage, requestResolvedMessage,
 } from '../services/notifications';
+import { queueCabAssignedEmails } from '../services/mail';
 import {
   REQUEST_STATUS, EFFECT, requestMeta,
 } from '../data/changeRequests';
 import { firestore } from '../services/firebase';
 import {
   toDateTime, isBookingPast, canRequestCancel, todayKey, shiftDateKey,
+  cancelDeadline,
 } from '../utils/datetime';
 
 const AppContext = createContext(null);
@@ -406,59 +415,35 @@ export function AppProvider({ children }) {
     }
   }
 
-  // Create a new DRIVER account. `form` = { name, email, password, confirm,
-  // phone? }. On success the auth listener loads the new profile and the app
-  // unlocks automatically.
+  // Sign a DRIVER in with their login code — the last 4 digits of their cab
+  // number followed by their phone, and nothing else. No email, no password, no
+  // account for them to create: the desk creates the account and the code is
+  // issued by linking them to a cab (see services/cabs.js).
   //
-  // Only drivers can self-register. Employees are provisioned by the transport
-  // desk, and admin access is granted in the Firebase console — the security
-  // rules enforce both, so there is no client-side "admin code" to leak.
-  async function signup(form) {
-    const role = form.role || 'driver';
-    const name = (form.name || '').trim();
-    const email = (form.email || '').trim();
-
-    if (role === 'admin') {
+  // The login screen collects the two halves as separate fields and joins them, so
+  // the length check here is a backstop rather than the message anyone normally
+  // reads. It matters anyway: a short code must never reach Firebase, because a
+  // 10-digit one is what an unassigned driver's account actually holds.
+  //
+  // On success the auth listener above loads the profile and App.js opens My
+  // Trips, exactly as an email/password sign-in does.
+  async function loginDriver(code) {
+    const digits = String(code || '').replace(/[^0-9]/g, '');
+    if (!digits) {
+      return { ok: false, message: 'Enter your cab digits and your phone number.' };
+    }
+    if (!isDriverLoginCode(digits)) {
       return {
         ok: false,
         message:
-          'Admin accounts are created by your Firebase administrator, not from the app.',
+          'Check both boxes: the last 4 digits of your cab number, and your 10-digit phone number.',
       };
     }
-    if (role !== 'driver') {
-      return {
-        ok: false,
-        message: 'Employee accounts are created by your transport admin. Ask them to add you.',
-      };
-    }
-
-    // --- Validation ---
-    if (!name || !email || !form.password) {
-      return { ok: false, message: 'Please fill in all required fields.' };
-    }
-    if (form.password.length < 6) {
-      return { ok: false, message: 'Password must be at least 6 characters.' };
-    }
-    if (form.password !== form.confirm) {
-      return { ok: false, message: 'Passwords do not match.' };
-    }
-
-    // A driver starts with NO cab — the admin links one afterward (cabId: null).
-    const profileData = {
-      role: 'driver',
-      name,
-      phone: (form.phone || '').trim(),
-      cabId: null,
-      empId: '',
-    };
-
     try {
-      setPendingProfile(profileData); // picked up when the new user's auth fires
-      await signUp(email, form.password);
+      await signInWithDriverCode(digits);
       return { ok: true };
     } catch (e) {
-      setPendingProfile(null);
-      return { ok: false, message: friendlyAuthError(e) };
+      return { ok: false, message: friendlyAuthError(e, { driver: true }) };
     }
   }
 
@@ -480,7 +465,23 @@ export function AppProvider({ children }) {
   }
 
   // Change the signed-in user's password. Returns { ok, message }.
+  //
+  // REFUSED FOR DRIVERS, and not as a matter of tidiness. A driver's Firebase
+  // password IS the login code the desk issued them; replacing it with something
+  // they chose would succeed, and then the login screen — which accepts a 14-digit
+  // code and nothing else — could never accept it again. No recovery candidate
+  // would match either (see rotateDriverLoginCode), so the account would be
+  // unrecoverable and the driver would have to be deleted and re-created. The
+  // drawer already hides the action; this is the backstop that makes a future
+  // screen, or a stale bundle, unable to reopen the hole.
   async function changePassword(currentPassword, newPassword) {
+    if (currentUser?.role === 'driver') {
+      return {
+        ok: false,
+        message:
+          'Drivers sign in with the code from the transport desk, so there is no password to change. Your code changes when your cab changes.',
+      };
+    }
     try {
       await changePasswordSvc(currentPassword, newPassword);
       return { ok: true };
@@ -837,7 +838,8 @@ export function AppProvider({ children }) {
     return {
       employeeId: currentUser.uid,
       employeeName: currentUser.name,
-      // Carried so the driver's trip list can identify the rider by ID.
+      // Both are carried for the driver's trip list, which shows the name and falls
+      // back to the ID — a driver cannot read employee profiles to look up either.
       empId: currentUser.empId || '',
       employeeHome: currentUser.home || null, // { latitude, longitude, displayName, ... }
       employeeAddress: currentUser.address || null,
@@ -957,6 +959,9 @@ export function AppProvider({ children }) {
     if (problem) return { ok: false, message: problem };
     try {
       await assignCabToBooking(bookingId, cabId);
+      // Email the rider. Queued, not awaited — the assignment is already done
+      // and a mail problem must never surface as a failed assignment.
+      queueCabAssignedEmails([{ bookingId, employeeId: b.employeeId }]);
       return { ok: true };
     } catch (e) {
       return failure(e, 'Could not assign the cab.');
@@ -982,6 +987,10 @@ export function AppProvider({ children }) {
     if (problem) return { ok: false, message: problem };
     try {
       await assignCabToBookings(bookingIds, cabId);
+      // One email each — a carpool is many riders sharing one cab.
+      queueCabAssignedEmails(
+        rides.map((r) => ({ bookingId: r.id, employeeId: r.employeeId }))
+      );
       return { ok: true };
     } catch (e) {
       return failure(e, 'Could not assign the cab.');
@@ -1034,6 +1043,82 @@ export function AppProvider({ children }) {
     } catch (e) {
       return failure(e, 'Could not send your cancellation request.');
     }
+  }
+
+  // --- Employee cancels a ride they no longer need ---------------------------
+
+  // Everything the UI and the write path both need to know about cancelling one
+  // ride, worked out in ONE place: whether it can still be cancelled, when the
+  // door closes, and — when it can't — the sentence to show instead.
+  //
+  // Both callers read this same function deliberately. A button that greys
+  // itself out on one rule while the submit path enforces another is how a ride
+  // ends up cancellable-looking but un-cancellable, or worse the reverse. The
+  // cutoff itself is canRequestCancel + CANCEL_CUTOFF_HOURS — the app's existing
+  // policy, not a second copy of it — and the deadline shown to the employee is
+  // derived from the same parse of date + shift.
+  function rideCancelState(booking) {
+    const deadline = booking ? cancelDeadline(booking.date, booking.shift, CANCEL_CUTOFF_HOURS) : null;
+    const base = { canCancel: false, deadline, reason: '' };
+    if (!booking) return { ...base, reason: 'That ride no longer exists.' };
+    if (booking.status === STATUS.CANCELLED) {
+      return { ...base, reason: 'This ride is already cancelled.' };
+    }
+    // Once the trip is under way or over, cancelling is meaningless — the cab
+    // has been sent, or the journey happened.
+    if ([STATUS.ON_THE_WAY, STATUS.ARRIVED, STATUS.COMPLETED, STATUS.NO_SHOW].includes(booking.status)) {
+      return { ...base, reason: 'This ride is already under way, so it can no longer be cancelled.' };
+    }
+    if (!canRequestCancel(booking.date, booking.shift, CANCEL_CUTOFF_HOURS)) {
+      return {
+        ...base,
+        reason: 'Cancellation is no longer available. The cancellation deadline has passed.',
+      };
+    }
+    return { canCancel: true, deadline, reason: '' };
+  }
+
+  // The employee drops a ride outright, giving a reason. Unlike requestCancel()
+  // this does not wait on the desk: the seat is freed immediately and the
+  // coordinator is told what happened rather than asked to approve it.
+  //
+  // The cutoff is re-checked HERE, at submit time, and not merely when the
+  // button was drawn — a dialog can sit open across the deadline, and a stale
+  // screen must not be able to post a cancellation that is no longer allowed.
+  // `firestore.rules` then checks it a third time against the server's own
+  // clock, which is the only check a wound-back device can't talk its way past.
+  async function cancelAssignedRide(bookingId, reason) {
+    if (!currentUser) return { ok: false, message: 'Not signed in.' };
+    const b = bookings.find((x) => x.id === bookingId);
+    if (!b) return { ok: false, message: 'That ride no longer exists.' };
+    if (b.employeeId !== currentUser.id) {
+      return { ok: false, message: 'You can only cancel your own rides.' };
+    }
+    const text = String(reason || '').trim();
+    if (!text) {
+      return { ok: false, message: 'Please give a reason for cancelling.' };
+    }
+    const state = rideCancelState(b);
+    if (!state.canCancel) return { ok: false, message: state.reason };
+    try {
+      await cancelAssignedBooking(bookingId, { reason: text, uid: currentUser.id });
+      return { ok: true };
+    } catch (e) {
+      return failure(e, 'Could not cancel that ride.');
+    }
+  }
+
+  // Rides the RIDER cancelled themselves on a given date — the coordinator's
+  // view of "who dropped out, and why". Told apart from a desk-side cancellation
+  // by `cancelledBy` matching the rider, which only this path writes.
+  function employeeCancellationsOn(date) {
+    return bookings.filter(
+      (b) =>
+        b.date === date &&
+        b.status === STATUS.CANCELLED &&
+        b.cancelledBy &&
+        b.cancelledBy === b.employeeId
+    );
   }
 
   // Admin accepts a cancellation request → the ride is Cancelled.
@@ -1172,38 +1257,101 @@ export function AppProvider({ children }) {
   }
 
   // --- Drivers (desk) ------------------------------------------------------
-  // Add a driver. A driver is a LOGIN, not just a name on a cab: they sign in to
-  // see their trips and to broadcast the cab's position, which is why this
-  // creates an account rather than a text field somewhere.
+  // Add a driver: a name and a phone number, and that is the whole form.
   //
-  // No password is invented or shared — the account is created with a throwaway
-  // one and Firebase emails them a link to set their own.
-  async function addDriverAccount({ name, email, phone }) {
+  // A driver is still a LOGIN — they sign in to see their trips and to broadcast
+  // the cab's position — but not an email/password one. The phone IS the account
+  // (it derives the address Firebase keys them by, see utils/driverLogin.js), and
+  // the code they actually type is issued when the desk links them to a cab. Until
+  // then they hold an unguessable placeholder and cannot sign in at all, which is
+  // deliberate: a driver with no cab has no trips and no cab to broadcast for.
+  async function addDriverAccount({ name, phone }) {
     if (!isDeskRole(currentUser?.role)) {
       return { ok: false, message: 'Only the transport desk can add a driver.' };
     }
-    const person = {
-      name: (name || '').trim(),
-      email: (email || '').trim().toLowerCase(),
-      phone: (phone || '').trim(),
-    };
-    if (!person.name) return { ok: false, message: "Enter the driver's name." };
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(person.email)) {
-      return { ok: false, message: 'Enter a valid email address — it is their login.' };
-    }
-    if (person.phone && person.phone.replace(/[^0-9]/g, '').length !== 10) {
-      return { ok: false, message: 'Phone must be a 10-digit number.' };
+    const cleanName = (name || '').trim();
+    const digits = driverPhone(phone);
+    if (!cleanName) return { ok: false, message: "Enter the driver's name." };
+    if (!digits) {
+      return {
+        ok: false,
+        message: 'Enter a 10-digit phone number — it is half of their login code.',
+      };
     }
     try {
-      const res = await adminInviteEmployees([person], { role: 'driver' });
-      if (res.failedCount) {
-        return { ok: false, message: res.failed[0]?.reason || 'Could not create that account.' };
-      }
-      // The account exists either way; say so when the set-password email didn't
-      // send, rather than reporting a failure that didn't happen.
-      return { ok: true, emailed: res.notInvited.length === 0 };
+      await adminCreateDriver({ name: cleanName, phone: digits });
+      return { ok: true };
     } catch (e) {
+      // One phone is one account, because the phone derives the Firebase address.
+      // Say that, rather than leaking a synthesized email address at the person
+      // reading the message.
+      //
+      // The second half matters: removing a driver deletes their PROFILE but not
+      // their Firebase login (only the Admin SDK can do that), so re-adding
+      // someone who was removed lands here even though no driver by that number
+      // appears in the list. Point at where the leftover actually is.
+      if (e?.code === 'auth/email-already-in-use') {
+        return {
+          ok: false,
+          message: `${digits} already has a driver login. If no driver with that number is in the list, it was left behind by one you removed — delete that user under Authentication in the Firebase console, or use a different number.`,
+        };
+      }
       return failure(e, 'Could not create that driver account.');
+    }
+  }
+
+  // Force a driver's login code back into step with their cab link. The desk's
+  // repair for the one state nothing else can fix: a rotation that stopped halfway,
+  // leaving the code stored on the profile disagreeing with the password Firebase
+  // actually holds.
+  //
+  // It repairs BOTH directions, which is why it isn't simply "regenerate":
+  //   • on a cab → set the code that cab implies, so the desk can hand it out;
+  //   • on no cab → set the unassigned value, WITHDRAWING a code that outlived the
+  //     assignment it came from. Refusing this case (as this used to) left the only
+  //     failed revocation in the system with no way to complete it.
+  //
+  // Safe to press at any time: it recomputes what the link already implies, so a
+  // driver who was fine ends up exactly as they were.
+  //
+  // Takes the whole driver record rather than a uid: the Drivers screen already
+  // has it live from subscribeDrivers(), and drivers are deliberately absent from
+  // this context's `employees` subscription (which is riders only).
+  async function regenerateDriverCode(driver) {
+    if (!isDeskRole(currentUser?.role)) {
+      return { ok: false, message: 'Only the transport desk can do that.' };
+    }
+    const uid = driver?.uid;
+    if (!uid) return { ok: false, message: 'Missing driver.' };
+    const phone = driver?.phone ?? '';
+    if (!driverPhone(phone)) {
+      return { ok: false, message: 'That driver has no valid 10-digit phone number on file.' };
+    }
+    const cab = fleetCabs.find((c) => c.driverUid === uid) || null;
+    const nextCode = cab
+      ? driverLoginCode(cab.cabNumber, phone)
+      : unassignedLoginCode(phone);
+    if (!nextCode) {
+      return {
+        ok: false,
+        message: `${cab.cabNumber} has fewer than 4 digits in its number, so no code can be built from it.`,
+      };
+    }
+    try {
+      await rotateDriverLoginCode(uid, {
+        phone,
+        currentCode: driver?.loginCode,
+        nextCode,
+      });
+      // `code` only when there is one to hand over — with no cab this was a
+      // withdrawal, and reporting the unassigned value as a "code" would invite
+      // someone to pass a driver's own phone number off as a login.
+      return { ok: true, code: cab ? nextCode : '' };
+    } catch (e) {
+      return failure(
+        e,
+        'Could not fix that code. If it keeps failing, remove the driver and add them again.'
+      );
     }
   }
 
@@ -1253,24 +1401,30 @@ export function AppProvider({ children }) {
     }
   }
 
-  // Edit a vehicle's details. Returns { ok, message? }.
+  // Edit a vehicle's details. Returns { ok, message?, codeWarning? }.
+  //
+  // `codeWarning` is set when the cab saved but its driver's login code could not
+  // be re-issued to match the new number — the save worked, and their OLD code is
+  // still the one that works. Never swallow it: the desk would otherwise read out
+  // a code that doesn't sign in.
   async function editCab(id, fields) {
     const problem = cabDetailsProblem(fields);
     if (problem) return { ok: false, message: problem };
     try {
-      await updateCab(id, fields);
-      return { ok: true };
+      const { codeWarning } = await updateCab(id, fields);
+      return { ok: true, codeWarning };
     } catch (e) {
       return failure(e, 'Could not save the cab.');
     }
   }
 
   // Point a cab at a driver account — this is what switches on that cab's live
-  // tracking. Pass null to detach. Returns { ok, message? }.
+  // tracking AND issues the driver's login code. Pass null to detach, which
+  // revokes it. Returns { ok, message?, codeWarning? }.
   async function assignDriverToCab(cabId, driverUid) {
     try {
-      await linkCabDriver(cabId, driverUid || null);
-      return { ok: true };
+      const { codeWarning } = await linkCabDriver(cabId, driverUid || null);
+      return { ok: true, codeWarning };
     } catch (e) {
       return failure(e, 'Could not link that driver.');
     }
@@ -1279,8 +1433,8 @@ export function AppProvider({ children }) {
   // Detach a driver from a cab without deleting the vehicle.
   async function unlinkDriverFromCab(cabId) {
     try {
-      await unlinkCabDriver(cabId);
-      return { ok: true };
+      const { codeWarning } = await unlinkCabDriver(cabId);
+      return { ok: true, codeWarning };
     } catch (e) {
       return failure(e, 'Could not detach that driver.');
     }
@@ -1291,6 +1445,11 @@ export function AppProvider({ children }) {
   function cabDetailsProblem({ cabNumber, capacity }) {
     if (!(cabNumber || '').trim()) return 'Enter the cab number.';
     if ((cabNumber || '').trim().length > 32) return 'That cab number is too long.';
+    // The last 4 digits of the number are half of the driver's login code, so a
+    // number with fewer than 4 digits leaves whoever drives it unable to sign in.
+    if (!cabCodePart(cabNumber)) {
+      return 'A cab number needs at least 4 digits — the last 4 are half of the driver’s login code.';
+    }
     const seats = Number(capacity);
     if (!Number.isInteger(seats) || seats < 1 || seats > 30) {
       return 'Seats must be a whole number between 1 and 30.';
@@ -1459,11 +1618,16 @@ export function AppProvider({ children }) {
   //     and their profile is created under their own uid on the spot. Nobody
   //     invents, transmits or confirms a password.
   //   • Drivers are not in the directory — there is no Microsoft account for
-  //     them to use — so they still get an email/password login here.
+  //     them to use — so they get a phone-derived account and sign in with the
+  //     numeric code the cab link issues. No email and no password either way:
+  //     this is the same thing the Drivers tab does, reachable from here too.
   async function adminCreateEmployee(form) {
     const email = (form.email || '').trim();
-    const password = form.password || '';
     const role = form.role || 'employee';
+    // A driver has no email to be required — their phone is their identity.
+    if (role === 'driver') {
+      return addDriverAccount({ name: form.name, phone: form.phone });
+    }
     if (!email) return { ok: false, message: 'Email is required.' };
     if (role === 'employee' && !(form.empId || '').trim()) {
       return { ok: false, message: 'Employee ID is required.' };
@@ -1481,20 +1645,13 @@ export function AppProvider({ children }) {
       ...(form.route ? { roster: { route: String(form.route).trim() } } : {}),
     };
     try {
-      if (role === 'driver') {
-        if (password.length < 6) {
-          return { ok: false, message: 'Temporary password must be at least 6 characters.' };
-        }
-        await adminCreateAccount({ email, password, role, profile });
-      } else {
-        await adminCreateInvite({
-          email,
-          role,
-          // adminCreateInvite takes `route` flat; the nested roster map above is
-          // the shape a real profile stores.
-          profile: { ...profile, route: form.route ? String(form.route).trim() : '' },
-        });
-      }
+      await adminCreateInvite({
+        email,
+        role,
+        // adminCreateInvite takes `route` flat; the nested roster map above is
+        // the shape a real profile stores.
+        profile: { ...profile, route: form.route ? String(form.route).trim() : '' },
+      });
       return { ok: true };
     } catch (e) {
       return { ok: false, message: friendlyAuthError(e) };
@@ -1601,6 +1758,37 @@ export function AppProvider({ children }) {
       return { ok: true };
     } catch (e) {
       return failure(e, 'Could not update that roster day.');
+    }
+  }
+
+  // Put a rider on ONE day's board — the coordinator's answer to "this person
+  // needs a cab tonight and isn't on the roster". Writes that single day's shift
+  // code, which is what the rides for the day are derived from, so they appear in
+  // their route group immediately and can be assigned like anyone else.
+  //
+  // This is one day only, on purpose. Rostering someone for a stretch is HR's
+  // job (Roster Upload → "Add a single employee"), and the rules enforce the same
+  // split rather than trusting this screen.
+  // Returns { ok, message?, created } — `created` is true when this was their
+  // first roster row for the month.
+  async function addRiderToDay(employeeId, dateKey, code) {
+    if (!isDeskRole(currentUser?.role)) {
+      return { ok: false, message: 'Only the transport desk can add a rider.' };
+    }
+    const emp = employees.find((e) => e.uid === employeeId);
+    if (!emp) return { ok: false, message: 'That employee no longer exists.' };
+    if (!code) return { ok: false, message: 'Pick a shift.' };
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || ''));
+    if (!match) return { ok: false, message: 'Pick a valid date.' };
+    const [, year, month, day] = match;
+    try {
+      const res = await addRiderForDay(
+        { month: `${year}-${month}`, employee: emp, day, code },
+        { addedBy: currentUser.uid, addedByName: currentUser.name || '' }
+      );
+      return { ok: true, created: res?.created };
+    } catch (e) {
+      return failure(e, 'Could not add that rider to the day.');
     }
   }
 
@@ -1727,6 +1915,14 @@ export function AppProvider({ children }) {
           };
         })
       ).catch((e) => console.warn('[notify] assignment notice failed:', e?.message));
+
+      // And email them. `created` holds the new booking ids in the same order as
+      // `fresh`, so every ride on this cab — pre-existing booking or one just
+      // materialised — gets exactly one job. Best-effort, same as above.
+      queueCabAssignedEmails([
+        ...existing.map((r) => ({ bookingId: r.bookingId, employeeId: r.employeeId })),
+        ...fresh.map((r, i) => ({ bookingId: created[i], employeeId: r.employeeId })),
+      ]);
 
       return { ok: true, created: fresh.length };
     } catch (e) {
@@ -1916,7 +2112,9 @@ export function AppProvider({ children }) {
     microsoftConfirm,
     confirmMicrosoftLink,
     cancelMicrosoftConfirm,
-    signup,
+    // Drivers sign in with a code instead of email/password, and cannot create
+    // their own account at all — there is deliberately no `signup` any more.
+    loginDriver,
     logout,
     changePassword,
     resetPassword,
@@ -1936,6 +2134,7 @@ export function AppProvider({ children }) {
     addSingleEmployeeRoster,
     deleteImportHistory,
     updateRosterDay,
+    addRiderToDay,
     // Pickup routes — what the coordinator groups the day by
     employees,
     routeOptions,
@@ -1963,6 +2162,10 @@ export function AppProvider({ children }) {
     cancelBooking,
     dropRideProblem,
     requestCancel,
+    // Employee-driven cancellation of a ride they no longer need (with reason).
+    rideCancelState,
+    cancelAssignedRide,
+    employeeCancellationsOn,
     approveCancel,
     rejectCancel,
     pendingCancelRequests,
@@ -1979,6 +2182,7 @@ export function AppProvider({ children }) {
     // Drivers (desk)
     addDriverAccount,
     removeDriver,
+    regenerateDriverCode,
     homeAddressOf,
     myAddressRequests,
     addressRequests,
