@@ -74,10 +74,19 @@ export const STATUS = {
   ASSIGNED: 'Cab assigned',
   ON_THE_WAY: 'On the way',
   ARRIVED: 'Arrived',
+  // The rider read out their start OTP and the driver typed it in — the one
+  // status the driver cannot set on their own. See RIDE_OTP_LENGTH below.
+  ON_BOARD: 'On board',
   COMPLETED: 'Completed',
   NO_SHOW: 'No show', // driver reached the pickup but the employee wasn't there
   CANCELLED: 'Cancelled',
 };
+
+// How many digits the ride-start OTP has. SIX, not four, is deliberate: the code
+// is checked by `firestore.rules`, and rules cannot count failed attempts, so the
+// only thing standing between a scripted client and a guessed code is the size of
+// the space. Four digits is 10,000 tries; six is a million.
+export const RIDE_OTP_LENGTH = 6;
 
 // Employees must book a ride at least this many hours before it starts.
 export const BOOKING_LEAD_HOURS = 9;

@@ -28,6 +28,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import Dropdown from '../../components/Dropdown';
+import RideStartCode from '../../components/RideStartCode';
 import { groupByRoute, groupByShift, rideStats } from '../../services/rides';
 import { cabCapacity } from '../../services/cabs';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
@@ -318,6 +319,13 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   </Text>
                 </View>
               ) : null}
+              {/* The rider's start code, on the desk's board too — this is the
+                  escape hatch for a rider whose phone is dead or who can't open
+                  the app at the kerb. The coordinator reads it down the phone to
+                  the driver. Without it, the OTP would strand a real employee,
+                  which is a worse failure than the one it prevents. */}
+              <RideStartCode booking={item.booking} variant="inline" />
+
               {/* Grouped by shift, the route is no longer the section header, so it
                   has to be on the card — it's how the desk knows who can share. */}
               {item.route && groupMode === 'shift' ? (

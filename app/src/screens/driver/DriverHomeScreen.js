@@ -3,7 +3,8 @@
 // The trips the coordinator assigned to THIS driver's cab, in PICKUP SEQUENCE:
 // sorted by date then pickup time, and numbered within each run so a carpool
 // reads as "Stop 2 of 4" rather than an unordered list. The driver advances
-// each trip's status: Cab assigned → On the way → Arrived → Completed.
+// each trip's status: Cab assigned → On the way → Arrived → On board → Completed,
+// where the step into "On board" needs the rider's own 6-digit code.
 // A "Share Live Location" button broadcasts the driver's GPS for the cab.
 //
 // RIDERS ARE IDENTIFIED BY NAME HERE. (Reversed Aug 2026, at explicit request —
@@ -20,9 +21,10 @@
 
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
-import { Text, Card, Chip, Button, Divider, Snackbar, Portal, Dialog } from 'react-native-paper';
+import { Text, Card, Chip, Button, Divider, Snackbar, Portal, Dialog, TextInput } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
+import { RIDE_OTP_LENGTH } from '../../data/mockData';
 import { statusColors, colors } from '../../theme';
 import { SUPPORT_HELPLINE } from '../../branding';
 import { tripPickupPoint, tripPlaceLabels } from '../../services/directions';
@@ -47,10 +49,17 @@ function riderLabel(booking) {
 }
 
 // What the driver can do next, per current status.
+//
+// "Arrived" is the one step that is not simply a tap: the rider reads out the
+// six digits on their own screen and the driver types them in. That check happens
+// in firestore.rules against a document this app cannot read, so there is nothing
+// here to work around — the button opens the dialog, and the write is what's
+// judged. See services/rideOtp.js.
 const NEXT_ACTION = {
   'Cab assigned': { next: 'On the way', label: 'Start trip', icon: 'play' },
   'On the way': { next: 'Arrived', label: 'Mark arrived', icon: 'map-marker-check' },
-  Arrived: { next: 'Completed', label: 'Complete trip', icon: 'flag-checkered' },
+  Arrived: { otp: true, label: 'Enter rider OTP', icon: 'shield-key' },
+  'On board': { next: 'Completed', label: 'Complete trip', icon: 'flag-checkered' },
 };
 
 export default function DriverHomeScreen({ navigation }) {
@@ -59,6 +68,7 @@ export default function DriverHomeScreen({ navigation }) {
     bookings,
     myCab,
     updateBookingStatus,
+    startRideWithOtp,
     markNoShow,
     getCabById,
     sharingLocation,
@@ -68,6 +78,9 @@ export default function DriverHomeScreen({ navigation }) {
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null); // the trip whose write is in flight
   const [noShowFor, setNoShowFor] = useState(null); // trip pending no-show confirmation
+  const [otpFor, setOtpFor] = useState(null); // trip whose rider code is being entered
+  const [otpEntry, setOtpEntry] = useState('');
+  const [otpError, setOtpError] = useState('');
 
   // Both driver actions used to be fire-and-forget: if the write was rejected
   // the button just did nothing. Now they wait, and say so when they fail.
@@ -77,6 +90,34 @@ export default function DriverHomeScreen({ navigation }) {
     const res = await updateBookingStatus(booking.id, nextStatus);
     setBusyId(null);
     if (!res?.ok) setError(res?.message || 'Could not update the trip. Please try again.');
+  }
+
+  // Open the code prompt for a trip. State is reset here rather than on close, so
+  // a mistyped code from the previous rider can't be sitting in the box when the
+  // next dialog opens.
+  function askForOtp(booking) {
+    setError('');
+    setOtpError('');
+    setOtpEntry('');
+    setOtpFor(booking);
+  }
+
+  // The rider's code, typed in. A wrong one is refused by the rules, not by this
+  // screen — the failure is shown inside the dialog so the driver can simply try
+  // again with the trip still in front of them.
+  async function submitOtp() {
+    const booking = otpFor;
+    if (!booking) return;
+    setOtpError('');
+    setBusyId(booking.id);
+    const res = await startRideWithOtp(booking.id, otpEntry);
+    setBusyId(null);
+    if (res?.ok) {
+      setOtpFor(null);
+      setOtpEntry('');
+      return;
+    }
+    setOtpError(res?.message || 'Could not start the ride. Please try again.');
   }
 
   // Flagging a no-show ends the trip and is visible to the transport desk, so it
@@ -216,8 +257,8 @@ export default function DriverHomeScreen({ navigation }) {
               <Button
                 mode="contained"
                 icon={action.icon}
-                onPress={() => advance(item, action.next)}
-                loading={busyId === item.id}
+                onPress={() => (action.otp ? askForOtp(item) : advance(item, action.next))}
+                loading={busyId === item.id && !action.otp}
                 disabled={busyId === item.id}
               >
                 {action.label}
@@ -328,6 +369,56 @@ export default function DriverHomeScreen({ navigation }) {
       />
 
       <Portal>
+        {/* The rider's code. Asked for at the kerb, so: one big numeric field,
+            no keyboard hunting, and Enter submits. */}
+        <Dialog visible={!!otpFor} onDismiss={() => setOtpFor(null)} style={styles.dialog}>
+          <Dialog.Title>Start the ride</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium" style={styles.otpIntro}>
+              Ask {otpFor ? riderLabel(otpFor) : 'the employee'} for the {RIDE_OTP_LENGTH}-digit
+              code shown in their app, and type it in below.
+            </Text>
+            <TextInput
+              mode="outlined"
+              label={`${RIDE_OTP_LENGTH}-digit code`}
+              value={otpEntry}
+              onChangeText={(t) =>
+                setOtpEntry(t.replace(/[^0-9]/g, '').slice(0, RIDE_OTP_LENGTH))
+              }
+              keyboardType="number-pad"
+              autoFocus
+              maxLength={RIDE_OTP_LENGTH}
+              style={styles.otpInput}
+              contentStyle={styles.otpInputText}
+              onSubmitEditing={submitOtp}
+              error={!!otpError}
+              disabled={!!busyId}
+            />
+            {otpError ? (
+              <Text variant="bodySmall" style={styles.otpError}>
+                {otpError}
+              </Text>
+            ) : (
+              <Text variant="bodySmall" style={styles.otpHint}>
+                If the employee isn't here, close this and flag a no-show instead.
+              </Text>
+            )}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setOtpFor(null)} disabled={!!busyId}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              onPress={submitOtp}
+              loading={!!busyId}
+              disabled={!!busyId || otpEntry.length !== RIDE_OTP_LENGTH}
+            >
+              Start ride
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+
         <Dialog visible={!!noShowFor} onDismiss={() => setNoShowFor(null)} style={styles.dialog}>
           <Dialog.Title>Flag a no-show?</Dialog.Title>
           <Dialog.Content>
@@ -415,6 +506,13 @@ const styles = StyleSheet.create({
   stopBadgeText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 },
   stopText: { color: colors.muted, marginTop: 1 },
   dialog: { width: '100%', maxWidth: 420, alignSelf: 'center' },
+  otpIntro: { marginBottom: 14 },
+  otpInput: { backgroundColor: colors.surface },
+  // Wide-spaced and large: this is read aloud across a car window and typed in
+  // the dark, often by someone still holding the wheel.
+  otpInputText: { fontSize: 26, letterSpacing: 8, textAlign: 'center' },
+  otpError: { color: colors.danger, marginTop: 8 },
+  otpHint: { color: colors.muted, marginTop: 8 },
   empty: { alignItems: 'center', marginTop: 40 },
   emptyText: { color: colors.muted, marginTop: 8 },
 });

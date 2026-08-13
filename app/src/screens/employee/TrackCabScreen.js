@@ -35,6 +35,7 @@ import {
 } from '../../services/directions';
 import { STATUS } from '../../data/mockData';
 import TrackMap from '../../components/TrackMap';
+import RideStartCode from '../../components/RideStartCode';
 import { colors } from '../../theme';
 import { callNumber } from '../../utils/externalLinks';
 
@@ -95,9 +96,14 @@ export default function TrackCabScreen({ navigation }) {
   const [route, setRoute] = useState(null);
   const [now, setNow] = useState(() => Date.now());
 
-  // Before the driver arrives, the cab is on its way to the PICKUP point; after
-  // that it's heading to the trip's destination.
-  const onBoard = trackedBooking?.status === STATUS.ARRIVED;
+  // Until the rider is actually in the cab, it is on its way to the PICKUP point;
+  // after that it's heading to the trip's destination.
+  //
+  // This keys off "On board" — the status the driver can only reach with the
+  // rider's code — rather than "Arrived", which used to stand in for it. A cab
+  // that has merely turned up is still at the pickup, and flipping the map to the
+  // drop then showed an ETA to somewhere nobody was travelling to yet.
+  const onBoard = trackedBooking?.status === STATUS.ON_BOARD;
   const pickupPoint = trackedBooking ? tripPickupPoint(trackedBooking) : null;
   // Two places the home pin can live, and neither is reliably populated on its
   // own: the booking's own copy is what the DRIVER was given (and is null on
@@ -255,6 +261,11 @@ export default function TrackCabScreen({ navigation }) {
           <Text variant="bodySmall" style={styles.detail}>
             Pickup: {pickupPoint?.label || trackedBooking.pickup || '—'}
           </Text>
+
+          {/* This is the screen a rider has open while the cab approaches, so it
+              is where the start code has to be — not one they have to go and
+              find as the driver pulls up. */}
+          <RideStartCode booking={trackedBooking} />
 
           {/* Driver. The number is a BUTTON, not text — this is the screen a
               rider has open while the cab approaches, so "where are you?" has

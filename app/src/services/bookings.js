@@ -5,8 +5,9 @@
 //   • applyRosterChanges            — cancel + create in ONE atomic batch
 //   • subscribeMyBookings           — live list for one employee
 //   • subscribeAllBookings          — live list for the admin (bounded window)
-//   • assignCabToBooking(s)         — admin assigns a cab
+//   • assignCabToBooking(s)         — admin assigns a cab (and issues its OTP)
 //   • setBookingStatus              — e.g. cancel a trip
+//   • startRideWithOtp              — driver types in the rider's code
 //   • syncEmployeeAddress           — push an approved address change onto the
 //                                     employee's future rides
 // "Live" means the screen updates automatically when the data changes,
@@ -30,6 +31,7 @@ import {
 } from 'firebase/firestore';
 import { firestore } from './firebase';
 import { STATUS } from '../data/mockData';
+import { issueRideOtp } from './rideOtp';
 import { todayKey, shiftDateKey } from '../utils/datetime';
 
 const COL = 'bookings';
@@ -92,12 +94,18 @@ export async function createAssignedBookings(newBookings, existingIds, cabId) {
     }
     fresh.forEach(({ ref, data }) => {
       tx.set(ref, { ...data, createdAt: serverTimestamp() });
+      // Same commit as the assignment, so a ride never carries a cab without the
+      // code its rider will be asked for. See services/rideOtp.js.
+      issueRideOtp(tx, ref.id);
     });
     (existingIds || []).forEach((id) => {
       tx.update(doc(firestore, COL, id), {
         assignedCabId: cabId,
         status: STATUS.ASSIGNED,
       });
+      // Re-assigning to another cab re-issues the code, killing off whatever the
+      // previous driver may have overheard.
+      issueRideOtp(tx, id);
     });
   });
 
@@ -164,25 +172,51 @@ export function subscribeCabBookings(cabId, cb, onError) {
   return onSnapshot(q, (snap) => cb(toList(snap)), onError);
 }
 
+// A batch rather than a plain update: the cab and the rider's start OTP have to
+// land together, or the ride arrives at the kerb with nothing for the driver to
+// check against.
 export async function assignCabToBooking(bookingId, cabId) {
-  return updateDoc(doc(firestore, COL, bookingId), {
+  const batch = writeBatch(firestore);
+  batch.update(doc(firestore, COL, bookingId), {
     assignedCabId: cabId,
     status: STATUS.ASSIGNED,
   });
+  issueRideOtp(batch, bookingId);
+  return batch.commit();
 }
 
 // Assign ONE cab to MANY bookings at once (carpool grouping). All the selected
 // employees then share that cab. Done as a single atomic batch.
 export async function assignCabToBookings(bookingIds, cabId) {
   const batch = writeBatch(firestore);
-  bookingIds.forEach((id) =>
-    batch.update(doc(firestore, COL, id), { assignedCabId: cabId, status: STATUS.ASSIGNED })
-  );
+  bookingIds.forEach((id) => {
+    batch.update(doc(firestore, COL, id), { assignedCabId: cabId, status: STATUS.ASSIGNED });
+    // One code per RIDER, not per cab — a carpool of four is four separate
+    // boardings, each verified as that person gets in.
+    issueRideOtp(batch, id);
+  });
   return batch.commit();
 }
 
 export async function setBookingStatus(bookingId, status) {
   return updateDoc(doc(firestore, COL, bookingId), { status });
+}
+
+// The driver typed in the rider's code. The attempt is written onto the booking
+// because firestore.rules can only inspect `request.resource.data` — it cannot
+// see a value that isn't part of the write. If the code is wrong the whole update
+// is rejected and nothing is stored, so a failed guess leaves no trace on the
+// document; if it's right, what lands is a code that has just been spent.
+//
+// Deliberately NOT routed through setBookingStatus: reaching "On board" is the
+// one transition the driver cannot make on their own, and giving it its own
+// function keeps that visible at every call site.
+export async function startRideWithOtp(bookingId, code) {
+  return updateDoc(doc(firestore, COL, bookingId), {
+    status: STATUS.ON_BOARD,
+    startOtpAttempt: String(code || '').trim(),
+    boardedAt: serverTimestamp(),
+  });
 }
 
 // Driver flags that the employee wasn't at the pickup. Records the time so the

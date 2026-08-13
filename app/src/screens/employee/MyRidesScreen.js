@@ -20,6 +20,7 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
+import RideStartCode from '../../components/RideStartCode';
 import { statusColors, colors } from '../../theme';
 import { callNumber } from '../../utils/externalLinks';
 import { formatDeadline } from '../../utils/datetime';
@@ -123,6 +124,11 @@ export default function MyRidesScreen({ navigation }) {
               You cancelled this ride: “{item.cancellationReason}”
             </Text>
           ) : null}
+
+          {/* Shown from the moment a cab is assigned rather than only on arrival:
+              a rider who already has the code in front of them doesn't have to
+              find it while a driver waits. It disappears once they're on board. */}
+          <RideStartCode booking={item} />
 
           {cab && (
             <>

@@ -51,6 +51,7 @@ import {
   assignCabToBooking,
   assignCabToBookings,
   setBookingStatus,
+  startRideWithOtp as startRideWithOtpSvc,
   markBookingNoShow,
   requestCancelBooking,
   resolveCancelRequest,
@@ -1066,7 +1067,9 @@ export function AppProvider({ children }) {
     }
     // Once the trip is under way or over, cancelling is meaningless — the cab
     // has been sent, or the journey happened.
-    if ([STATUS.ON_THE_WAY, STATUS.ARRIVED, STATUS.COMPLETED, STATUS.NO_SHOW].includes(booking.status)) {
+    if ([
+      STATUS.ON_THE_WAY, STATUS.ARRIVED, STATUS.ON_BOARD, STATUS.COMPLETED, STATUS.NO_SHOW,
+    ].includes(booking.status)) {
       return { ...base, reason: 'This ride is already under way, so it can no longer be cancelled.' };
     }
     if (!canRequestCancel(booking.date, booking.shift, CANCEL_CUTOFF_HOURS)) {
@@ -1156,6 +1159,27 @@ export function AppProvider({ children }) {
     }
   }
 
+  // The driver types in the six digits the rider reads off their own screen, and
+  // the trip becomes "On board". This is the ONLY way into that status: the check
+  // is in firestore.rules against a document the driver cannot read, so a wrong
+  // code comes back as a permission error rather than a polite refusal we chose
+  // to honour. The message says what to do next, because a driver standing at a
+  // gate at 8 PM needs an instruction, not a diagnosis.
+  async function startRideWithOtp(bookingId, code) {
+    try {
+      await startRideWithOtpSvc(bookingId, code);
+      return { ok: true };
+    } catch (e) {
+      if (e?.code === 'permission-denied') {
+        return {
+          ok: false,
+          message: "That code didn't match. Ask the employee to read it out again from their app.",
+        };
+      }
+      return failure(e, 'Could not start the ride.');
+    }
+  }
+
   // Driver flags a no-show: reached the pickup but the employee wasn't there.
   // Shows up flagged on the admin's Bookings screen.
   async function markNoShow(bookingId) {
@@ -1209,7 +1233,7 @@ export function AppProvider({ children }) {
   // long-past rides — otherwise an employee could keep watching a cab's live
   // GPS for weeks after their trip ended. Soonest departure first.
   function trackableBooking() {
-    const live = [STATUS.ASSIGNED, STATUS.ON_THE_WAY, STATUS.ARRIVED];
+    const live = [STATUS.ASSIGNED, STATUS.ON_THE_WAY, STATUS.ARRIVED, STATUS.ON_BOARD];
     const today = todayKey();
     return (
       myActiveBookings()
@@ -2170,6 +2194,7 @@ export function AppProvider({ children }) {
     rejectCancel,
     pendingCancelRequests,
     updateBookingStatus,
+    startRideWithOtp,
     markNoShow,
     // The driver's own cab (read-only)
     myCab,

@@ -49,6 +49,7 @@ export const statusColors = {
   'Cab assigned': '#2E7D32', // green = cab assigned
   'On the way': colors.primary, // blue = driver en route
   Arrived: '#00897B', // teal = driver at pickup
+  'On board': '#1B7F3B', // green = rider verified by OTP, cab moving
   Completed: '#455A64', // blue-grey = trip done
   'No show': '#C62828', // red = employee wasn't at pickup
   Cancelled: '#9E9E9E', // grey = no longer active
