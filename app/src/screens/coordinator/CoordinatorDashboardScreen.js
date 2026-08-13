@@ -60,7 +60,14 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [snack, setSnack] = useState('');
-  const [onlyPending, setOnlyPending] = useState(true);
+  // Which slice of the day's rides the board is showing. The headline numbers
+  // above it are the control: tapping "Waiting" or "Assigned" filters to exactly
+  // the rides that number counts, so a coordinator can check what a figure is
+  // made of instead of reading it and then hunting for the rows by eye.
+  //   all      — every ride
+  //   waiting  — no cab yet (the default: this is the work still to do)
+  //   assigned — already in a cab (who is covered, and by which vehicle)
+  const [rideFilter, setRideFilter] = useState('waiting');
   // The rider whose route we're fixing, and the route picked for them. Routing is
   // HR's job, but the coordinator is the one who discovers at 9 PM that somebody
   // is on no route at all — and a ride nobody can group is a ride nobody drives.
@@ -75,10 +82,11 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   // The derived rides for the chosen day, and the sections to show them in.
   const rides = useMemo(() => ridesOn(date), [ridesOn, date]);
   const stats = useMemo(() => rideStats(rides), [rides]);
-  const visible = useMemo(
-    () => (onlyPending ? rides.filter((r) => !r.assignedCabId) : rides),
-    [rides, onlyPending]
-  );
+  const visible = useMemo(() => {
+    if (rideFilter === 'waiting') return rides.filter((r) => !r.assignedCabId);
+    if (rideFilter === 'assigned') return rides.filter((r) => r.assignedCabId);
+    return rides;
+  }, [rides, rideFilter]);
   const sections = useMemo(
     () => (groupMode === 'route' ? groupByRoute(visible) : groupByShift(visible)),
     [visible, groupMode]
@@ -406,11 +414,34 @@ export default function CoordinatorDashboardScreen({ navigation }) {
           />
         </View>
 
-        {/* Headline numbers */}
+        {/* Headline numbers — and the board's filter. Each of the first three is
+            a count of a slice of the day, so tapping one shows exactly the rides
+            it counted. "In / Out" is a ratio across both slices rather than a
+            subset of them, so it stays a read-only figure. */}
         <View style={styles.stats}>
-          <Stat label="Rides" value={stats.total} />
-          <Stat label="Waiting" value={stats.pending} tone={stats.pending ? 'warn' : 'muted'} />
-          <Stat label="Assigned" value={stats.assigned} tone="good" />
+          <Stat
+            label="Rides"
+            value={stats.total}
+            active={rideFilter === 'all'}
+            onPress={() => setRideFilter('all')}
+            showsLabel="every ride"
+          />
+          <Stat
+            label="Waiting"
+            value={stats.pending}
+            tone={stats.pending ? 'warn' : 'muted'}
+            active={rideFilter === 'waiting'}
+            onPress={() => setRideFilter('waiting')}
+            showsLabel="only rides with no cab yet"
+          />
+          <Stat
+            label="Assigned"
+            value={stats.assigned}
+            tone="good"
+            active={rideFilter === 'assigned'}
+            onPress={() => setRideFilter('assigned')}
+            showsLabel="only rides that already have a cab"
+          />
           <Stat label="In / Out" value={`${stats.inbound}/${stats.outbound}`} tone="muted" />
         </View>
 
@@ -465,13 +496,20 @@ export default function CoordinatorDashboardScreen({ navigation }) {
               { value: 'shift', label: 'By shift', icon: 'clock-outline' },
             ]}
           />
+          {/* The same filter as the numbers above, named rather than counted —
+              it says which slice is on screen without the coordinator having to
+              read the underline, and clears back to everything in one tap. */}
           <Button
             compact
-            mode={onlyPending ? 'contained-tonal' : 'text'}
-            icon={onlyPending ? 'filter' : 'filter-outline'}
-            onPress={() => setOnlyPending((v) => !v)}
+            mode={rideFilter === 'all' ? 'text' : 'contained-tonal'}
+            icon={rideFilter === 'all' ? 'filter-outline' : 'filter'}
+            onPress={() => setRideFilter(rideFilter === 'all' ? 'waiting' : 'all')}
           >
-            {onlyPending ? 'Waiting only' : 'All rides'}
+            {rideFilter === 'waiting'
+              ? 'Waiting only'
+              : rideFilter === 'assigned'
+              ? 'Assigned only'
+              : 'All rides'}
           </Button>
           {/* Someone needs a cab tonight who the month's roster doesn't have
               working today. Without this the coordinator can see that and not
@@ -506,8 +544,13 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                        moved on. Zero rides is its own state, not a success. */
                   stats.total === 0
                   ? 'No rides on this day.'
-                  : onlyPending
+                  : rideFilter === 'waiting'
                   ? 'Every ride today has a cab.'
+                  : /* The day HAS rides and none of them are assigned — an empty
+                       board here means the work hasn't started, not that there is
+                       none. Saying "no rides" would read as the opposite. */
+                    rideFilter === 'assigned'
+                  ? 'No ride today has a cab yet.'
                   : 'No rides on this day.'}
               </Text>
               {noRoster ? (
@@ -737,21 +780,39 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   );
 }
 
-function Stat({ label, value, tone }) {
+// One headline number. With `onPress` it doubles as the board's filter — the
+// active one is underlined in its own colour, so which slice is on screen is
+// answered by the same thing that changes it. Without `onPress` it renders as a
+// plain figure (see "In / Out"), which is why the wrapper is chosen per call
+// rather than always being pressable: a Pressable that does nothing still
+// invites a tap.
+function Stat({ label, value, tone, active = false, onPress, showsLabel = '' }) {
   const color =
     tone === 'good' ? colors.success
     : tone === 'warn' ? '#B26A00'
     : tone === 'muted' ? colors.muted
     : colors.text;
-  return (
-    <View style={styles.stat}>
+  const body = (
+    <>
       <Text variant="titleLarge" style={[styles.statValue, { color }]}>
         {value}
       </Text>
-      <Text variant="bodySmall" style={styles.statLabel}>
+      <Text variant="bodySmall" style={[styles.statLabel, active && { color }]}>
         {label}
       </Text>
-    </View>
+    </>
+  );
+  if (!onPress) return <View style={styles.stat}>{body}</View>;
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.stat, styles.statTappable, active && { borderBottomColor: color }]}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={`${label}: ${value}.${showsLabel ? ` Show ${showsLabel}.` : ''}`}
+    >
+      {body}
+    </Pressable>
   );
 }
 
@@ -794,6 +855,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   stat: { alignItems: 'center', minWidth: 64 },
+  // A transparent border on every tappable stat, coloured in only when it's the
+  // active one — so selecting a filter can't shift the row's height.
+  statTappable: {
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    paddingBottom: 2,
+    paddingHorizontal: 6,
+  },
   statValue: { fontWeight: 'bold' },
   statLabel: { color: colors.muted },
 

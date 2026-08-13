@@ -218,9 +218,14 @@ function UserCard({ user, onChangePassword, onLogout }) {
   // reasons: it is synthesized on an unroutable domain (see utils/driverLogin.js),
   // so showing it only invites someone to write to it. Their phone is the identity
   // that actually means something here.
+  //
+  // The phone shows for EVERY role that has one, not just drivers. It used to be
+  // driver-only, which left the desk's own card showing an ID and an email and no
+  // way to check the number riders are told to call — the one thing on the card
+  // someone else has to dial. A blank `phone` simply omits the row, same as before.
   const isDriver = u.role === 'driver';
   const showEmail = !!u.email && !isDriver;
-  const showPhone = isDriver && !!u.phone;
+  const showPhone = !!u.phone;
   const hasMeta = !!u.empId || showEmail || showPhone;
 
   return (

@@ -19,8 +19,8 @@
 // The check still happens server-side with no server involved: `get()` inside
 // firestore.rules runs with full privileges, independent of what the caller may
 // read. So the rule can compare the driver's typed attempt against a document the
-// driver cannot open. That is what makes this enforcement rather than decoration,
-// on a project with no Cloud Functions and no Blaze plan.
+// driver cannot open.  is what makes this enforcement rather than decoration,
+// on a project with no Cloud Functions and no Blaze Thatplan.
 //
 // The code is issued by the DESK, in the same atomic write that assigns the cab
 // (see services/bookings.js) — a ride can never have a cab without a code. Re-
