@@ -28,6 +28,7 @@ import { companyLogo, SUPPORT_HELPLINE } from './src/branding';
 
 import LoginScreen from './src/screens/LoginScreen';
 import DriverLoginScreen from './src/screens/DriverLoginScreen';
+import CoordinatorLoginScreen from './src/screens/CoordinatorLoginScreen';
 import EmployeeHomeScreen from './src/screens/employee/EmployeeHomeScreen';
 import FeedbackScreen from './src/screens/employee/FeedbackScreen';
 import MyRidesScreen from './src/screens/employee/MyRidesScreen';
@@ -37,7 +38,7 @@ import RateUsScreen from './src/screens/employee/RateUsScreen';
 import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
 import ManageFleetScreen from './src/screens/admin/ManageFleetScreen';
-import ManageTimingsScreen from './src/screens/admin/ManageTimingsScreen';
+import ManageCoordinatorsScreen from './src/screens/admin/ManageCoordinatorsScreen';
 import CancelledRidesScreen from './src/screens/admin/CancelledRidesScreen';
 import NoShowsScreen from './src/screens/admin/NoShowsScreen';
 import TrackCabsScreen from './src/screens/admin/TrackCabsScreen';
@@ -76,6 +77,7 @@ const linking = {
     screens: {
       Login: '',
       DriverLogin: 'driver-login',
+      CoordinatorLogin: 'coordinator-login',
       // Employee
       EmployeeHome: 'home',
       MySchedule: 'my-schedule',
@@ -93,7 +95,7 @@ const linking = {
       ShiftPolicy: 'shift-policy',
       Bookings: 'bookings',
       ManageFleet: 'fleet',
-      ManageTimings: 'manage-timings',
+      ManageCoordinators: 'coordinators',
       CancelledRides: 'cancelled-rides',
       NoShows: 'no-shows',
       TrackCabs: 'track-cabs',
@@ -609,6 +611,11 @@ function RootNavigator() {
               component={DriverLoginScreen}
               options={{ headerShown: false }}
             />
+            <Stack.Screen
+              name="CoordinatorLogin"
+              component={CoordinatorLoginScreen}
+              options={{ headerShown: false }}
+            />
           </>
         ) : holdForCabSetup ? (
           // ---- Employee, not set up for cab service yet ----
@@ -724,14 +731,14 @@ function RootNavigator() {
                   options={{ title: 'Employee Management' }}
                 />
                 <Stack.Screen
+                  name="ManageCoordinators"
+                  component={ManageCoordinatorsScreen}
+                  options={{ title: 'Coordinators' }}
+                />
+                <Stack.Screen
                   name="AddressRequests"
                   component={AddressChangeRequestsScreen}
                   options={{ title: 'Address Change Requests' }}
-                />
-                <Stack.Screen
-                  name="ManageTimings"
-                  component={ManageTimingsScreen}
-                  options={{ title: 'Cab Routes' }}
                 />
                 <Stack.Screen
                   name="FeedbackInbox"

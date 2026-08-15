@@ -36,6 +36,9 @@ import { firestore, firebaseConfig } from './firebase';
 import {
   driverEmail, driverPhone, unassignedLoginCode, loginCodeCandidates,
 } from '../utils/driverLogin';
+import {
+  coordinatorEmail, coordinatorPhone, coordinatorAuthPassword, generatePasscode,
+} from '../utils/coordinatorLogin';
 
 // The roles an admin may hand out from the app. 'admin' is deliberately absent:
 // HR/Admin access is granted in the Firebase console only, so nobody can create
@@ -273,6 +276,38 @@ export function subscribeDrivers(cb, onError) {
   );
 }
 
+// --- Admin: manage coordinators --------------------------------------------
+//
+// A coordinator signs in with their PHONE plus a 4-digit passcode HR hands
+// over — no email, no Microsoft account, nothing to wait for. See
+// utils/coordinatorLogin.js for the scheme and why it is not the invite flow
+// employees use.
+//
+// The passcode is mirrored on employees/<uid>.loginCode, the same field a
+// driver's code lives in, so the desk can read it back out. Unlike a driver's it
+// is RANDOM, so this mirror is the only record of it: both functions below undo
+// their own half if the other fails, rather than leaving Auth and the profile
+// disagreeing about what the password is.
+
+// Live list of all coordinator accounts. Calls cb with [{ uid, ...profile }].
+//
+// Same shape as subscribeDrivers above, deliberately not folded into a shared
+// "by role" helper: both are depended on by live screens and the query is one
+// line. Every coordinator is a real account from the moment HR creates them, so
+// unlike the employee directory there is no pending/invited half to merge in.
+export function subscribeCoordinators(cb, onError) {
+  if (!firestore) {
+    cb([]);
+    return () => {};
+  }
+  const q = query(collection(firestore, 'employees'), where('role', '==', 'coordinator'));
+  return onSnapshot(
+    q,
+    (snap) => cb(snap.docs.map((d) => ({ uid: d.id, ...d.data() }))),
+    onError
+  );
+}
+
 // NOTE: driver↔cab linking lives in services/cabs.js (linkCabDriver), because the
 // COORDINATOR owns the fleet. It writes both sides together:
 //   cabs/<cabId>.driverUid  ←→  employees/<uid>.cabId
@@ -415,6 +450,100 @@ export async function adminCreateDriver({ name, phone }) {
     },
   });
   return uid;
+}
+
+// --- Coordinators: the numeric passcode --------------------------------------
+
+// Create a coordinator's account. Name and phone are all the desk types; the
+// passcode is generated here and returned so the screen can show it once, loudly.
+//
+// Deliberately NOT routed through adminCreateInvite (the employee path): an
+// invite creates nothing until the person signs in with Microsoft, so HR would
+// add a coordinator and then be unable to use them. This makes the account real
+// immediately — `allow create: … || isAdmin()` in firestore.rules covers the
+// profile write, and adminCreateAccount rolls the Auth user back if that write
+// fails, so a half-made coordinator can't survive.
+export async function adminCreateCoordinator({ name, phone }) {
+  const digits = coordinatorPhone(phone);
+  if (!digits) throw new Error('A 10-digit phone number is required.');
+  const passcode = generatePasscode();
+  const uid = await adminCreateAccount({
+    email: coordinatorEmail(digits),
+    // NOT the bare passcode: Firebase refuses a password under 6 characters, so
+    // the phone is appended to it. coordinatorAuthPassword() is the one place
+    // that rule lives — the coordinator still only types the 4 digits.
+    password: coordinatorAuthPassword(passcode, digits),
+    role: 'coordinator',
+    profile: {
+      name: String(name || '').trim(),
+      phone: digits,
+      empId: '',
+      // The desk reads this back out to them. It is the ONLY record of the
+      // passcode — nothing can recompute it — which is why rotation below
+      // reverts rather than leaving the two copies disagreeing.
+      loginCode: passcode,
+    },
+  });
+  return { uid, passcode };
+}
+
+// Issue a fresh passcode for a coordinator who has lost theirs. Returns the new
+// one for the desk to read out.
+//
+// Same trick as rotateDriverLoginCode: Firebase changes a password only for the
+// signed-in user, so we sign in AS them on the throwaway secondary app using the
+// passcode currently on file, change it, and write the mirror. The admin's own
+// session is never touched, and a fresh sign-in satisfies Firebase's "recent
+// login" requirement.
+//
+// WHY THIS ROLLS BACK AND THE DRIVER VERSION DOESN'T. A driver's code is derived
+// from cab + phone, so a failed rotation is recoverable by recomputing the
+// candidates. This one is random: if the password changed but the profile write
+// then failed, the only copy of the working passcode would be the one in memory
+// here — and the account would be unreachable the moment this function returned.
+// So the password is put back before reporting the failure.
+export async function rotateCoordinatorPasscode(uid, { phone, currentCode }) {
+  if (!firestore) throw new Error('Backend not configured.');
+  const email = coordinatorEmail(phone);
+  if (!email) throw new Error('That coordinator has no valid phone number on file.');
+  if (!currentCode) {
+    throw new Error('No passcode on file for them, so a new one cannot be issued.');
+  }
+
+  let secondary;
+  try {
+    secondary = getApp(PROVISIONER_APP);
+  } catch {
+    secondary = initializeApp(firebaseConfig, PROVISIONER_APP);
+  }
+  const secondaryAuth = getAuth(secondary);
+  const next = generatePasscode();
+  // Both the current and the replacement password carry the phone on the end —
+  // Firebase will not hold 4 characters. Only `loginCode` (the bare passcode) is
+  // ever stored or shown; the full password is derived at both ends.
+  const currentPassword = coordinatorAuthPassword(currentCode, phone);
+  const nextPassword = coordinatorAuthPassword(next, phone);
+
+  try {
+    const cred = await signInWithEmailAndPassword(secondaryAuth, email, currentPassword);
+    await updatePassword(cred.user, nextPassword);
+    try {
+      await updateDoc(doc(firestore, 'employees', uid), {
+        loginCode: next,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      // Put the old passcode back, or the one on screen stops working and the
+      // new one is lost with this stack frame.
+      await updatePassword(cred.user, currentPassword).catch((revertErr) =>
+        console.warn('[coordinator] could not revert the passcode:', revertErr?.message)
+      );
+      throw e;
+    }
+    return next;
+  } finally {
+    await signOut(secondaryAuth).catch(() => {});
+  }
 }
 
 // Change a driver's login code, in Firebase Auth and on their profile together.

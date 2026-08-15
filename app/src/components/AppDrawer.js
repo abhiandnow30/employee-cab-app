@@ -9,10 +9,10 @@
 // employee at the BOTTOM — showing just the name, which expands on tap to reveal
 // Employee ID, email, and a "Change password" action.
 //
-// EXCEPT FOR DRIVERS, who get neither: they have no password of their own and no
-// real email address. See the comment in UserCard for why offering "Change
-// password" to a driver would lock them out permanently rather than merely being
-// useless.
+// EXCEPT FOR DRIVERS AND COORDINATORS, who get neither: they sign in with a code
+// the desk issues, so they have no password of their own and no real email
+// address. See the comment in UserCard for why offering "Change password" to
+// either would lock them out permanently rather than merely being useless.
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
@@ -63,6 +63,10 @@ export const ADMIN_DRAWER_ITEMS = [
   { label: 'Upload Roster', icon: 'file-upload-outline', screen: 'RosterUpload' },
   { label: 'Shift Timings', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
+  // The transport desk itself. Its own screen rather than a role toggle inside
+  // Add Employee: a coordinator is an account but not a rider, so none of the
+  // rider fields on that form apply to them.
+  { label: 'Coordinators', icon: 'headset', screen: 'ManageCoordinators' },
   // No "Exception Approvals" here. Nothing routes to HR any more: the company runs
   // two scheduled rides and nothing else, so the requests that needed HR's
   // sign-off (a cab after an extended shift, an emergency ride) no longer exist.
@@ -79,7 +83,12 @@ export const ADMIN_DRAWER_ITEMS = [
   // render read-only for the admin role; the coordinator keeps the controls.
   { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
   { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
-  { label: 'Cab Routes', icon: 'map-marker-path', screen: 'ManageTimings' },
+  // No "Cab Routes" screen. The route list is no longer edited in the app: the
+  // monthly sheet carries a Route column, and the names it may use are the fixed
+  // list in data/mockData.js (CAB_ROUTES). canonicalRoute() still snaps a sheet
+  // spelling onto that list and still REFUSES anything not on it — so adding a
+  // new pickup area is now a code change, deliberately, rather than a field
+  // anyone can type into and split a carpool across two spellings.
   { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
   { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
   { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
@@ -209,22 +218,31 @@ function UserCard({ user, onChangePassword, onLogout }) {
   const u = user || {};
   const roleLabel = ROLE_LABEL[u.role] || 'Employee';
 
-  // A DRIVER HAS NO PASSWORD OF THEIR OWN, so this card must not offer to change
-  // one. It isn't merely a pointless row: their Firebase password IS the login code
-  // the desk issued, so changing it would succeed and leave them holding a secret
-  // the login screen cannot accept (it takes 14 digits and nothing else) and that no
-  // recovery candidate matches — locking them out for good, fixable only by deleting
-  // and re-creating the account. Their email is hidden for the same family of
-  // reasons: it is synthesized on an unroutable domain (see utils/driverLogin.js),
-  // so showing it only invites someone to write to it. Their phone is the identity
-  // that actually means something here.
+  // NEITHER A DRIVER NOR A COORDINATOR HAS A PASSWORD OF THEIR OWN, so this card
+  // must not offer to change one. It isn't merely a pointless row: their Firebase
+  // password IS the code the desk issued them, so changing it would succeed and
+  // leave them holding a secret their login screen cannot accept — a driver's
+  // takes 14 digits and nothing else, a coordinator's takes a phone plus the
+  // 4-digit passcode — locking them out for good.
   //
-  // The phone shows for EVERY role that has one, not just drivers. It used to be
-  // driver-only, which left the desk's own card showing an ID and an email and no
-  // way to check the number riders are told to call — the one thing on the card
-  // someone else has to dial. A blank `phone` simply omits the row, same as before.
-  const isDriver = u.role === 'driver';
-  const showEmail = !!u.email && !isDriver;
+  // The two differ in how recoverable that is, and both are bad. A driver's code
+  // is derived from cab + phone, so it can at least be recomputed; a
+  // coordinator's passcode is random and mirrored only on their profile, so a
+  // password changed out from under it could not be recovered at all — the
+  // account would be scrap.
+  //
+  // Their email is hidden for the same family of reasons: it is synthesized on
+  // an unroutable domain (see utils/driverLogin.js and utils/coordinatorLogin.js),
+  // so showing it only invites someone to write to it — and for a coordinator it
+  // also displays, to them, half of a credential they are supposed to think of as
+  // "my phone number". The phone is the identity that actually means something.
+  //
+  // The phone shows for EVERY role that has one. It used to be driver-only, which
+  // left the desk's own card showing an ID and an email and no way to check the
+  // number riders are told to call — the one thing on the card someone else has
+  // to dial. A blank `phone` simply omits the row, same as before.
+  const isCodeUser = u.role === 'driver' || u.role === 'coordinator';
+  const showEmail = !!u.email && !isCodeUser;
   const showPhone = !!u.phone;
   const hasMeta = !!u.empId || showEmail || showPhone;
 
@@ -282,7 +300,7 @@ function UserCard({ user, onChangePassword, onLogout }) {
 
           {/* Both actions share one row shape — same gutter, size and weight —
               so neither looks like the odd one out. */}
-          {isDriver ? null : (
+          {isCodeUser ? null : (
             <Pressable
               style={styles.accountAction}
               onPress={() => setPwOpen(true)}
@@ -343,9 +361,9 @@ function UserCard({ user, onChangePassword, onLogout }) {
         />
       </Pressable>
 
-      {/* Not mounted at all for a driver, so there is no path to it even if the row
-          above were ever restored by accident. */}
-      {isDriver ? null : (
+      {/* Not mounted at all for a code-based login, so there is no path to it even
+          if the row above were ever restored by accident. */}
+      {isCodeUser ? null : (
         <ChangePasswordDialog
           visible={pwOpen}
           onDismiss={() => setPwOpen(false)}

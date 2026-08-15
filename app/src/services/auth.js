@@ -30,6 +30,9 @@ import {
 } from 'firebase/auth';
 import { auth } from './firebase';
 import { driverEmail, phoneFromLoginCode, isDriverLoginCode } from '../utils/driverLogin';
+import {
+  coordinatorEmail, coordinatorAuthPassword, isPasscode, PASSCODE_LENGTH,
+} from '../utils/coordinatorLogin';
 
 // --- Microsoft (Entra ID / Azure AD) sign-in --------------------------------
 // Company work accounts only — see the tenant id below. Added ALONGSIDE
@@ -172,6 +175,29 @@ export function signInWithDriverCode(code) {
   if (!isDriverLoginCode(digits)) throw new Error('That login code is not complete.');
   return signInWithEmailAndPassword(auth, driverEmail(phoneFromLoginCode(digits)), digits);
 }
+
+// --- Coordinator sign-in -----------------------------------------------------
+// Phone + the 4-digit passcode the desk issued. The phone derives the account's
+// synthesized email and the passcode IS the password — see
+// utils/coordinatorLogin.js.
+//
+// Like the driver path above, nothing is read from Firestore first, so this needs
+// no rule allowing an unauthenticated lookup.
+export function signInWithCoordinatorCode(phone, passcode) {
+  if (!auth) throw new Error('Backend not configured.');
+  const email = coordinatorEmail(phone);
+  if (!email) throw new Error('Enter the full 10-digit phone number.');
+  const code = String(passcode ?? '').replace(/[^0-9]/g, '');
+  if (!isPasscode(code)) throw new Error(`The passcode is ${PASSCODE_LENGTH} digits.`);
+  // The stored password is passcode + phone — Firebase will not hold anything
+  // shorter than 6 characters. See coordinatorAuthPassword().
+  return signInWithEmailAndPassword(auth, email, coordinatorAuthPassword(code, phone));
+}
+
+// There is no password reset for a coordinator: their address is synthesized on
+// an unroutable domain, so there is no inbox for Firebase to mail. A lost
+// passcode is re-issued by the desk instead — rotateCoordinatorPasscode() in
+// services/profile.js.
 
 // Send a password-reset email. Firebase mails a secure link the user follows to
 // set a new password — we never see or handle the password ourselves.

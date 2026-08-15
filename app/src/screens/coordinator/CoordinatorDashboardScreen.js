@@ -23,13 +23,14 @@ import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, SectionList, Pressable } from 'react-native';
 import {
   Text, Card, Chip, Button, SegmentedButtons, Portal, Dialog, RadioButton,
-  Snackbar, IconButton,
+  TextInput, Snackbar, IconButton,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import Dropdown from '../../components/Dropdown';
 import RideStartCode from '../../components/RideStartCode';
 import { groupByRoute, groupByShift, rideStats } from '../../services/rides';
+import { routeKey } from '../../services/roster';
 import { cabCapacity } from '../../services/cabs';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
 import { SHIFT_COLORS, legsForShift, shiftSummary } from '../../data/shifts';
@@ -741,17 +742,41 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   ? `Home: ${routeFor.employeeAddress}`
                   : 'No home address on file — ask HR to add one.'}
               </Text>
-              {routeOptions.length === 0 ? (
-                <Text variant="bodyMedium">
-                  No routes defined yet. HR adds them on Routes & Timings.
-                </Text>
-              ) : (
-                <RadioButton.Group onValueChange={setRouteChoice} value={routeChoice}>
-                  {routeOptions.map((r) => (
-                    <RadioButton.Item key={r} label={r} value={r} />
-                  ))}
-                </RadioButton.Group>
-              )}
+              {/* Free text, not a radio list. There is no maintained route list
+                  any more — routes arrive with the monthly sheet — so this can't
+                  offer a closed set. Capitalisation and spacing are snapped to
+                  the spelling already in use on save (snapRoute in AppContext),
+                  so typing "jntu cab" at 9 PM still puts them in the JNTU group
+                  rather than a second one of their own. */}
+              <TextInput
+                label="Pickup route"
+                value={routeChoice || ''}
+                onChangeText={setRouteChoice}
+                mode="outlined"
+                placeholder="e.g. JNTU Cab"
+                autoFocus
+                left={<TextInput.Icon icon="map-marker-outline" />}
+              />
+              {routeOptions.length ? (
+                <>
+                  <Text variant="bodySmall" style={styles.dialogHint}>
+                    Tap a route already in use:
+                  </Text>
+                  <View style={styles.routeChips}>
+                    {routeOptions.map((r) => (
+                      <Chip
+                        key={r}
+                        compact
+                        selected={routeKey(routeChoice) === routeKey(r)}
+                        onPress={() => setRouteChoice(r)}
+                        style={styles.routeChip}
+                      >
+                        {r}
+                      </Chip>
+                    ))}
+                  </View>
+                </>
+              ) : null}
             </View>
           </Dialog.ScrollArea>
           <Dialog.Actions>
@@ -936,4 +961,8 @@ const styles = StyleSheet.create({
   dialogBody: { paddingVertical: 8 },
   dialogHint: { color: colors.muted, marginTop: 10, lineHeight: 18 },
   dialogLabel: { marginTop: 14, marginBottom: 4, color: colors.text },
+  // The routes already in use, offered as one-tap chips under the free-text
+  // field — typing a route in full at 9 PM is exactly when a typo happens.
+  routeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  routeChip: { marginBottom: 2 },
 });

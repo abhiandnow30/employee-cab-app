@@ -10,14 +10,14 @@
 // that failed.
 // ---------------------------------------------------------------------------
 
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as Location from 'expo-location';
 import {
   STATUS, CANCEL_STATUS, CANCEL_CUTOFF_HOURS, CAB_ROUTES,
 } from '../data/mockData';
 import {
   watchAuth, signIn, signOutUser, friendlyAuthError,
-  signInWithDriverCode,
+  signInWithDriverCode, signInWithCoordinatorCode,
   changePassword as changePasswordSvc, sendPasswordReset,
   signInWithMicrosoftPopup, signInWithMicrosoftCredential,
   linkMicrosoftPopup, linkMicrosoftCredential, unlinkMicrosoft as unlinkMicrosoftSvc,
@@ -28,11 +28,12 @@ import {
   getOrCreateProfile, subscribeProfile, adminUpdateEmployee,
   adminDeleteEmployee, subscribeEmployees,
   updateEmployeeRoute, adminCreateInvite, adminCreateDriver,
-  rotateDriverLoginCode,
+  rotateDriverLoginCode, adminCreateCoordinator, rotateCoordinatorPasscode,
 } from '../services/profile';
 import {
   driverLoginCode, driverPhone, isDriverLoginCode, cabCodePart, unassignedLoginCode,
 } from '../utils/driverLogin';
+import { coordinatorPhone, isPasscode, PASSCODE_LENGTH } from '../utils/coordinatorLogin';
 import {
   createAddressChangeRequest, subscribeMyAddressRequests,
   subscribeAllAddressRequests, REQUEST_STATUS as ADDRESS_STATUS,
@@ -77,7 +78,7 @@ import {
   subscribeMonthRosters, subscribeMyRosters, subscribeImportHistory,
   importRoster as importRosterSvc, setRosterDay, deleteImportHistoryEntry,
   addSingleEmployeeRoster as addSingleEmployeeRosterSvc,
-  addRiderForDay,
+  addRiderForDay, canonicalRoute, routeKey,
 } from '../services/roster';
 import { ridesForDate, bookingFromRide, excuseResolvedRequests } from '../services/rides';
 import {
@@ -448,6 +449,85 @@ export function AppProvider({ children }) {
     }
   }
 
+  // Sign a COORDINATOR in with their phone and the 4-digit passcode the desk
+  // issued them. No email and no Microsoft account: their Auth address is
+  // synthesized from the phone, so the two fields they type are the whole
+  // credential — see utils/coordinatorLogin.js.
+  //
+  // Both lengths are checked here as well as on the screen. A short passcode must
+  // never reach Firebase: a generic "wrong password" back from the server reads,
+  // to whoever typed it, as "the desk gave me a bad code".
+  async function loginCoordinator(phone, passcode) {
+    const digits = String(phone || '').replace(/[^0-9]/g, '');
+    const code = String(passcode || '').replace(/[^0-9]/g, '');
+    if (!coordinatorPhone(digits)) {
+      return { ok: false, message: 'Enter your full 10-digit phone number.' };
+    }
+    if (!isPasscode(code)) {
+      return { ok: false, message: `Your passcode is the ${PASSCODE_LENGTH} digits the desk gave you.` };
+    }
+    try {
+      await signInWithCoordinatorCode(digits, code);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  // Add a coordinator: a name and a phone, and that is the whole form.
+  //
+  // Unlike an employee this creates a REAL ACCOUNT immediately rather than an
+  // invite, so they can be used the moment HR saves. The passcode comes back for
+  // the screen to show — it is generated inside the service and this is the one
+  // moment it can be presented as new.
+  async function addCoordinatorAccount({ name, phone }) {
+    if (currentUser?.role !== 'admin') {
+      return { ok: false, message: 'Only HR can add a coordinator.' };
+    }
+    const cleanName = (name || '').trim();
+    const digits = coordinatorPhone(phone);
+    if (!cleanName) return { ok: false, message: "Enter the coordinator's name." };
+    if (!digits) {
+      return { ok: false, message: 'Enter a 10-digit phone number — it is half of their login.' };
+    }
+    try {
+      const { passcode } = await adminCreateCoordinator({ name: cleanName, phone: digits });
+      return { ok: true, passcode };
+    } catch (e) {
+      // One phone is one account, because the phone derives the Firebase address.
+      // Say that rather than leaking a synthesized address at whoever is reading.
+      const code = e?.code || '';
+      if (code === 'auth/email-already-in-use') {
+        return {
+          ok: false,
+          message:
+            'A coordinator already uses that phone number. Removing one deletes their profile but not their login, so a number that was used before still counts as taken.',
+        };
+      }
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  // Issue a fresh passcode for a coordinator who has lost theirs. Returns the new
+  // one to read out. There is no self-service reset: their address is on an
+  // unroutable domain, so nothing can be emailed to them.
+  async function regenerateCoordinatorPasscode(coordinator) {
+    if (currentUser?.role !== 'admin') {
+      return { ok: false, message: 'Only HR can re-issue a passcode.' };
+    }
+    const uid = coordinator?.uid;
+    if (!uid) return { ok: false, message: 'Missing coordinator.' };
+    try {
+      const passcode = await rotateCoordinatorPasscode(uid, {
+        phone: coordinator?.phone,
+        currentCode: coordinator?.loginCode,
+      });
+      return { ok: true, passcode };
+    } catch (e) {
+      return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
   async function logout() {
     stopSharingLocation();
     await signOutUser();
@@ -467,20 +547,33 @@ export function AppProvider({ children }) {
 
   // Change the signed-in user's password. Returns { ok, message }.
   //
-  // REFUSED FOR DRIVERS, and not as a matter of tidiness. A driver's Firebase
-  // password IS the login code the desk issued them; replacing it with something
-  // they chose would succeed, and then the login screen — which accepts a 14-digit
-  // code and nothing else — could never accept it again. No recovery candidate
-  // would match either (see rotateDriverLoginCode), so the account would be
-  // unrecoverable and the driver would have to be deleted and re-created. The
-  // drawer already hides the action; this is the backstop that makes a future
-  // screen, or a stale bundle, unable to reopen the hole.
+  // REFUSED FOR DRIVERS AND COORDINATORS, and not as a matter of tidiness. Their
+  // Firebase password IS the code the desk issued them; replacing it with
+  // something they chose would succeed, and then their login screen could never
+  // accept it again — a driver's takes a 14-digit code and nothing else, a
+  // coordinator's takes a phone plus the 4-digit passcode.
+  //
+  // A driver's code can at least be recomputed from cab + phone (see
+  // rotateDriverLoginCode). A coordinator's passcode is RANDOM and mirrored only
+  // on their profile, so a password changed out from under that mirror could not
+  // be recovered by anyone — rotateCoordinatorPasscode signs in with the stored
+  // code, which would no longer work. The account would be scrap.
+  //
+  // The drawer already hides the action for both; this is the backstop that makes
+  // a future screen, or a stale bundle, unable to reopen the hole.
   async function changePassword(currentPassword, newPassword) {
     if (currentUser?.role === 'driver') {
       return {
         ok: false,
         message:
           'Drivers sign in with the code from the transport desk, so there is no password to change. Your code changes when your cab changes.',
+      };
+    }
+    if (currentUser?.role === 'coordinator') {
+      return {
+        ok: false,
+        message:
+          'You sign in with your phone number and the passcode HR gave you, so there is no password to change. Ask HR to issue a new passcode if you have lost it.',
       };
     }
     try {
@@ -1622,7 +1715,10 @@ export function AppProvider({ children }) {
     try {
       await adminUpdateEmployee(uid, profile);
       if ('route' in (fields || {})) {
-        await updateEmployeeRoute(uid, route);
+        // Snapped, because this is now a free-text field: someone typing
+        // "jntu cab" must land on the "JNTU Cab" their neighbours are grouped
+        // under, not create a second one-person carpool.
+        await updateEmployeeRoute(uid, snapRoute(route));
       }
       if (typeof fields.address === 'string') {
         await syncEmployeeAddress(uid, fields.address);
@@ -1666,7 +1762,7 @@ export function AppProvider({ children }) {
       // unrouted in the first place: the only place to set a route was a
       // separate screen nobody went back to, so every new hire arrived on the
       // coordinator's board under "No route set".
-      ...(form.route ? { roster: { route: String(form.route).trim() } } : {}),
+      ...(snapRoute(form.route) ? { roster: { route: snapRoute(form.route) } } : {}),
     };
     try {
       await adminCreateInvite({
@@ -1674,7 +1770,7 @@ export function AppProvider({ children }) {
         role,
         // adminCreateInvite takes `route` flat; the nested roster map above is
         // the shape a real profile stores.
-        profile: { ...profile, route: form.route ? String(form.route).trim() : '' },
+        profile: { ...profile, route: snapRoute(form.route) || '' },
       });
       return { ok: true };
     } catch (e) {
@@ -1832,16 +1928,51 @@ export function AppProvider({ children }) {
   // The rules let HR write it, and let a coordinator write THIS FIELD ONLY.
   // See firestore.rules > employees.
 
-  // The route list HR maintains in Routes & Timings, with the built-in list as a
-  // fallback for a company that hasn't customised it yet.
-  const routeOptions = timings.routes?.length ? timings.routes : CAB_ROUTES;
+  // THE ROUTE LIST IS DERIVED FROM WHAT IS IN USE, not maintained by hand.
+  //
+  // There was a Routes & Timings screen for this once. It is gone: the monthly
+  // sheet carries a Route column, so a new pickup area arrives with the roster
+  // and having to add it in a second place first was a step that only ever got
+  // skipped — leaving the rider unrouted and the coordinator grouping them by
+  // hand every day of the month.
+  //
+  // So the vocabulary is: the built-in starter list, plus any list an older
+  // install saved to config/timings.routes, plus every route currently on an
+  // employee profile. Deduped by routeKey so a spelling variant already in the
+  // data can't add a second entry, and the first spelling seen wins — which is
+  // why the built-in names are added first.
+  //
+  // This list is not a whitelist any more. canonicalRoute() snaps onto it and
+  // ACCEPTS what it doesn't recognise (see services/roster.js); this exists so
+  // that snapping has something to snap to, and so the pickers can suggest.
+  const routeOptions = useMemo(() => {
+    const seen = new Map(); // routeKey → the spelling to show
+    const add = (value) => {
+      const text = String(value ?? '').trim();
+      if (!text) return;
+      const key = routeKey(text);
+      if (!seen.has(key)) seen.set(key, text);
+    };
+    (timings.routes?.length ? timings.routes : CAB_ROUTES).forEach(add);
+    (employees || []).forEach((e) => add(e.roster?.route));
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [timings.routes, employees]);
+
+  // One spelling, whoever typed it. A route saved by hand goes through the same
+  // snapping the roster import uses, so "jntu cab" typed on a profile becomes
+  // the "JNTU Cab" everyone else is already on rather than a second group.
+  function snapRoute(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return null;
+    return canonicalRoute(text, routeOptions) || text;
+  }
 
   async function setEmployeeRoute(uid, route) {
     if (!isDeskRole(currentUser?.role)) {
       return { ok: false, message: 'Only the transport desk can set a route.' };
     }
     try {
-      await updateEmployeeRoute(uid, route);
+      await updateEmployeeRoute(uid, snapRoute(route));
       return { ok: true };
     } catch (e) {
       return failure(e, 'Could not save that route.');
@@ -1871,27 +2002,44 @@ export function AppProvider({ children }) {
       changeRequests
     );
 
-    // ROUTE COMES FROM THE PROFILE, NOT THE ROSTER SNAPSHOT.
+    // ROUTE AND HOME ADDRESS COME FROM THE PROFILE, NOT THE ROSTER SNAPSHOT.
     //
-    // importRoster() copies each employee's route into their roster document so
-    // the coordinator and driver don't have to read profiles. That copy is right
-    // on the day of the import and wrong after it: routing someone (or moving
-    // them to another route) left every already-imported day of that month
-    // grouped under "No route set", and there was nothing HR could do about it
-    // short of re-uploading the whole sheet.
+    // importRoster() copies each employee's route and address into their roster
+    // document so the coordinator and driver don't have to read profiles. That
+    // copy is right on the day of the import and wrong after it: routing someone
+    // (or moving them to another route) left every already-imported day of that
+    // month grouped under "No route set", and there was nothing HR could do about
+    // it short of re-uploading the whole sheet.
     //
-    // The profile is the source of truth, so the live value wins here and the
-    // snapshot is only a fallback — which still covers a rostered person whose
-    // profile hasn't loaded yet.
+    // THE ADDRESS HAD THE SAME BUG, one step further along and worse, because a
+    // ride's address doesn't just get displayed — it is copied onto the booking
+    // when a cab is assigned (see assignCabToRides → bookingFromRide), and the
+    // driver navigates by it. Two ways the snapshot went stale:
+    //
+    //   • An admin edit or an approved address request. syncEmployeeAddress()
+    //     rewrites the copy on bookings that ALREADY EXIST, but a rostered day
+    //     with no booking yet still carried the old value — so assigning a cab
+    //     minted a fresh booking pointing at the old house.
+    //   • The import itself. The roster document's address is written from the
+    //     PRE-import profile while the profile is overwritten from the sheet in
+    //     the same batch, so a sheet that introduces addresses leaves the
+    //     snapshot one upload behind (roster.js, `address:` in validateRoster).
+    //
+    // The profile is the source of truth for both, so the live value wins here
+    // and the snapshot is only a fallback — which still covers a rostered person
+    // whose profile hasn't loaded yet. homeAddressOf() is reused so a saved map
+    // pin reads the same way it does everywhere else.
     if (!employees.length) return rides;
-    const routeOf = new Map(
-      employees.map((e) => [e.uid, e.roster?.route || null])
-    );
-    return rides.map((r) =>
-      routeOf.has(r.employeeId)
-        ? { ...r, route: routeOf.get(r.employeeId) || r.route || null }
-        : r
-    );
+    const profileOf = new Map(employees.map((e) => [e.uid, e]));
+    return rides.map((r) => {
+      const emp = profileOf.get(r.employeeId);
+      if (!emp) return r;
+      return {
+        ...r,
+        route: emp.roster?.route || r.route || null,
+        employeeAddress: homeAddressOf(emp) || r.employeeAddress || '',
+      };
+    });
   }
 
   // Assign a cab to DERIVED rides. Any ride that has no booking document yet is
@@ -2208,6 +2356,10 @@ export function AppProvider({ children }) {
     addDriverAccount,
     removeDriver,
     regenerateDriverCode,
+    // Coordinators — phone + a 4-digit passcode, no email, no invite.
+    loginCoordinator,
+    addCoordinatorAccount,
+    regenerateCoordinatorPasscode,
     homeAddressOf,
     myAddressRequests,
     addressRequests,

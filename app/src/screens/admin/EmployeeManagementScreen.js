@@ -16,13 +16,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import {
   Text, Card, Button, Divider, TextInput, Snackbar, HelperText,
-  IconButton, Portal, Dialog, SegmentedButtons,
+  IconButton, Portal, Dialog,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { subscribeEmployees } from '../../services/profile';
+import { subscribeEmployees, subscribeInvites } from '../../services/profile';
 import useSyncedDraft from '../../utils/useSyncedDraft';
-import Dropdown from '../../components/Dropdown';
 import { colors } from '../../theme';
 
 function draftOf(emp, homeAddressOf) {
@@ -37,13 +36,10 @@ function draftOf(emp, homeAddressOf) {
   };
 }
 
-// Fixed default contact number stamped on every new employee (change it here).
-// Kept as a constant — not the admin's own number — so it stays the same no
-// matter which admin creates the employee.
-const DEFAULT_EMPLOYEE_PHONE = '9848094029';
-
-// No `password`: nobody provisioned from here gets one. Employees and coordinators
-// sign in with Microsoft; drivers sign in with the code their cab link issues.
+// No `password`: nobody provisioned from here gets one — they sign in with
+// Microsoft. `role` is pinned to 'employee' and never changes: coordinators are
+// added on the Coordinators tab and drivers on the Drivers tab. It is still sent,
+// because adminCreateEmployee branches on it.
 const EMPTY_NEW = {
   role: 'employee', email: '', empId: '', name: '', phone: '', address: '',
   route: null,
@@ -132,20 +128,29 @@ function EmployeeCard({ emp, onSave, onDelete, homeAddressOf, routeOptions }) {
 
         {/* The route is what puts this person in a cab with their neighbours.
             Without one they sit under "No route set" on the coordinator's board
-            and have to be grouped by hand every day of the month. */}
-        <Text variant="labelLarge" style={styles.fieldLabel}>
-          Pickup route
-        </Text>
-        <Dropdown
-          value={draft.route}
-          options={routeOptions}
-          onSelect={(route) => setDraft((d) => ({ ...d, route }))}
-          compact={false}
-          placeholder="No route set — coordinator can't group this person"
-          status={draft.route ? undefined : 'error'}
-          leadingIcon="map-marker-outline"
+            and have to be grouped by hand every day of the month.
+
+            FREE TEXT, not a picker. The route list used to be maintained on a
+            Routes & Timings screen and this was a dropdown over it; that screen
+            is gone and routes now arrive with the monthly sheet, so there is no
+            fixed list to choose from. Capitalisation and spacing are snapped to
+            the spelling already in use when this saves (snapRoute in
+            AppContext), so typing "jntu cab" still lands on "JNTU Cab". */}
+        <TextInput
+          label="Pickup route"
+          value={draft.route || ''}
+          onChangeText={(route) => setDraft((d) => ({ ...d, route }))}
+          mode="outlined"
+          placeholder="e.g. JNTU Cab"
+          left={<TextInput.Icon icon="map-marker-outline" />}
+          error={!draft.route}
+          style={styles.input}
         />
-        <View style={styles.routeSpacer} />
+        <HelperText type={draft.route ? 'info' : 'error'} visible>
+          {draft.route
+            ? 'Usually set by the monthly roster upload. Edit it here only to correct one person.'
+            : "No route set — the coordinator can't group this person into a cab."}
+        </HelperText>
 
         {msg ? (
           <HelperText type={msg.startsWith('Saved') ? 'info' : 'error'} visible>
@@ -168,22 +173,36 @@ function EmployeeCard({ emp, onSave, onDelete, homeAddressOf, routeOptions }) {
   );
 }
 
-// The "Add person" dialog — creates a login account + profile for an EMPLOYEE or
-// a DRIVER. Drivers previously had no provisioning route at all: this dialog
-// always created employees, and the self-signup screen was only reachable by
-// typing a URL, so on a phone a driver account couldn't be created.
-function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', routeOptions = [] }) {
-  const [form, setForm] = useState(() => ({ ...EMPTY_NEW, phone: defaultPhone }));
+// The "Add employee" dialog — creates a profile for an EMPLOYEE, and nothing
+// else. Every field here is a rider's: an employee id, a home address to be
+// collected from, a route to be grouped on.
+//
+// It had a role selector once, and neither of the other two roles belonged in
+// it. A DRIVER isn't a Microsoft account at all — no email, no employee id, no
+// address, no route — and a COORDINATOR is an account but not a rider, so
+// picking that tab blanked half the form. Each now has its own screen
+// (ManageDriversScreen, ManageCoordinatorsScreen); this one asks six questions
+// and means all six.
+//
+// DRIVERS ARE NOT CREATED HERE. This dialog offered a Driver role once, which
+// put two different provisioning routes on two different screens for the same
+// thing. A driver isn't a rider and isn't a Microsoft account — no email, no
+// employee id, no address, no route — so it shared almost nothing with this form
+// beyond a name and a phone. They're created on the Drivers tab
+// (ManageDriversScreen), which is also where the cab link that issues their
+// login code lives. One account, one place.
+// The phone starts EMPTY. It used to be pre-filled with one fixed company
+// number, which meant every profile created here shipped with somebody else's
+// number on it unless the admin noticed and replaced it — and a wrong number
+// looks exactly like a right one.
+function AddEmployeeDialog({ visible, onDismiss, onCreate, routeOptions = [] }) {
+  const [form, setForm] = useState(() => ({ ...EMPTY_NEW }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const setField = (key) => (t) => setForm((f) => ({ ...f, [key]: t }));
-  const isDriver = form.role === 'driver';
-  const isCoordinator = form.role === 'coordinator';
-  // Only employees ride in cabs, so only they need an ID and a home address.
-  const needsRiderFields = !isDriver && !isCoordinator;
 
   function close() {
-    setForm({ ...EMPTY_NEW, phone: defaultPhone });
+    setForm({ ...EMPTY_NEW });
     setError('');
     setBusy(false);
     onDismiss();
@@ -192,25 +211,13 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
   async function submit() {
     setError('');
     // Validate up front so the admin gets a clear message instead of a raw
-    // Firebase error after a round-trip.
-    //
-    // A DRIVER HAS NO EMAIL. Their phone derives the address Firebase keys the
-    // account by and is half of the code they sign in with, so it is the required
-    // field for them and the email is not asked for at all.
-    if (isDriver) {
-      if (!form.name.trim()) {
-        setError("The driver's name is required.");
-        return;
-      }
-      if (form.phone.replace(/[^0-9]/g, '').length !== 10) {
-        setError('A 10-digit phone number is required — it is half of their login code.');
-        return;
-      }
-    } else if (!form.email.trim()) {
+    // Firebase error after a round-trip. The email is what their Microsoft
+    // sign-in has to match, so it is required for everyone this dialog creates.
+    if (!form.email.trim()) {
       setError('Email is required.');
       return;
     }
-    if (needsRiderFields && !form.empId.trim()) {
+    if (!form.empId.trim()) {
       setError('Employee ID is required.');
       return;
     }
@@ -227,68 +234,35 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
   return (
     <Portal>
       <Dialog visible={visible} onDismiss={close} style={styles.dialog}>
-        <Dialog.Title>
-          Add {isDriver ? 'Driver' : isCoordinator ? 'Coordinator' : 'Employee'}
-        </Dialog.Title>
+        <Dialog.Title>Add Employee</Dialog.Title>
         <Dialog.ScrollArea>
           <View style={styles.dialogBody}>
             <Text variant="bodySmall" style={styles.dialogHint}>
-              {isDriver
-                ? 'A name and a phone number is all it takes. No email, no password: they sign in with a code — the last 4 digits of their cab number plus this phone — which is issued when the coordinator links them to a cab.'
-                : 'No password is created. They sign in with their company Microsoft account and their profile is set up automatically the first time — just make sure the email below is right.'}
+              No password is created. They sign in with their company Microsoft
+              account and their profile is set up automatically the first time —
+              just make sure the email below is right.
             </Text>
 
-            <SegmentedButtons
-              value={form.role}
-              onValueChange={(role) => setForm((f) => ({ ...f, role }))}
-              density="small"
-              style={styles.roleRow}
-              buttons={[
-                { value: 'employee', label: 'Employee', icon: 'account' },
-                { value: 'driver', label: 'Driver', icon: 'account-tie-hat' },
-                { value: 'coordinator', label: 'Coordinator', icon: 'headset' },
-              ]}
+            {/* An employee is identified by their company address — it is what
+                their Microsoft sign-in has to match. There is no password field:
+                see the dialog hint above. */}
+            <TextInput
+              label="Email (login)"
+              value={form.email}
+              onChangeText={(t) => setField('email')(t.trim())}
+              mode="outlined"
+              autoCapitalize="none"
+              keyboardType="email-address"
+              style={styles.input}
             />
-            {isDriver ? (
-              <HelperText type="info" visible style={styles.pwHint}>
-                The coordinator links this driver to a cab on the Cabs tab — that's
-                what turns on their live location AND gives them a login code. Until
-                then they cannot sign in.
-              </HelperText>
-            ) : null}
-            {isCoordinator ? (
-              <HelperText type="info" visible style={styles.pwHint}>
-                Coordinators run the daily cab assignment and resolve change
-                requests. They can't upload rosters or change policy.
-              </HelperText>
-            ) : null}
-            {/* Everyone EXCEPT a driver. Employees and coordinators are identified
-                by their company address (it is what their Microsoft sign-in has to
-                match); a driver's address is synthesized from their phone and
-                nobody ever types or reads it. There is no password field for anyone
-                any more — see the dialog hint above. */}
-            {isDriver ? null : (
-              <TextInput
-                label="Email (login)"
-                value={form.email}
-                onChangeText={(t) => setField('email')(t.trim())}
-                mode="outlined"
-                autoCapitalize="none"
-                keyboardType="email-address"
-                style={styles.input}
-              />
-            )}
-            {/* Only employees ride, so only they get an ID and home address. */}
-            {needsRiderFields ? (
-              <TextInput
-                label="Employee ID"
-                value={form.empId}
-                onChangeText={setField('empId')}
-                mode="outlined"
-                placeholder="e.g. 1399"
-                style={styles.input}
-              />
-            ) : null}
+            <TextInput
+              label="Employee ID"
+              value={form.empId}
+              onChangeText={setField('empId')}
+              mode="outlined"
+              placeholder="e.g. 1399"
+              style={styles.input}
+            />
             <TextInput
               label="Name"
               value={form.name}
@@ -297,7 +271,7 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
               style={styles.input}
             />
             <TextInput
-              label={isDriver ? 'Phone (part of their login code)' : 'Phone'}
+              label="Phone"
               value={form.phone}
               onChangeText={(t) => setField('phone')(t.replace(/[^0-9]/g, ''))}
               mode="outlined"
@@ -305,39 +279,37 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, defaultPhone = '', ro
               maxLength={10}
               style={styles.input}
             />
-            {needsRiderFields ? (
-              <TextInput
-                label="Home Address"
-                value={form.address}
-                onChangeText={setField('address')}
-                mode="outlined"
-                multiline
-                placeholder="Flat / House, Street, Area, City, Pincode"
-                style={styles.input}
-              />
-            ) : null}
+            <TextInput
+              label="Home Address"
+              value={form.address}
+              onChangeText={setField('address')}
+              mode="outlined"
+              multiline
+              placeholder="Flat / House, Street, Area, City, Pincode"
+              style={styles.input}
+            />
             {/* Route them now. This is the only moment when someone is guaranteed
                 to be thinking about where this person lives — asking later is what
-                left the coordinator's board full of unrouted riders. */}
-            {needsRiderFields ? (
-              <>
-                <Text variant="labelLarge" style={styles.fieldLabel}>
-                  Pickup route
-                </Text>
-                <Dropdown
-                  value={form.route}
-                  options={routeOptions}
-                  onSelect={(route) => setForm((f) => ({ ...f, route }))}
-                  compact={false}
-                  placeholder="Choose the pickup route"
-                  leadingIcon="map-marker-outline"
-                />
-                <HelperText type="info" visible style={styles.pwHint}>
-                  The coordinator groups the day's cabs by route. You can change it
-                  later on this employee's card below.
-                </HelperText>
-              </>
-            ) : null}
+                left the coordinator's board full of unrouted riders.
+
+                Free text for the same reason as the card above — there is no
+                maintained route list any more. `routeOptions` is still passed in
+                so the current areas can be shown as a hint; typing one of them
+                (in any capitalisation) snaps onto it when it saves. */}
+            <TextInput
+              label="Pickup route"
+              value={form.route || ''}
+              onChangeText={(route) => setForm((f) => ({ ...f, route }))}
+              mode="outlined"
+              placeholder="e.g. JNTU Cab"
+              left={<TextInput.Icon icon="map-marker-outline" />}
+              style={styles.input}
+            />
+            <HelperText type="info" visible style={styles.pwHint}>
+              {routeOptions.length
+                ? `The coordinator groups the day's cabs by route. In use: ${routeOptions.join(', ')}.`
+                : "The coordinator groups the day's cabs by route."}
+            </HelperText>
             {error ? <HelperText type="error" visible>{error}</HelperText> : null}
           </View>
         </Dialog.ScrollArea>
@@ -358,6 +330,13 @@ export default function EmployeeManagementScreen() {
     routeOptions,
   } = useApp();
   const [employees, setEmployees] = useState([]);
+  // People HR (or a roster upload) has invited who have never signed in. They
+  // have NO uid yet — a profile only exists from their first Microsoft sign-in —
+  // so they are not in `employees` and cannot be edited here. Listed anyway,
+  // because leaving them out is what made a roster upload look like it had
+  // silently dropped somebody: their invite was filed, and this screen showed no
+  // sign of it until they happened to sign in.
+  const [invites, setInvites] = useState([]);
   const [error, setError] = useState('');
   const [snack, setSnack] = useState('');
   const [addOpen, setAddOpen] = useState(false);
@@ -367,6 +346,26 @@ export default function EmployeeManagementScreen() {
 
   useEffect(() => {
     const unsub = subscribeEmployees(setEmployees, (e) => setError(e.message));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    // EMPLOYEE INVITES ONLY. An invite carries the role it was filed under
+    // (adminCreateInvite writes it, and claimInvite copies it onto the profile),
+    // so this has to match on that role exactly. It was written as "anything that
+    // isn't a driver" back when coordinators were also created from this screen —
+    // which was wrong in both directions once they moved to their own page:
+    // drivers are never invited at all (adminCreateDriver makes the account
+    // outright, and adminInviteEmployees refuses the role), so it guarded against
+    // something that cannot exist while letting coordinators through onto a list
+    // of employees.
+    //
+    // Non-fatal on error: this screen then shows real employees only, which is
+    // what it did before. Not worth blocking the whole page over.
+    const unsub = subscribeInvites(
+      (list) => setInvites(list.filter((i) => (i.role || 'employee') === 'employee')),
+      () => setInvites([])
+    );
     return unsub;
   }, []);
 
@@ -394,6 +393,21 @@ export default function EmployeeManagementScreen() {
     });
   }, [employees, search]);
 
+  // The same search narrows the pending list, so "where is Abhilasha" finds her
+  // whether or not she has signed in yet.
+  const shownInvites = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return invites;
+    const words = q.split(/\s+/);
+    return invites.filter((i) => {
+      const haystack = [i.name, i.email, i.empId, i.phone, i.route, i.address]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return words.every((w) => haystack.includes(w));
+    });
+  }, [invites, search]);
+
   async function handleSave(uid, fields) {
     setError('');
     const res = await adminSaveEmployee(uid, fields);
@@ -408,11 +422,7 @@ export default function EmployeeManagementScreen() {
     setError('');
     const res = await adminCreateEmployee(form);
     if (res?.ok) {
-      const who =
-        form.role === 'driver' ? 'Driver'
-        : form.role === 'coordinator' ? 'Coordinator'
-        : 'Employee';
-      setSnack(`${who} ${form.name || form.email} created.`);
+      setSnack(`Employee ${form.name || form.email} created.`);
     }
     return res;
   }
@@ -437,7 +447,7 @@ export default function EmployeeManagementScreen() {
             profile — they can't edit it.
           </Text>
           <Button mode="contained" icon="account-plus" onPress={() => setAddOpen(true)}>
-            Add Employee / Driver
+            Add Employee
           </Button>
         </View>
         <View style={styles.searchRow}>
@@ -475,6 +485,42 @@ export default function EmployeeManagementScreen() {
             />
           )}
           contentContainerStyle={styles.list}
+          /* Invited, never signed in. Shown ABOVE the real employees rather than
+             mixed into them: nothing on these can be edited, because there is no
+             employees/<uid> document to write to yet. What they answer is "where
+             did the person I just uploaded go?" */
+          ListHeaderComponent={
+            shownInvites.length ? (
+              <View style={styles.pendingBox}>
+                <View style={styles.pendingHead}>
+                  <MaterialCommunityIcons
+                    name="account-clock-outline"
+                    size={17}
+                    color={colors.primary}
+                  />
+                  <Text variant="labelLarge" style={styles.pendingTitle}>
+                    {shownInvites.length} invited · waiting for their first sign-in
+                  </Text>
+                </View>
+                <Text variant="bodySmall" style={styles.pendingHint}>
+                  Their details are saved. They become full profiles — and their
+                  shifts import — the first time they open the app and choose
+                  “Sign in with Microsoft”. Nothing to do here.
+                </Text>
+                {shownInvites.map((i) => (
+                  <View key={i.email} style={styles.pendingRow}>
+                    <Text variant="bodySmall" style={styles.pendingName} numberOfLines={1}>
+                      {i.name || i.email}
+                      {i.empId ? ` · ${i.empId}` : ''}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.pendingEmail} numberOfLines={1}>
+                      {i.email}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.empty}>
               <MaterialCommunityIcons
@@ -501,7 +547,6 @@ export default function EmployeeManagementScreen() {
         visible={addOpen}
         onDismiss={() => setAddOpen(false)}
         onCreate={handleCreate}
-        defaultPhone={DEFAULT_EMPLOYEE_PHONE}
         routeOptions={routeOptions}
       />
 
@@ -561,6 +606,23 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, backgroundColor: colors.surface },
   searchCount: { color: colors.muted },
   list: { padding: 12 },
+
+  // Invited-but-not-signed-in block, above the editable employee cards.
+  pendingBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: '#F2F6FF',
+    padding: 14,
+    marginBottom: 14,
+  },
+  pendingHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pendingTitle: { color: colors.text },
+  pendingHint: { color: colors.muted, lineHeight: 18, marginTop: 4, marginBottom: 6 },
+  pendingRow: { paddingVertical: 4 },
+  pendingName: { fontWeight: '600', color: colors.text },
+  pendingEmail: { color: colors.muted },
+
   card: { marginBottom: 12 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   cardHeadText: { flex: 1 },
@@ -569,7 +631,6 @@ const styles = StyleSheet.create({
   divider: { marginVertical: 10 },
   input: { marginBottom: 10 },
   fieldLabel: { opacity: 0.8, marginBottom: 6 },
-  routeSpacer: { height: 10 },
   pwHint: { marginTop: -8, marginBottom: 2 },
   saveBtn: { marginTop: 2 },
   error: { color: colors.danger, paddingHorizontal: 12 },
@@ -578,5 +639,4 @@ const styles = StyleSheet.create({
   dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
   dialogBody: { paddingVertical: 8 },
   dialogHint: { opacity: 0.7, marginBottom: 12 },
-  roleRow: { marginBottom: 12 },
 });

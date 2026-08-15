@@ -15,7 +15,7 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import {
-  Text, Card, Chip, FAB, Divider, Button, Portal, Dialog, TextInput,
+  Text, Card, Chip, Divider, Button, Portal, Dialog, TextInput,
   HelperText, Snackbar,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -234,14 +234,10 @@ export default function MyRidesScreen({ navigation }) {
         />
       )}
 
-      {/* Rides come from the roster, so there's nothing to "book" — the action
-          available here is flagging a change to one. */}
-      <FAB
-        icon="calendar-edit"
-        label="Change request"
-        style={styles.fab}
-        onPress={() => navigation.navigate('ChangeRequest')}
-      />
+      {/* No "Change request" button here any more. It floated over the list on a
+          screen whose own actions live on the ride cards, and it was the third
+          way into the same form — Home and Weekly Schedule both still offer it,
+          which is where somebody is when they realise a shift is wrong. */}
       </View>
 
       {/* Confirm the cancellation, and take the reason. The ride's date, time
@@ -362,7 +358,6 @@ const styles = StyleSheet.create({
   closedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
   closedText: { color: colors.warning, flex: 1 },
   cancelledNote: { marginTop: 6, fontStyle: 'italic', color: colors.danger },
-  fab: { position: 'absolute', right: 16, bottom: 16 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   emptyTitle: { marginBottom: 6 },
   emptyText: { textAlign: 'center', opacity: 0.7 },

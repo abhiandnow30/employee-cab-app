@@ -4,9 +4,14 @@
 // HR uploads one spreadsheet per month in the matrix layout every transport desk
 // already uses:
 //
-//   Employee ID | Employee Name | 01-Jul | 02-Jul | ... | 31-Jul
-//   ------------|---------------|--------|--------|-----|-------
-//   1399        | Raghu         | E      | E      | ... | WO
+//   Employee ID | Employee Name | 01-Jul-2026 | 02-Jul-2026 | ... | 31-Jul-2026
+//   ------------|---------------|-------------|-------------|-----|------------
+//   1399        | Raghu         | E           | E           | ... | WO
+//
+// The date headers are the ONLY statement of which month and year the sheet is
+// for — nobody picks a period in the UI — so they have to carry a year. Real
+// Excel date cells, ISO, "01-Jul-2026" and "01-07-2026" all do; a bare "01-Jul"
+// does not, and is refused rather than guessed at. See parseRosterFile().
 //
 // The pipeline is deliberately three separate steps so HR always sees what will
 // happen before anything is written:
@@ -58,6 +63,16 @@ function fromExcelSerial(n) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+// "26" → 2026. Two-digit years only ever turn up in hand-typed headers; the
+// pivot matches the window fromExcelSerial already accepts (~1954..2064), so the
+// two agree about what counts as a plausible roster year.
+function expandYear(n) {
+  if (!Number.isFinite(n)) return null;
+  if (n >= 1000) return n;
+  if (n >= 100) return null; // "126" is a typo, not a year
+  return n <= 64 ? 2000 + n : 1900 + n;
+}
+
 // Recognise the header cells that hold a date. Accepts, in order of reliability:
 //   • a real Date cell (what Excel produces once it has touched the file)
 //   • an Excel date serial number
@@ -65,15 +80,22 @@ function fromExcelSerial(n) {
 //   • "2026-07-01" (ISO)
 //   • "01/07", "01-07-2026" (day first — matches the "01-Jul" convention)
 //   • a bare day number, when other columns pin the month down
-// Returns { day, monthIndex } or null.
+//
+// Returns { day, monthIndex, year } or null. `monthIndex` and `year` are null
+// when the cell genuinely doesn't carry them — a bare "12" says neither, and the
+// template's own "01-Jul" convention says no year. Everything else here does
+// carry a year, and it used to be parsed and thrown away; the caller now votes on
+// it so the roster period comes from the file instead of from a dropdown.
 function parseDateHeader(raw) {
-  // A genuine date cell — unambiguous, so it wins.
+  // A genuine date cell — unambiguous, so it wins. This is the common case in
+  // practice: the moment HR opens the template in Excel and saves it, "01-Jul"
+  // becomes a real date cell carrying the year Excel resolved it to.
   if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
-    return { day: raw.getDate(), monthIndex: raw.getMonth() };
+    return { day: raw.getDate(), monthIndex: raw.getMonth(), year: raw.getFullYear() };
   }
   if (typeof raw === 'number') {
     const d = fromExcelSerial(raw);
-    if (d) return { day: d.getDate(), monthIndex: d.getMonth() };
+    if (d) return { day: d.getDate(), monthIndex: d.getMonth(), year: d.getFullYear() };
   }
 
   const s = String(raw ?? '').trim();
@@ -85,7 +107,7 @@ function parseDateHeader(raw) {
     const day = parseInt(iso[3], 10);
     const monthIndex = parseInt(iso[2], 10) - 1;
     if (day >= 1 && day <= 31 && monthIndex >= 0 && monthIndex <= 11) {
-      return { day, monthIndex };
+      return { day, monthIndex, year: parseInt(iso[1], 10) };
     }
     return null;
   }
@@ -97,7 +119,14 @@ function parseDateHeader(raw) {
     const monthIndex = MONTHS.findIndex(
       (mo) => mo.toLowerCase() === m[2].slice(0, 3).toLowerCase()
     );
-    if (day >= 1 && day <= 31 && monthIndex >= 0) return { day, monthIndex };
+    if (day >= 1 && day <= 31 && monthIndex >= 0) {
+      // The year is optional and usually absent — "01-Jul" is what the template
+      // ships. Read only a trailing year, so a heading like "01-Jul (Wed)" still
+      // parses as a date with no year rather than failing outright: the pattern
+      // above is deliberately unanchored and that tolerance is worth keeping.
+      const trailing = /^[-/\s,]+(\d{2,4})\s*$/.exec(s.slice(m[0].length));
+      return { day, monthIndex, year: trailing ? expandYear(parseInt(trailing[1], 10)) : null };
+    }
     return null;
   }
   // 01/07, 01-07, 01/07/2026, 01-07-2026 — day first, matching "01-Jul".
@@ -105,14 +134,16 @@ function parseDateHeader(raw) {
   if (m) {
     const day = parseInt(m[1], 10);
     const monthIndex = parseInt(m[2], 10) - 1;
-    if (day >= 1 && day <= 31 && monthIndex >= 0 && monthIndex <= 11) return { day, monthIndex };
+    if (day >= 1 && day <= 31 && monthIndex >= 0 && monthIndex <= 11) {
+      return { day, monthIndex, year: m[3] ? expandYear(parseInt(m[3], 10)) : null };
+    }
     return null;
   }
   // A bare day number — only usable when other columns pin the month down.
   m = /^(\d{1,2})$/.exec(s);
   if (m) {
     const day = parseInt(m[1], 10);
-    if (day >= 1 && day <= 31) return { day, monthIndex: null };
+    if (day >= 1 && day <= 31) return { day, monthIndex: null, year: null };
   }
   return null;
 }
@@ -161,10 +192,25 @@ function findColumn(header, patterns, taken) {
 
 // Parse an .xlsx / .xls / .csv file into rows of { empId, name, days }.
 //
-// `data` is an ArrayBuffer (browser File.arrayBuffer()). `year` pins the year,
-// which spreadsheets in this format never carry.
+// `data` is an ArrayBuffer (browser File.arrayBuffer()).
+//
+// THE ROSTER PERIOD COMES FROM THE FILE. Both the month and the year are voted
+// on from the date headers, so HR uploads a sheet and the app works out what
+// month it is — there is nothing to pick and nothing to get wrong. The year used
+// to be supplied by a dropdown on the screen, on the belief that these headers
+// never carry one. They usually do: a real date cell, an Excel serial, an ISO
+// header and "01-07-2026" all carry a year, and it was being parsed and
+// discarded. Only the bare "01-Jul" convention genuinely lacks one.
+//
+// `year` is now a FALLBACK for that last case, for callers outside the upload
+// screen. The screen passes nothing, so a sheet whose headers carry no year is
+// refused with an error naming what's missing rather than being silently
+// imported into whatever year the app happened to guess — writing a month key is
+// destructive (rosters/<month>_<uid> is overwritten) and must never rest on an
+// assumption.
+//
 // Throws on anything that isn't a readable roster — that's "Invalid file format".
-export function parseRosterFile(data, { year, fileName = '' } = {}) {
+export function parseRosterFile(data, { year: fallbackYear, fileName = '' } = {}) {
   let book;
   try {
     // cellDates matters more than it looks: the moment HR opens the template in
@@ -235,16 +281,51 @@ export function parseRosterFile(data, { year, fileName = '' } = {}) {
     );
   }
   const monthIndex = parseInt(votes[0][0], 10);
+
+  // Now the year, the same way — majority of the columns that agreed on the
+  // month, so a stray "01-Jul-2025" in a July 2026 sheet can't decide it.
+  // Columns carrying no year at all (the "01-Jul" convention) simply don't vote.
+  const yearVotes = {};
+  dateCols.forEach((d) => {
+    if (d.monthIndex !== monthIndex) return;
+    if (d.year != null) yearVotes[d.year] = (yearVotes[d.year] || 0) + 1;
+  });
+  const yearWinner = Object.entries(yearVotes).sort((a, b) => b[1] - a[1])[0];
+  const detectedYear = yearWinner ? parseInt(yearWinner[0], 10) : null;
+  const year = detectedYear ?? fallbackYear ?? null;
+  if (year == null) {
+    // Say what was actually seen and how to fix it. "Add a year" is useless
+    // without telling them which cells the app is looking at.
+    const sample = dateCols
+      .slice(0, 4)
+      .map((d) => String(grid[headerIndex][d.col] ?? '').trim())
+      .filter(Boolean)
+      .join(', ');
+    throw new Error(
+      "Could not tell which YEAR this roster is for. The date headers say which " +
+        'month, but carry no year' +
+        (sample ? ` — they read: ${sample}.` : '.') +
+        ' Use headers that include the year ("01-Jul-2026", "01-07-2026" or ' +
+        '"2026-07-01"), or open the sheet in Excel and format that row as real ' +
+        'dates, then upload it again.'
+    );
+  }
+
   const month = `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
 
-  // Days that don't belong to the detected month are "Incorrect dates".
+  // Days that don't belong to the detected month are "Incorrect dates" — and now
+  // that headers can carry a year, a column dated to a DIFFERENT year is out of
+  // range for exactly the same reason a wrong month is. Without this a stray
+  // "15-Jul-2025" column would import as 15 July 2026.
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const inPeriod = (d) =>
+    (d.monthIndex == null || d.monthIndex === monthIndex) &&
+    (d.year == null || d.year === year) &&
+    d.day <= daysInMonth;
   const badDateHeaders = dateCols
-    .filter((d) => (d.monthIndex != null && d.monthIndex !== monthIndex) || d.day > daysInMonth)
+    .filter((d) => !inPeriod(d))
     .map((d) => String(grid[headerIndex][d.col]));
-  const usableCols = dateCols.filter(
-    (d) => (d.monthIndex == null || d.monthIndex === monthIndex) && d.day <= daysInMonth
-  );
+  const usableCols = dateCols.filter(inPeriod);
 
   // A day between 1 and daysInMonth with no usableCols entry at all means its
   // header cell never parsed as a date — the most common cause is a merged
@@ -448,6 +529,13 @@ export function parseRosterFile(data, { year, fileName = '' } = {}) {
   return {
     month,
     monthLabel: `${MONTHS[monthIndex]} ${year}`,
+    // The detected period, broken out so the screen can show it back to HR
+    // ("Detected roster period: August 2026") rather than making them trust an
+    // unexplained month key. `yearDetected` is false only when the fallback was
+    // used, which the upload screen never does.
+    year,
+    monthIndex,
+    yearDetected: detectedYear != null,
     daysInMonth,
     dayKeys: usableCols.map((d) => String(d.day).padStart(2, '0')).sort(),
     rows,
@@ -503,17 +591,21 @@ export const ERROR_KINDS = {
   // header cell in the spreadsheet. Distinct from BAD_DATE, which is a header
   // that DID parse, just to the wrong month/an out-of-range day.
   MISSING_DAY_COLUMN: 'Missing day column',
-  NO_ACCOUNT: 'No account yet',
+  // A warning, never an error. The person is invited automatically on import;
+  // what this reports is that their SHIFTS wait, because rosters/<month>_<uid>
+  // needs a uid and that only exists after their first Microsoft sign-in.
+  NO_ACCOUNT: 'Invited — shifts import after their first sign-in',
   ID_MISMATCH: 'Employee ID does not match',
   // A warning, never an error: the month still imports, but every ride it
   // produces for this person lands under "No route set" on the coordinator's
   // board until somebody routes them. Silent, this is the gap that made the
   // coordinator group people by hand — so HR gets told before they import.
   NO_ROUTE: 'No pickup route',
-  // The sheet named a route that isn't in Routes & Timings. Also a warning: the
-  // shifts are fine, but the route isn't written, because inventing one from a
-  // spreadsheet is how an area ends up with three spellings.
-  UNKNOWN_ROUTE: 'Route not in your list',
+  // The sheet named a pickup area nobody is on yet. A warning, never an error:
+  // the route IS written now — the sheet is how new areas arrive — but a brand
+  // new name is also exactly what a typo looks like, so HR is told before they
+  // import rather than discovering a one-person carpool later.
+  UNKNOWN_ROUTE: 'New pickup route',
 };
 
 // --- Pickup routes: one spelling, whatever the sheet says --------------------
@@ -528,16 +620,37 @@ export const ERROR_KINDS = {
 // rather than by comparing case-insensitively everywhere: normalise once and every
 // consumer downstream — grouping, the dropdown, search — keeps working on an exact
 // match, because only one spelling ever reaches the database.
-function routeKey(value) {
+export function routeKey(value) {
   return String(value ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
 }
 
-// "jntu  cab" → "JNTU Cab" (the configured spelling), or null if it matches none.
+// "jntu  cab" → "JNTU Cab" (the spelling already in use), or the value as typed
+// when it matches nothing.
+//
+// This used to return null for an unrecognised route, and the caller dropped it —
+// back when the route list was hand-maintained on a Routes & Timings screen and
+// anything off that list had to be a mistake. That screen is gone: routes now
+// arrive with the roster, and `routeOptions` is derived from what is actually in
+// use (see AppContext). So a name nobody is on yet is a NEW AREA, not an error,
+// and refusing it would mean a new pickup area could never be created at all.
+//
+// The anti-drift guarantee is unchanged and is the whole point of this function:
+// matching is on routeKey(), so "jntu  cab", "JNTU CAB" and "Jntu Cab" all snap
+// onto the one existing spelling. Only a genuinely new key creates a new route.
 export function canonicalRoute(value, routeOptions) {
   const key = routeKey(value);
   if (!key) return null;
   const match = (routeOptions || []).find((r) => routeKey(r) === key);
-  return match || null;
+  return match || String(value).trim();
+}
+
+// Is this a pickup area nobody is on yet? Used to report a new route rather than
+// silently accept it — a new name and a typo are indistinguishable to the code,
+// so the person reading the validation summary gets to tell them apart.
+export function isNewRoute(value, routeOptions) {
+  const key = routeKey(value);
+  if (!key) return false;
+  return !(routeOptions || []).some((r) => routeKey(r) === key);
 }
 
 // Check the parsed rows against the real employee list and the shift policy.
@@ -556,8 +669,9 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
   const validCodes = new Set(
     Object.keys(policy || {}).length ? Object.keys(policy) : ALL_SHIFT_CODES
   );
-  // Distinct route names the sheet used that aren't configured — reported once for
-  // the whole file rather than as the same warning on twenty rows.
+  // Distinct pickup areas this sheet INTRODUCES — nobody is on them yet.
+  // Reported once for the whole file rather than as the same warning on twenty
+  // rows. They are written; this is a "did you mean that?", not a rejection.
   const unknownRoutes = new Set();
 
   // Match on employee id first (stable), then on name as a fallback for desks
@@ -603,15 +717,21 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
       // whether the sheet gave us enough to create them.
       const emailLooksReal = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(row.email || '');
       if (emailLooksReal && row.name) {
-        // Everything needed to provision this person is in the file, so this is a
-        // job to do rather than an error to fix. The upload screen offers to create
-        // them; only then do their shifts import.
-        // Flagged as creatable so a future bulk-provision step can pick these up.
-        // The message deliberately does NOT promise a button that doesn't exist
-        // yet — it just states what's true: no account, and here's the address on
-        // file for them.
+        // A WARNING, NOT AN ERROR. Everything needed to provision this person is
+        // in the file, and Import now files their invite automatically, so there
+        // is nothing for HR to go and fix — which is what an error means on this
+        // screen. It stays visible because one thing IS still true and matters:
+        // their shifts cannot be written yet.
+        //
+        // Not a fixable problem, a physical one. A roster row lives at
+        // rosters/<month>_<uid> and a uid only exists once that person has signed
+        // in with Microsoft at least once, so until they do there is no key to
+        // write under. Their invite is filed, they appear in Employees as
+        // pending, and their shifts land the first time they sign in — the
+        // validation report re-derives off the live employee list, so it happens
+        // with no re-upload.
         creatable = true;
-        errors.push(`${ERROR_KINDS.NO_ACCOUNT} (${row.email})`);
+        warnings.push(`${ERROR_KINDS.NO_ACCOUNT} (${row.email})`);
       } else {
         if (!row.empId) errors.push(ERROR_KINDS.MISSING_ID);
         errors.push(
@@ -665,14 +785,14 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
     }
 
     // -- pickup route --
-    // Whatever the sheet spelled it, store the CONFIGURED spelling, so a stray
-    // capital can't split a carpool. A value matching nothing in Routes & Timings
-    // is reported and then ignored — better an unrouted rider HR can see than a
-    // second spelling of an area nobody notices.
+    // Whatever the sheet spelled it, store the spelling already in use, so a
+    // stray capital can't split a carpool. A name nobody is on yet is accepted
+    // as a new pickup area — the sheet is how routes arrive now — but reported,
+    // because a new area and a typo look identical from here.
     const sheetRoute = canonicalRoute(row.sheetRoute, routeOptions);
-    if (row.sheetRoute && !sheetRoute) {
-      unknownRoutes.add(String(row.sheetRoute).trim());
-      warnings.push(`${ERROR_KINDS.UNKNOWN_ROUTE} ("${String(row.sheetRoute).trim()}")`);
+    if (sheetRoute && isNewRoute(row.sheetRoute, routeOptions)) {
+      unknownRoutes.add(sheetRoute);
+      warnings.push(`${ERROR_KINDS.UNKNOWN_ROUTE} ("${sheetRoute}")`);
     }
     // Prefer what the app already holds; fall back to the sheet, which is all we
     // have for someone who doesn't exist yet.
@@ -696,7 +816,13 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
       // What the PROFILE says, kept separately from `route` so the import can tell
       // "the sheet is filling a gap" from "the profile already knows".
       profileRoute,
-      address: employee?.address || row.sheetAddress || '',
+      // Sheet first, matching the "the sheet is authoritative on every upload"
+      // rule below in importRoster — this value is written onto the roster
+      // document in the same batch that overwrites the profile from the sheet,
+      // so reading the pre-import profile here left the snapshot one upload
+      // behind whenever a sheet introduced or corrected an address. A blank
+      // cell still falls back to the profile and erases nothing.
+      address: row.sheetAddress || employee?.address || '',
       errors,
       warnings,
       creatable,
@@ -761,6 +887,10 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
   return {
     month: parsed.month,
     monthLabel: parsed.monthLabel,
+    // The period the FILE said it was for, carried through so the screen never
+    // has to re-derive it from the month key.
+    year: parsed.year,
+    monthIndex: parsed.monthIndex,
     fileName: parsed.fileName,
     dayKeys: parsed.dayKeys,
     hasIdColumn: parsed.hasIdColumn,
@@ -778,9 +908,9 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
     fileErrors,
     byKind,
     byWarning,
-    // Route names the sheet used that aren't in Routes & Timings, so the summary can
-    // name them — "fix the sheet, or add the route" is only actionable if HR can see
-    // which spelling was rejected.
+    // New pickup areas this sheet introduces, so the summary can name them —
+    // the only defence against a typo quietly becoming a route with one rider on
+    // it. Capitalisation variants never land here; those are snapped.
     unknownRoutes: [...unknownRoutes],
     creatable,
     creatableCount: creatable.length,
@@ -802,8 +932,15 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
 // Returns { imported, skipped, importId }.
 export async function importRoster(report, { uploadedBy, uploadedByName, onProgress } = {}) {
   if (!firestore) throw new Error('Backend not configured.');
-  const good = report.rows.filter((r) => r.valid);
-  if (!good.length) throw new Error('Nothing to import — every row has an error.');
+  // A valid row with no employeeId is somebody who was just invited and has not
+  // signed in yet — "No account yet" is a warning now, not an error, so these
+  // reach here. They cannot be written: the document id is <month>_<uid> and
+  // there is no uid until their first Microsoft sign-in. Held back rather than
+  // written under a null key, and counted separately so the caller can say so.
+  const valid = report.rows.filter((r) => r.valid);
+  const good = valid.filter((r) => r.employeeId);
+  const waiting = valid.length - good.length;
+  if (!good.length && !waiting) throw new Error('Nothing to import — every row has an error.');
 
   // Log the attempt first, so a failure halfway through is still visible to HR.
   const importRef = await addDoc(collection(firestore, IMPORTS), {
@@ -893,7 +1030,14 @@ export async function importRoster(report, { uploadedBy, uploadedByName, onProgr
     { merge: true }
   );
 
-  return { imported, skipped: report.errorCount, routed, importId: importRef.id };
+  return {
+    imported,
+    skipped: report.errorCount,
+    routed,
+    // Invited but not signed in yet, so their shifts are still to come.
+    waiting,
+    importId: importRef.id,
+  };
 }
 
 // --- Reads ------------------------------------------------------------------
@@ -1115,7 +1259,12 @@ export function buildTemplate(year, monthIndex, sampleNames = ['Raghu', 'Sriram'
   // template asks for them so HR fills them in once rather than being asked later.
   const header = ['Employee ID', 'Employee Name', 'Email', 'Phone', 'Route', 'Home Address'];
   for (let d = 1; d <= daysInMonth; d++) {
-    header.push(`${String(d).padStart(2, '0')}-${MONTHS[monthIndex]}`);
+    // "01-Aug-2026", not "01-Aug". The upload screen no longer asks for a year —
+    // it reads the roster period out of these headers — so a template that
+    // omitted it would produce a file the app then refuses as undateable. Still
+    // plain readable text, and Excel converting it to a real date cell on save
+    // is the most reliable form parseDateHeader() accepts.
+    header.push(`${String(d).padStart(2, '0')}-${MONTHS[monthIndex]}-${year}`);
   }
   const cycle = ['E', 'E', 'E', 'E', 'E', 'WO', 'WO'];
   const samples = [
@@ -1171,25 +1320,59 @@ function rosterRowName(row, namesByUid) {
 }
 
 // `rosters` is what fetchMonthRosters(month) returned. `month` is 'YYYY-MM'.
-export function buildStoredRosterSheet(month, rosters, namesByUid) {
+//
+// THIS SHEET IS MEANT TO GO BACK IN. It is not only a record of what landed —
+// downloading a month, adding the people who joined since, and re-uploading is
+// the supported way to amend a roster mid-month. Three things follow from that,
+// and each of them is load-bearing:
+//
+//   1. The date headers CARRY THE YEAR. The upload screen reads the roster period
+//      out of them and refuses a sheet that doesn't state one, so a yearless
+//      "01-Aug" header here would produce a file this app then rejects.
+//   2. There is an EMAIL column, blank where the directory has none. A row typed
+//      in for somebody with no account can only become an invite if the file
+//      names an email — without the column, every new person added by hand comes
+//      back as "can't be invited — no email in the file".
+//   3. Name and route are read from the LIVE DIRECTORY where it has them, not
+//      from the frozen copy on the roster document. Re-importing this sheet
+//      overwrites those fields on the profile, so exporting the stale snapshot
+//      would quietly revert anyone re-routed or renamed since the last import.
+//
+// `byUid` is an optional Map of uid → the live employee record. Left out, the
+// stored snapshot is used, which is the old behaviour.
+export function buildStoredRosterSheet(month, rosters, namesByUid, byUid) {
   const [yearStr, monthStr] = String(month || '').split('-');
   const year = Number(yearStr);
   const monthIndex = Number(monthStr) - 1;
-  const daysInMonth =
-    Number.isFinite(year) && monthIndex >= 0 ? new Date(year, monthIndex + 1, 0).getDate() : 31;
-  const label = monthIndex >= 0 ? `${MONTHS[monthIndex]} ${year}` : String(month);
+  const known = Number.isFinite(year) && monthIndex >= 0 && monthIndex <= 11;
+  const daysInMonth = known ? new Date(year, monthIndex + 1, 0).getDate() : 31;
+  const label = known ? `${MONTHS[monthIndex]} ${year}` : String(month);
 
-  const header = ['Employee ID', 'Employee Name', 'Route'];
+  const header = ['Employee ID', 'Employee Name', 'Email', 'Route'];
   for (let d = 1; d <= daysInMonth; d++) {
-    header.push(`${String(d).padStart(2, '0')}-${MONTHS[monthIndex] || ''}`);
+    const day = String(d).padStart(2, '0');
+    header.push(known ? `${day}-${MONTHS[monthIndex]}-${year}` : day);
   }
 
   const rows = (rosters || []).map((r) => {
-    const line = [r.empId || '', rosterRowName(r, namesByUid), r.route || ''];
+    const live = byUid?.get?.(r.employeeId);
+    const line = [
+      r.empId || live?.empId || '',
+      rosterRowName(r, namesByUid),
+      live?.email || '',
+      // Live route first: the copy on the roster document is frozen at import
+      // time, and re-uploading it would undo a re-routing done since.
+      live?.roster?.route || r.route || '',
+    ];
     for (let d = 1; d <= daysInMonth; d++) {
-      // `days` is keyed by day number as a string, and a day with no code is a
-      // genuine blank — not an error — so it stays empty rather than guessing.
-      line.push(r.days?.[String(d)] || r.days?.[d] || '');
+      // ZERO-PADDED FIRST. importRoster() writes this map keyed "01".."31"
+      // (parseRosterFile pads it), so looking up "1" missed every single day and
+      // the whole grid exported blank — names and routes, no shift codes. That
+      // was survivable while this was only a "show me what landed" download; it
+      // is not, now that the sheet is meant to be edited and uploaded back. The
+      // unpadded lookups stay as a fallback for any document written by hand.
+      // A day with no code is still a genuine blank, not an error.
+      line.push(r.days?.[String(d).padStart(2, '0')] ?? r.days?.[String(d)] ?? r.days?.[d] ?? '');
     }
     return line;
   });
@@ -1197,12 +1380,12 @@ export function buildStoredRosterSheet(month, rosters, namesByUid) {
   const sheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, label.slice(0, 31));
-  return { book, fileName: `imported-roster-${month}.xlsx`, rowCount: rows.length };
+  return { book, fileName: `roster-${month}.xlsx`, rowCount: rows.length };
 }
 
 // Download what is actually stored for a month (web — HR works from a desk).
-export function downloadStoredRoster(month, rosters, namesByUid) {
-  const { book, fileName, rowCount } = buildStoredRosterSheet(month, rosters, namesByUid);
+export function downloadStoredRoster(month, rosters, namesByUid, byUid) {
+  const { book, fileName, rowCount } = buildStoredRosterSheet(month, rosters, namesByUid, byUid);
   XLSX.writeFile(book, fileName);
   return { fileName, rowCount };
 }

@@ -214,10 +214,11 @@ export default function LoginScreen({ navigation }) {
               Sign in with Microsoft
             </Button>
 
-            {/* Drivers don't sign in here at all: they have no email and no
-                password, just the numeric code the desk issues when it links them
-                to a cab (see DriverLoginScreen). This link is the only way to
-                that screen on a phone, so it can't be dropped. */}
+            {/* Neither drivers nor coordinators sign in here: they have no email
+                and no password of their own, just a number the desk issues them
+                (a cab-derived code, or a short numeric passcode — see
+                DriverLoginScreen and CoordinatorLoginScreen). These links are the
+                only way to those screens on a phone, so they can't be dropped. */}
             <View style={styles.signupRow}>
               <Text variant="bodySmall" style={styles.signupHint}>
                 Are you a driver?
@@ -229,6 +230,19 @@ export default function LoginScreen({ navigation }) {
                 disabled={loading}
               >
                 Driver sign in
+              </Button>
+            </View>
+            <View style={styles.signupRow}>
+              <Text variant="bodySmall" style={styles.signupHint}>
+                Are you a coordinator?
+              </Text>
+              <Button
+                mode="text"
+                compact
+                onPress={() => navigation.navigate('CoordinatorLogin')}
+                disabled={loading}
+              >
+                Coordinator sign in
               </Button>
             </View>
           </Card.Content>
