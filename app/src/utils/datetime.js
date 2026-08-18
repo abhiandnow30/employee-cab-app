@@ -75,7 +75,9 @@ export function hoursUntil(dateKey, timeStr) {
 }
 
 // True if a booking's full scheduled date+time is in the past (device-local
-// time). The single source of truth for "assignment is closed".
+// time). This marks a ride as OVERDUE — it does NOT close assignment. The desk
+// may give a cab to a ride whose slot has passed (that is the case they are most
+// often racing), so callers use this to flag and sort, never to disable.
 export function isBookingPast(booking) {
   if (!booking) return false;
   return isPastDateTime(booking.date, booking.shift);

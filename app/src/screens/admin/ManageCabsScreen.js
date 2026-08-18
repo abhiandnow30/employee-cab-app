@@ -21,16 +21,23 @@
 //
 // LINKING ALSO ISSUES THE DRIVER'S LOGIN CODE — the last 4 digits of this cab's
 // number plus their phone, which is the only thing they type to sign in (see
-// utils/driverLogin.js). It is shown on the card below, because the moment the
-// link is made is the moment somebody has to read it out. Two consequences worth
-// knowing: renaming a cab changes its driver's code, and unlinking revokes it.
+// utils/driverLogin.js). Two consequences worth knowing: renaming a cab changes its
+// driver's code, and unlinking revokes it.
+//
+// THE CODE ITSELF IS NOT DISPLAYED, deliberately (Aug 2026). It used to sit on every
+// card, which put a live password on a screen the whole desk can see — and bought
+// nothing, because both halves are already on that same card: the last 4 digits are
+// in the cab number heading and the phone is on the line beneath it. The desk tells
+// the driver the RULE ("your cab's last 4 digits, then your mobile") and the driver
+// derives it from the vehicle they're sitting in. What IS still shown is the drift
+// warning below — the one case where that rule is a lie.
 //
 // Removing a vehicle is refused while it still has upcoming rides, so no rider
 // silently loses their cab.
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View, FlatList, Platform } from 'react-native';
+import { StyleSheet, View, FlatList } from 'react-native';
 import {
   Text, Card, Button, Portal, Dialog, Snackbar, Chip, Divider, TextInput,
   HelperText, IconButton,
@@ -42,7 +49,9 @@ import { subscribeCabs, cabCapacity } from '../../services/cabs';
 import { subscribeDrivers } from '../../services/profile';
 import { DEFAULT_CAB_CAPACITY, STATUS } from '../../data/mockData';
 import { todayKey } from '../../utils/datetime';
-import { formatLoginCode, isShareableCode, driverLoginCode } from '../../utils/driverLogin';
+// driverLoginCode only — this screen computes the code the cab link implies purely
+// to compare it against the stored one, and never renders either.
+import { driverLoginCode } from '../../utils/driverLogin';
 import { colors } from '../../theme';
 
 // A ride in one of these states is over, whatever its date says.
@@ -145,11 +154,13 @@ export default function ManageCabsScreen() {
     if (res?.ok) {
       setFormOpen(false);
       // Renaming a cab changes its driver's login code, because the last 4 digits
-      // are half of it. Say so, so the desk knows to pass the new one on.
+      // are half of it. The code isn't printed anywhere, so what the desk needs to
+      // hear is that the driver's OLD code has stopped working — the rule they're
+      // told is unchanged, but the number they memorised isn't.
       if (res.codeWarning) setError(res.codeWarning);
       setSnack(
         editingId
-          ? 'Cab updated. Check the login code below — renaming a cab changes it.'
+          ? 'Cab updated. Renaming it changed the driver’s login code — their old one no longer works.'
           : `${form.cabNumber} added to the fleet.`
       );
     } else {
@@ -236,7 +247,6 @@ export default function ManageCabsScreen() {
   function renderCab({ item }) {
     const linked = !!item.driverUid;
     const driver = linked ? drivers.find((d) => d.uid === item.driverUid) : null;
-    const driverCode = isShareableCode(driver?.loginCode) ? driver.loginCode : '';
     // The code this cab SHOULD imply, computed only to compare — a mismatch means a
     // rotation stopped halfway, and handing out either value would be a guess.
     const codeDrifted =
@@ -308,27 +318,24 @@ export default function ManageCabsScreen() {
             </Text>
           ) : null}
 
-          {/* THE DRIVER'S LOGIN CODE, right where the link that created it was
-              made. Shown from the driver's stored value rather than recomputed
-              here: the stored code is the actual Firebase password, so a locally
-              derived one could look right while signing nobody in. */}
-          {linked ? (
-            driverCode && !codeDrifted ? (
-              <View style={styles.codeBox}>
-                <MaterialCommunityIcons name="dialpad" size={16} color={colors.primaryDark} />
-                <Text variant="bodySmall" style={styles.codeLabel}>
-                  Login code
-                </Text>
-                <Text variant="titleSmall" style={styles.codeValue} selectable>
-                  {formatLoginCode(driverCode)}
-                </Text>
-              </View>
-            ) : (
-              <Text variant="bodySmall" style={styles.warn}>
-                This driver’s login code doesn’t match this cab. Press “Fix code” on
-                their card in the Drivers tab before handing anything out.
-              </Text>
-            )
+          {/* NO LOGIN CODE IS PRINTED HERE ANY MORE, and the reason is on this very
+              card: the code is the cab's last 4 digits followed by the driver's
+              mobile, and both halves are already in the title and the line beneath
+              it. Rendering the join added nothing except a working password sitting
+              on a shared screen, so the desk now TELLS the driver the rule ("last 4
+              of the cab, then your mobile") instead of reading a secret out.
+
+              The drift check is still computed and still shown, and it matters MORE
+              now than it did: that spoken rule is exactly the DERIVED value, so when
+              the stored one disagrees the instruction is wrong and the driver is
+              locked out. This warning is the only thing standing between the desk
+              and confidently telling someone a code that signs nobody in. */}
+          {linked && codeDrifted ? (
+            <Text variant="bodySmall" style={styles.warn}>
+              This driver’s login code doesn’t match this cab, so “last 4 digits + your
+              mobile” will NOT let them in. Press “Fix code” on their card in the
+              Drivers tab first.
+            </Text>
           ) : null}
         </Card.Content>
       </Card>
@@ -342,7 +349,7 @@ export default function ManageCabsScreen() {
           <Text variant="bodySmall" style={styles.hint}>
             {readOnly
               ? "The fleet and who is driving each vehicle. The coordinator maintains this — you're seeing it as it stands."
-              : "The vehicles you assign each day. Linking a driver switches on that cab's live tracking and gives them their login code."}
+              : "The vehicles you assign each day. Linking a driver switches on that cab's live tracking and lets them sign in with this cab's last 4 digits followed by their mobile number."}
           </Text>
           {readOnly ? null : (
             <Button mode="contained" icon="plus" onPress={openAdd}>
@@ -531,26 +538,6 @@ const styles = StyleSheet.create({
   linkLabel: { opacity: 0.8 },
   linkPicker: { flex: 1, maxWidth: 260 },
   warn: { color: '#E65100', marginTop: 8 },
-  codeBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-    backgroundColor: '#F3F0FA',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginTop: 10,
-  },
-  codeLabel: { color: colors.muted },
-  // Monospaced and loosely tracked: this gets read aloud and typed by hand, so
-  // 0/O and 1/l must not be a guess.
-  codeValue: {
-    color: colors.text,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
   error: { color: colors.danger, paddingHorizontal: 14, paddingBottom: 8 },
   empty: { alignItems: 'center', marginTop: 50, gap: 12, paddingHorizontal: 24 },
   emptyText: { color: colors.muted },

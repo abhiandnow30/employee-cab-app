@@ -1,11 +1,15 @@
 // ---------------------------------------------------------------------------
 // CHANGE REQUEST QUEUE  (coordinator)
 //
-// The four things an employee can raise, all of which land here: leave, absent
-// today, drop one ride, and "I'm working a different shift". The coordinator
-// resolves them as part of running the day — there is no HR sign-off, because
-// none of them commits a cab beyond the two scheduled rides. (HR had a queue once,
-// for shift extensions and emergency rides; those requests no longer exist.)
+// The three things an employee can raise, all of which land here: leave, drop one
+// ride, and "I'm working a different shift". The coordinator resolves them as part
+// of running the day — there is no HR sign-off, because none of them commits a cab
+// beyond the two scheduled rides. (HR had a queue once, for shift extensions and
+// emergency rides; those requests no longer exist.)
+//
+// A fourth, "Absent today", was retired — it cancelled the day's cabs exactly like
+// Leave and differed only in leaving the roster code alone. Requests already filed
+// under it still arrive here and still resolve; see REQUEST_CATALOGUE.
 //
 // Resolving carries out the effect on the day's rides AND stamps the request in a
 // single batch — see services/changeRequests.js. The employee is notified either
@@ -79,6 +83,11 @@ export default function ChangeRequestQueueScreen() {
   }
 
   // What the primary button does for this type, in the desk's language.
+  //
+  // The ABSENT branches here and in consequence() below are for a RETIRED type —
+  // employees can't raise it any more, but requests already in Firestore (including
+  // any still Pending when it was retired) come through this queue and must still
+  // read correctly. Don't tidy them away.
   function actionLabel(request) {
     const meta = requestMeta(request.type);
     switch (request.type) {

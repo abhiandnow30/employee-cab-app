@@ -2,8 +2,8 @@
 // CHANGE REQUESTS  (employee) — Step 7
 //
 // The roster says when the employee travels. This is how they tell the desk that
-// a particular day is different: leave, absent, a shift that ran long, a cab they
-// don't need, an emergency.
+// a particular day is different: they're not coming in, they don't need one of
+// their two cabs, or they're working a different shift from the rostered one.
 //
 // It replaces self-booking. The employee no longer creates rides — they raise an
 // exception against the ride the roster already implies, and the desk resolves it.
@@ -24,7 +24,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import Dropdown from '../../components/Dropdown';
 import {
-  REQUEST_CATALOGUE, REASONS, STATUS_STYLE, REQUEST_STATUS, requestMeta,
+  OFFERED_REQUESTS, REASONS, STATUS_STYLE, REQUEST_STATUS, requestMeta,
 } from '../../data/changeRequests';
 import { WORKING_CODES, shiftSummary } from '../../data/shifts';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
@@ -121,8 +121,11 @@ export default function ChangeRequestScreen({ navigation }) {
               is different.
             </Text>
 
+            {/* OFFERED_REQUESTS, not the whole catalogue — a retired type stays in
+                the catalogue so "My requests" below can still label and explain an
+                old row, but it must not be offered as a new choice. */}
             <View style={styles.typeGrid}>
-              {REQUEST_CATALOGUE.map((r) => {
+              {OFFERED_REQUESTS.map((r) => {
                 const active = type === r.type;
                 return (
                   <Pressable

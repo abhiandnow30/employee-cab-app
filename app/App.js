@@ -749,17 +749,27 @@ function RootNavigator() {
             ) : (
               <>
                 <Stack.Screen
-                  name="CoordinatorHome"
-                  component={CoordinatorDashboardScreen}
-                  options={{ title: "Today's Rides" }}
-                />
-                <Stack.Screen
                   name="Requests"
                   component={RequestsScreen}
                   options={{ title: 'Requests' }}
                 />
               </>
             )}
+            {/* THE DAY BOARD IS SHARED BY BOTH DESK ROLES. It is the coordinator's
+                home and they run the day on it, but it is also the only place a
+                rider can be added to a day that the monthly sheet missed ("Add a
+                rider"), and the person who notices that is usually HR — someone
+                joins mid-month, or turns out to need a cab after all. That writes
+                to rosters/<month>_<uid>, which the coordinator's own board derives
+                from, so what HR adds here shows up on their screen with no upload
+                and no second step. `rosters` create/update is already the admin's
+                outright in firestore.rules, and every subscription this screen
+                needs is gated on isDeskRole, so nothing else had to open up. */}
+            <Stack.Screen
+              name="CoordinatorHome"
+              component={CoordinatorDashboardScreen}
+              options={{ title: "Today's Rides" }}
+            />
             {/* Both desk roles: HR approves, the coordinator sets the route.
                 Registered outside the role-specific groups above because it is
                 genuinely shared — see CabRequestsScreen's header. */}

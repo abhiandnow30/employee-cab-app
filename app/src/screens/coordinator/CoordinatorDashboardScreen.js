@@ -1,18 +1,29 @@
 // ---------------------------------------------------------------------------
-// COORDINATOR DASHBOARD  (today's rides)
+// THE DAY BOARD  (today's rides) — the coordinator's home, and HR's too
 //
 // The operational centre of the app. The coordinator does NOT wait for employees
 // to request rides and does NOT need admin approval to run the day — they take
 // the rides the roster implies and put people in cabs.
+//
+// HR/ADMIN OPENS THE SAME SCREEN (registered for both desk roles in App.js). Not
+// so they can run the day, but because "Add a rider" is here: the monthly sheet
+// always misses somebody, and HR is usually who hears about it. They add the rider,
+// the ride appears on this board for the coordinator to give a cab to. Nothing on
+// this screen is role-gated — an admin could assign a cab from here too, which they
+// could already do from All Bookings, so no new power is being handed out.
 //
 // Rides shown here are DERIVED from the monthly roster (see services/rides.js),
 // so a ride exists the moment HR imports the month. A booking document is only
 // written when this screen assigns a cab, which is what keeps ~11,000 rides a
 // month from becoming 11,000 documents.
 //
-// Two ways to work, because desks use both:
-//   • by ROUTE  — everyone from one pickup area, to fill a cab
-//   • by SHIFT  — everyone travelling at the same time in the same direction
+// HOW THE BOARD IS ARRANGED — one way, not a choice:
+//   • sections are ROUTES — everyone from one pickup area, which is a cabful
+//   • an IN / OUT segment picks the direction, so only one of the day's two runs
+//     is on screen at a time
+// The old "By route / By shift" toggle was removed at explicit request. By-shift was
+// the browsing view; with direction now its own control there was little left in it,
+// and route is the grouping a cab is actually filled from.
 //
 // Selecting riders across a group and assigning one cab is the carpool action.
 // Capacity and "that cab is already going the other way" are enforced before the
@@ -29,7 +40,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import Dropdown from '../../components/Dropdown';
 import RideStartCode from '../../components/RideStartCode';
-import { groupByRoute, groupByShift, rideStats } from '../../services/rides';
+// groupByShift is no longer imported — the board groups by route only. It is still
+// exported from services/rides.js, so restoring the removed toggle means adding it
+// back here and nothing more.
+import { groupByRoute, rideStats } from '../../services/rides';
 import { routeKey } from '../../services/roster';
 import { cabCapacity } from '../../services/cabs';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
@@ -54,7 +68,12 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   } = useApp();
 
   const [date, setDate] = useState(() => todayKey());
-  const [groupMode, setGroupMode] = useState('route'); // route | shift
+  // Grouping is FIXED to route — the "By route / By shift" toggle was removed from
+  // the UI at explicit request. Route is the unit a cab is filled in (one route ≈ one
+  // cabful of neighbours), so it is the grouping that turns ~200 rides into ~15
+  // decisions; by-shift was the browsing view, and with the IN / OUT segments now
+  // splitting the day by direction it had little left to show. `groupByShift` is
+  // still exported by services/rides.js if it is ever wanted back.
   const [selected, setSelected] = useState([]); // ride keys
   const [pickerOpen, setPickerOpen] = useState(false);
   const [chosenCab, setChosenCab] = useState(null);
@@ -69,6 +88,23 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   //   waiting  — no cab yet (the default: this is the work still to do)
   //   assigned — already in a cab (who is covered, and by which vehicle)
   const [rideFilter, setRideFilter] = useState('waiting');
+  // Which DIRECTION the board is showing: 'in' | 'out'. One or the other, always —
+  // there is deliberately no "both" any more (it was removed at explicit request).
+  //
+  // The company's two rides go opposite ways at different times — an 8 PM pickup
+  // from home and a 10 PM drop home — so they are two separate runs of the fleet
+  // that happen to share one screen. Showing exactly one keeps the board to the run
+  // the coordinator is actually working, with no other-leg riders between the rows.
+  //
+  // THE COST, stated so nobody is surprised by it: half the day is always off
+  // screen, so an unassigned ride can only be found by pressing the other segment.
+  // Two things carry that weight — the "In / Out" tile above stays a whole-day
+  // count (never the current leg's), and the empty state names the other direction
+  // rather than claiming the day has nothing. Keep both if this is ever reworked.
+  //
+  // Starts on 'in': the pickup run is the earlier of the two, so it is what a
+  // coordinator opening the board during the day is working on first.
+  const [legFilter, setLegFilter] = useState('in');
   // The rider whose route we're fixing, and the route picked for them. Routing is
   // HR's job, but the coordinator is the one who discovers at 9 PM that somebody
   // is on no route at all — and a ride nobody can group is a ride nobody drives.
@@ -82,15 +118,33 @@ export default function CoordinatorDashboardScreen({ navigation }) {
 
   // The derived rides for the chosen day, and the sections to show them in.
   const rides = useMemo(() => ridesOn(date), [ridesOn, date]);
-  const stats = useMemo(() => rideStats(rides), [rides]);
+
+  // The day narrowed to one direction — everything below this line works off it, so
+  // the counts, the groups and the list can never disagree about which run they are
+  // describing. `leg` is 'in' | 'out' on every derived ride (see makeRide in
+  // services/rides.js); matching on that rather than on the `direction` label keeps
+  // this from breaking if the display wording is ever reworded.
+  const legRides = useMemo(
+    () => rides.filter((r) => r.leg === legFilter),
+    [rides, legFilter]
+  );
+
+  // Counted off the DIRECTION-filtered day, so "7 Waiting" is always 7 rides the
+  // coordinator can actually see and tick. Counting the whole day here would leave
+  // the headline promising rides the list isn't showing. The one exception is the
+  // In / Out ratio in that row, which is deliberately read off the full day — it is
+  // the whole point of this control, and a ratio of the slice you already chose
+  // ("1/0") tells you nothing.
+  const stats = useMemo(() => rideStats(legRides), [legRides]);
+  const dayStats = useMemo(() => rideStats(rides), [rides]);
   const visible = useMemo(() => {
-    if (rideFilter === 'waiting') return rides.filter((r) => !r.assignedCabId);
-    if (rideFilter === 'assigned') return rides.filter((r) => r.assignedCabId);
-    return rides;
-  }, [rides, rideFilter]);
+    if (rideFilter === 'waiting') return legRides.filter((r) => !r.assignedCabId);
+    if (rideFilter === 'assigned') return legRides.filter((r) => r.assignedCabId);
+    return legRides;
+  }, [legRides, rideFilter]);
   const sections = useMemo(
-    () => (groupMode === 'route' ? groupByRoute(visible) : groupByShift(visible)),
-    [visible, groupMode]
+    () => groupByRoute(visible),
+    [visible]
   );
 
   // Rides the riders themselves called off for this day. They are deliberately
@@ -103,6 +157,16 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     () => employeeCancellationsOn(date),
     [employeeCancellationsOn, date]
   );
+
+  // Switching direction drops the current selection, the same way moving to another
+  // day does. A cab cannot run both legs at once — cabAssignmentProblem() refuses it
+  // as "already doing a Office → Home trip at that time" — so a selection carried
+  // from IN into OUT can only end in a rejected assignment, and worse, some of the
+  // ticks causing it would be on rows no longer on screen.
+  function changeLegFilter(next) {
+    setSelected([]);
+    setLegFilter(next);
+  }
 
   // Moving off the loaded month has to move the subscription too, or the day
   // would come back empty for a month that hasn't been fetched.
@@ -239,11 +303,8 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     return (
       <View style={styles.sectionHeader}>
         <View style={styles.sectionTitleWrap}>
-          <MaterialCommunityIcons
-            name={groupMode === 'route' ? 'map-marker' : 'clock-outline'}
-            size={17}
-            color={colors.primaryDark}
-          />
+          {/* Always a route pin now — sections are always routes. */}
+          <MaterialCommunityIcons name="map-marker" size={17} color={colors.primaryDark} />
           <Text variant="titleSmall" style={styles.sectionTitle} numberOfLines={1}>
             {section.title}
           </Text>
@@ -335,16 +396,10 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   which is a worse failure than the one it prevents. */}
               <RideStartCode booking={item.booking} variant="inline" />
 
-              {/* Grouped by shift, the route is no longer the section header, so it
-                  has to be on the card — it's how the desk knows who can share. */}
-              {item.route && groupMode === 'shift' ? (
-                <View style={styles.metaRow}>
-                  <MaterialCommunityIcons name="map-marker-path" size={14} color={colors.muted} />
-                  <Text variant="bodySmall" style={styles.meta} numberOfLines={1}>
-                    {item.route}
-                  </Text>
-                </View>
-              ) : null}
+              {/* The route used to be repeated on the card when the board was grouped
+                  by shift, because the section header wasn't showing it then. Sections
+                  are always routes now, so the header always says it and repeating it
+                  on every card underneath would only be noise. */}
               {/* No route means this rider can't be grouped with their neighbours.
                   Fixable here rather than by a message to HR that lands tomorrow —
                   and because it saves to their profile, it stays fixed. */}
@@ -443,7 +498,14 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             onPress={() => setRideFilter('assigned')}
             showsLabel="only rides that already have a cab"
           />
-          <Stat label="In / Out" value={`${stats.inbound}/${stats.outbound}`} tone="muted" />
+          {/* Off the WHOLE day (dayStats), not the current direction — this is the
+              figure that says how the day splits, and it stays the same as you flip
+              between IN and OUT so it can be read as a total. */}
+          <Stat
+            label="In / Out"
+            value={`${dayStats.inbound}/${dayStats.outbound}`}
+            tone="muted"
+          />
         </View>
 
         {/* Riders who stood their own cab down today. Above the board rather
@@ -487,14 +549,54 @@ export default function CoordinatorDashboardScreen({ navigation }) {
         ) : null}
 
         <View style={styles.controls}>
+          {/* DIRECTION — one of the two, never both. The "By route / By shift" control
+              used to sit to the left of this; grouping is fixed to route now, so this
+              is the board's only view control.
+              The icons are the same pair each ride card carries on its direction
+              line, so the segment and the rows underneath it read as the same thing.
+              Labels are IN / OUT rather than the full "Home → Office", which will not
+              fit a segment — the accessibility labels spell it out.
+
+              THE SELECTED HALF IS FILLED, not tinted. Paper's own checked state is a
+              pale lavender wash that reads as "slightly different from its neighbour",
+              and on this board the two halves are two different runs of the fleet —
+              mistaking one for the other means working the wrong list of riders. So
+              the active segment takes the brand blue with a white icon and label; the
+              inactive one stays on the surface in muted grey.
+              Three cues, not just colour: the fill, a heavier label, and the screen
+              reader's own selected state (Paper emits accessibilityState.checked). */}
           <SegmentedButtons
-            value={groupMode}
-            onValueChange={setGroupMode}
+            value={legFilter}
+            onValueChange={changeLegFilter}
             density="small"
-            style={styles.segmented}
+            style={styles.segmentedLeg}
             buttons={[
-              { value: 'route', label: 'By route', icon: 'map-marker' },
-              { value: 'shift', label: 'By shift', icon: 'clock-outline' },
+              {
+                value: 'in',
+                label: 'IN',
+                icon: 'home-export-outline',
+                accessibilityLabel: 'IN — Home to Office pickups only',
+                // Colours the ICON as well as the text; the weight comes from
+                // labelStyle below.
+                checkedColor: '#FFFFFF',
+                uncheckedColor: colors.muted,
+                style: legFilter === 'in' ? styles.legSegOn : styles.legSegOff,
+                labelStyle: legFilter === 'in' ? styles.legLabelOn : styles.legLabelOff,
+                // Grows the touch target without growing the row — the control keeps
+                // its small density, so the header's height is unchanged.
+                hitSlop: { top: 8, bottom: 8 },
+              },
+              {
+                value: 'out',
+                label: 'OUT',
+                icon: 'home-import-outline',
+                accessibilityLabel: 'OUT — Office to Home drops only',
+                checkedColor: '#FFFFFF',
+                uncheckedColor: colors.muted,
+                style: legFilter === 'out' ? styles.legSegOn : styles.legSegOff,
+                labelStyle: legFilter === 'out' ? styles.legLabelOn : styles.legLabelOff,
+                hitSlop: { top: 8, bottom: 8 },
+              },
             ]}
           />
           {/* The same filter as the numbers above, named rather than counted —
@@ -513,9 +615,11 @@ export default function CoordinatorDashboardScreen({ navigation }) {
               : 'All rides'}
           </Button>
           {/* Someone needs a cab tonight who the month's roster doesn't have
-              working today. Without this the coordinator can see that and not
-              fix it — the roster is HR's screen and they may well have gone
-              home. One day only; a stretch of days is still HR's call. */}
+              working today. Without this the coordinator could see that and not
+              fix it — Roster Upload is HR's screen and they may well have gone
+              home. HR reaches this same button from their own drawer, which is the
+              other half of the problem: they are often the one told about a new
+              joiner. One day only; a stretch of days is still Roster Upload. */}
           <Button compact mode="text" icon="account-plus" onPress={openAddRider}>
             Add a rider
           </Button>
@@ -544,14 +648,22 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                        reported itself as fully assigned and the coordinator
                        moved on. Zero rides is its own state, not a success. */
                   stats.total === 0
-                  ? 'No rides on this day.'
+                  ? /* Every count on this screen is direction-aware, so an empty
+                       board can mean "nothing today" OR "nothing THIS WAY". Those
+                       need different words: telling someone "no rides on this day"
+                       while the other leg has ten of them sends them off to check
+                       the roster for a problem that isn't there. The hint below
+                       names the other direction and its count. */
+                    legFilter === 'in'
+                    ? 'No Home → Office pickups on this day.'
+                    : 'No Office → Home drops on this day.'
                   : rideFilter === 'waiting'
-                  ? 'Every ride today has a cab.'
+                  ? `Every ${legFilter === 'in' ? 'pickup' : 'drop'} today has a cab.`
                   : /* The day HAS rides and none of them are assigned — an empty
                        board here means the work hasn't started, not that there is
                        none. Saying "no rides" would read as the opposite. */
                     rideFilter === 'assigned'
-                  ? 'No ride today has a cab yet.'
+                  ? `No ${legFilter === 'in' ? 'pickup' : 'drop'} today has a cab yet.`
                   : 'No rides on this day.'}
               </Text>
               {noRoster ? (
@@ -559,13 +671,27 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   Ask HR to upload the monthly shift roster — rides are generated
                   from it.
                 </Text>
-              ) : stats.total === 0 ? (
+              ) : dayStats.total === 0 ? (
                 /* The roster IS loaded, so an empty day is a rostering answer,
                    not a missing one. Saying which answers are possible saves
-                   the coordinator checking whether the upload went wrong. */
+                   the coordinator checking whether the upload went wrong.
+                   dayStats, not stats: this speaks about the ROSTER, so it must
+                   only appear when the whole day is empty. Keyed on the
+                   direction-filtered count it would tell someone nobody is
+                   travelling while ten riders sat one segment away. */
                 <Text variant="bodySmall" style={styles.emptyHint}>
                   The roster is loaded — nobody is down to travel today. Week off,
                   holiday, leave, or a shift the company runs no cab for.
+                </Text>
+              ) : stats.total === 0 ? (
+                /* The day has rides, just none going this way. With no "both" option
+                   the other leg is entirely off screen, so this line is the only
+                   thing telling the coordinator it exists — it names the segment to
+                   press and how many rides are waiting behind it. */
+                <Text variant="bodySmall" style={styles.emptyHint}>
+                  {legFilter === 'in'
+                    ? `${dayStats.outbound} drop${dayStats.outbound === 1 ? '' : 's'} today — press OUT to see ${dayStats.outbound === 1 ? 'it' : 'them'}.`
+                    : `${dayStats.inbound} pickup${dayStats.inbound === 1 ? '' : 's'} today — press IN to see ${dayStats.inbound === 1 ? 'it' : 'them'}.`}
                 </Text>
               ) : null}
             </View>
@@ -899,7 +1025,24 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
     flexWrap: 'wrap',
   },
-  segmented: { flex: 1, minWidth: 220 },
+  // Two short segments. It no longer shares the row with a grouping control, so it
+  // takes only the width it needs and the filter/Add-a-rider buttons keep the rest.
+  // 200, not 170: at 170 each half was ~85px and a bold "OUT" beside its icon
+  // ellipsised to "O…", which is the one word on the control that has to be legible.
+  segmentedLeg: { flexGrow: 0, flexShrink: 0, minWidth: 200 },
+  // THE ACTIVE HALF. Filled with the brand blue — the same colour the sidebar and
+  // primary buttons use, so this reads as part of the app rather than a new idea.
+  // Paper applies a segment's own `style` last ([buttonStyle, styles.button, style]
+  // in SegmentedButtonItem), so this background wins over its computed one without
+  // having to fight the component or restyle the theme globally.
+  legSegOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  // THE INACTIVE HALF. Still a segment — outlined, on the card surface — but plainly
+  // the one that isn't chosen.
+  legSegOff: { backgroundColor: colors.surface, borderColor: colors.border },
+  // White on #0129AC is ~10:1, well past AA; the heavier weight is the non-colour
+  // half of the signal, so the state survives a greyscale screen or colour blindness.
+  legLabelOn: { color: '#FFFFFF', fontWeight: '800' },
+  legLabelOff: { color: colors.muted, fontWeight: '600' },
 
   list: { padding: 10, paddingBottom: 90 },
   sectionHeader: {

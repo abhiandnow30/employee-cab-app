@@ -40,6 +40,12 @@ export async function createChangeRequest(employee, data) {
   if (!firestore) throw new Error('Backend not configured.');
   const meta = requestMeta(data.type);
   if (!meta) throw new Error('Unknown request type.');
+  // A retired type is still in the catalogue so old requests can be read, but it
+  // must not accept new ones — otherwise a stale open tab running the previous
+  // bundle keeps filing them and the retirement never actually takes effect.
+  if (meta.retired) {
+    throw new Error(`"${meta.label}" is no longer available — please reload the app.`);
+  }
 
   return addDoc(collection(firestore, COL), {
     employeeId: employee.uid,
@@ -133,7 +139,8 @@ function cancelFields(request) {
   };
 }
 
-// Cancel the whole day's rides for this employee — Leave and Absent. Reads the
+// Cancel the whole day's rides for this employee — Leave (and the retired Absent,
+// whose already-filed requests still resolve through here). Reads the
 // employee's bookings for that date FRESH from Firestore rather than trusting the
 // desk's local snapshot, which might not yet include a booking another
 // coordinator just created — cancelling off a stale list would leave that ride

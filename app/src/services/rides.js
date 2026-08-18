@@ -183,7 +183,9 @@ export function ridesForDate(travelDate, rosters, policy, bookings = []) {
 export function excuseResolvedRequests(rides, changeRequests) {
   if (!rides.length || !changeRequests?.length) return rides;
 
-  const dayOff = new Set(); // `${employeeId}_${shiftDate}` — Leave / Absent
+  // Keyed on the EFFECT, not the type, which is why retiring "Absent today" needed
+  // no change here: any request whose effect is CANCEL_DAY excuses the whole day.
+  const dayOff = new Set(); // `${employeeId}_${shiftDate}` — Leave (or old Absent)
   const rideOff = new Set(); // rideKey — Cancel one ride
   changeRequests.forEach((r) => {
     if (r.status !== REQUEST_STATUS.RESOLVED) return;

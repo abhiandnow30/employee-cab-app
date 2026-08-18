@@ -96,7 +96,7 @@ import {
 } from '../data/changeRequests';
 import { firestore } from '../services/firebase';
 import {
-  toDateTime, isBookingPast, canRequestCancel, todayKey, shiftDateKey,
+  toDateTime, canRequestCancel, todayKey, shiftDateKey,
   cancelDeadline,
 } from '../utils/datetime';
 
@@ -925,9 +925,11 @@ export function AppProvider({ children }) {
   // helpline instead, so a rider's private mobile is never exposed in
   // driver-readable data.
   function newBookingPayload(data) {
-    // Absolute departure instant, so the backend (Firestore rules) can compare
-    // it to server time and block past/too-soon bookings and expired cab
-    // assignments — the stored `date`/`shift` strings can't be compared there.
+    // Absolute departure instant, so the backend (Firestore rules) can compare it
+    // to server time and block an EMPLOYEE booking a past or too-soon ride — the
+    // stored `date`/`shift` strings can't be compared there. It no longer gates the
+    // desk's cab assignment: that check was removed so a late ride can still be
+    // covered (see assignCab below and `validDeskBooking` in firestore.rules).
     const departAt = toDateTime(data.date, data.shift); // Date → Firestore Timestamp
     return {
       employeeId: currentUser.uid,
@@ -1040,15 +1042,19 @@ export function AppProvider({ children }) {
   }
 
   // Admin assigns a cab → booking moves to "Cab assigned".
-  // Guards: the ride must not be in the past, the cab must have a free seat, and
-  // it must not already be doing a different trip at that time. These run even
-  // if the UI is bypassed, since every assign goes through here.
+  // Guards: the cab must have a free seat, and it must not already be doing a
+  // different trip at that time. These run even if the UI is bypassed, since
+  // every assign goes through here.
+  //
+  // THERE IS NO TIME LIMIT. A ride whose shift time has already passed used to be
+  // refused here with "assignment is closed", which got the priority backwards —
+  // the late ride is the one the desk is chasing. A cab arranged at 8:20 PM for
+  // an 8:00 PM pickup is a rider who got to work; refusing the write is a rider
+  // left at the gate with the app insisting no cab was ever sent. The matching
+  // rule in `firestore.rules` was dropped with it, so the write actually lands.
   async function assignCab(bookingId, cabId) {
     const b = bookings.find((x) => x.id === bookingId);
     if (!b) return { ok: false, message: 'That booking no longer exists.' };
-    if (isBookingPast(b)) {
-      return { ok: false, message: 'This ride is in the past — assignment is closed.' };
-    }
     const problem = cabAssignmentProblem(cabId, [b]);
     if (problem) return { ok: false, message: problem };
     try {
@@ -1063,19 +1069,12 @@ export function AppProvider({ children }) {
   }
 
   // Admin assigns one cab to several bookings (carpool grouping). Rejects the
-  // whole batch if ANY selected ride is already in the past, or if the cab
-  // doesn't have room for everyone.
+  // whole batch only if the cab doesn't have room for everyone — a ride whose
+  // time has passed is assignable, same as the single case above.
   async function assignCabToGroup(bookingIds, cabId) {
     const rides = bookingIds.map((id) => bookings.find((x) => x.id === id)).filter(Boolean);
     if (rides.length !== bookingIds.length) {
       return { ok: false, message: 'Some selected bookings no longer exist. Refresh and retry.' };
-    }
-    const pastCount = rides.filter(isBookingPast).length;
-    if (pastCount > 0) {
-      return {
-        ok: false,
-        message: `${pastCount} selected ride${pastCount > 1 ? 's are' : ' is'} in the past — assignment is closed.`,
-      };
     }
     const problem = cabAssignmentProblem(cabId, rides);
     if (problem) return { ok: false, message: problem };

@@ -19,7 +19,7 @@ import { Text, Card, Chip, Button, Portal, Dialog, RadioButton, Snackbar } from 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeEmployees } from '../../services/profile';
-import { isBookingPast } from '../../utils/datetime';
+import { isBookingPast, isPastDateKey } from '../../utils/datetime';
 import { SOURCE } from '../../data/mockData';
 import { statusColors, colors } from '../../theme';
 import CalendarFilter, { rangeLabel } from '../../components/CalendarFilter';
@@ -62,11 +62,19 @@ export default function BookingsScreen({ navigation }) {
   // A ride awaiting cancellation shouldn't be handed a cab — resolve it first.
   const hasPendingCancel = (b) => b.cancelStatus === 'Requested';
   const isPast = (b) => isBookingPast(b); // scheduled date/time already passed
-  // Assignable only if still open, not awaiting cancellation, AND not in the past.
-  const canSelect = (b) => b.status === 'Booked' && !hasPendingCancel(b) && !isPast(b);
+  // Assignable if it's still open and isn't awaiting a cancellation decision.
+  //
+  // "Its time has passed" is deliberately NOT a reason to refuse. That check used
+  // to be here (and in AppContext, and in firestore.rules) and it closed the desk
+  // out at 8:01 PM of an 8:00 PM pickup — the minute a missing cab becomes urgent.
+  // The row is still marked overdue below so nobody mistakes a late assignment for
+  // an on-time one.
+  const canSelect = (b) => b.status === 'Booked' && !hasPendingCancel(b);
   const isNoShow = (b) => b.status === 'No show';
-  // A past ride that never got a cab is "Expired" (assignment closed).
-  const isExpired = (b) => isPast(b) && b.status === 'Booked';
+  // A ride whose slot has passed and that still has no cab. Assignment stays OPEN
+  // on these — the chip is a "this one is late, deal with it first" flag, not a
+  // closed door.
+  const isOverdue = (b) => isPast(b) && b.status === 'Booked';
 
   // Employee details for a booking (from the live profile map).
   const empOf = (b) => empByUid[b.employeeId] || {};
@@ -97,11 +105,15 @@ export default function BookingsScreen({ navigation }) {
   // below. Once it has a cab, it belongs under that cab — route no longer
   // matters, the cab is the unit the desk thinks in.
   //
-  // Past-dated bookings are left out of this screen entirely (for now) — the
-  // desk only needs to act on today's and future rides here. That data isn't
-  // deleted: Ride History, No-Shows, and Cancelled Rides still show it.
-  const unassigned = visibleBookings.filter((b) => !b.assignedCabId && !isPast(b));
-  const assigned = visibleBookings.filter((b) => b.assignedCabId && !isPast(b));
+  // The cut-off for this screen is the DAY, not the minute. Earlier days are left
+  // out — the desk acts on today and later here, and that data isn't deleted:
+  // Ride History, No-Shows and Cancelled Rides still show it. But a ride whose
+  // shift time passed an hour ago is still TODAY's work and stays on the board,
+  // selectable, so a cab can still be sent (see canSelect). Filtering by the
+  // minute instead was why an unassigned 8:00 PM ride vanished from the desk's
+  // screen at 8:01 PM, leaving them nothing to assign a cab to.
+  const unassigned = visibleBookings.filter((b) => !b.assignedCabId && !isPastDateKey(b.date));
+  const assigned = visibleBookings.filter((b) => b.assignedCabId && !isPastDateKey(b.date));
 
   // --- UNASSIGNED: group by route -------------------------------------------
   const routeGroups = {};
@@ -176,7 +188,7 @@ export default function BookingsScreen({ navigation }) {
     try {
       const res = await assignCabToGroup(selected, chosenCab);
       if (!res?.ok) {
-        // Guard rejected (e.g. a selected ride is now in the past).
+        // Guard rejected (no seats left, or the cab is on another trip then).
         setError(res?.message || 'Could not assign the cab. Please try again.');
         setPickerOpen(false);
         setSelected([]);
@@ -209,7 +221,9 @@ export default function BookingsScreen({ navigation }) {
             ({section.data.length})
           </Text>
         </View>
-        {/* No "Select all" for past rides — they can't be assigned. */}
+        {/* `isPastSection` is never set any more — earlier days don't reach this
+            screen at all, and today's overdue rides sit in their normal route
+            section where they can still be selected and given a cab. */}
         {!pastHeader && selectableCount > 0 && (
           <Button compact mode="text" onPress={() => selectGroup(section.data)}>
             Select all
@@ -336,7 +350,7 @@ export default function BookingsScreen({ navigation }) {
     const ticked = isSelected(item.id);
     const pendingCancel = hasPendingCancel(item);
     const past = isPast(item);
-    const expired = isExpired(item); // past + never assigned
+    const overdue = isOverdue(item); // time passed + still no cab (still assignable)
 
     return (
       <Pressable key={item.id} onPress={() => selectable && toggle(item.id)}>
@@ -361,14 +375,14 @@ export default function BookingsScreen({ navigation }) {
             <View style={styles.cardBody}>
               <View style={styles.rowBetween}>
                 <Text variant="titleMedium">{item.employeeName}</Text>
-                {expired ? (
+                {overdue ? (
                   <Chip
                     compact
                     icon="clock-alert-outline"
-                    style={styles.expiredChip}
+                    style={styles.overdueChip}
                     textStyle={styles.chipText}
                   >
-                    Expired
+                    Overdue
                   </Chip>
                 ) : (
                   <Chip
@@ -680,8 +694,11 @@ const styles = StyleSheet.create({
   cardSelected: { borderWidth: 2, borderColor: colors.primary },
   cardCancel: { borderWidth: 1, borderColor: '#F5B5B0' },
   cardNoShow: { borderLeftWidth: 5, borderLeftColor: colors.danger },
-  cardPast: { opacity: 0.6 },
-  expiredChip: { backgroundColor: '#757575' },
+  // Was `opacity: 0.6`. A dimmed card reads as disabled, and these rows are now
+  // the most actionable ones on the screen — an amber edge flags them instead.
+  cardPast: { borderLeftWidth: 5, borderLeftColor: '#B26A00' },
+  // Amber, not grey: an overdue ride is a live piece of work, not a closed one.
+  overdueChip: { backgroundColor: '#B26A00' },
   noShowBanner: {
     flexDirection: 'row',
     alignItems: 'center',

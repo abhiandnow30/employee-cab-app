@@ -1,10 +1,14 @@
 // ---------------------------------------------------------------------------
-// CHANGE REQUESTS — the four exceptions an employee can raise
+// CHANGE REQUESTS — the three exceptions an employee can raise
 //
 // The roster says who travels. A change request is how reality differs from the
-// roster on one particular day: someone takes leave, someone can't come in,
-// someone doesn't need one of their two cabs, someone is working a different
-// shift from the one HR rostered.
+// roster on one particular day: someone isn't coming in, someone doesn't need one
+// of their two cabs, someone is working a different shift from the one HR rostered.
+//
+// There were four. "Absent today" was retired because it did the same thing to the
+// cabs as "Leave" and only differed in whether the roster day got recoded — two
+// buttons, one outcome, and riders choosing between them at random. See the
+// retired entry in REQUEST_CATALOGUE for the full reasoning.
 //
 // WHAT IS DELIBERATELY NOT HERE. The company runs exactly two rides — the 8:00 PM
 // pickup for the Night shift and the 10:00 PM drop for the Afternoon shift — and
@@ -51,12 +55,21 @@ export const EFFECT = {
 
 // The catalogue. `form` lists the extra fields the employee is asked for beyond
 // date / reason / comments.
+//
+// `retired: true` means "still readable, no longer offered". A retired type keeps
+// its label, effect and consequence text so requests already in Firestore — and
+// any still sitting Pending — render and resolve exactly as they did; it is simply
+// filtered out of the employee's picker (see ChangeRequestScreen). Deleting the
+// entry outright would leave old rows labelled with a raw slug like "absent" and
+// no effect to resolve them by.
 export const REQUEST_CATALOGUE = [
   {
     type: REQUEST_TYPES.LEAVE,
     label: 'Leave',
     icon: 'calendar-remove',
-    blurb: "I'm on leave — cancel my cabs and mark the day as Leave.",
+    // Covers a planned day off AND "I can't come in today" — see the retired
+    // ABSENT entry below for why this one blurb has to carry both.
+    blurb: "I'm not coming in — cancel my cabs and mark the day as Leave.",
     routeTo: ROUTE_TO.COORDINATOR,
     effect: EFFECT.CANCEL_DAY,
     // Leave is a roster fact, so approving it rewrites the day's code to L.
@@ -64,6 +77,24 @@ export const REQUEST_CATALOGUE = [
     form: [],
   },
   {
+    // RETIRED (Aug 2026) — it was indistinguishable from Leave in practice.
+    //
+    // Both were `effect: CANCEL_DAY`, so both cancelled every cab that day. The
+    // only difference was that Leave also recoded the roster day to 'L' while this
+    // one left the roster saying the person was still expected to travel — an
+    // attendance distinction, invisible on the cab side. Two buttons that took the
+    // same inputs and produced the same outcome for the rider, so people picked at
+    // random. Worse, the label promised something the form didn't enforce: the date
+    // picker offered today through +14 days for BOTH, so "Absent today" was
+    // routinely raised for next week.
+    //
+    // Leave is the one kept because it is the durable half. Recoding the day to 'L'
+    // stops it GENERATING rides at all, whereas this type only suppressed them via
+    // excuseResolvedRequests() matching the resolved request document — delete or
+    // alter that row and the ride comes back. The reason list (Medical, Family
+    // emergency, Personal…) already carries why someone isn't travelling, which is
+    // all the desk needed this type for.
+    retired: true,
     type: REQUEST_TYPES.ABSENT,
     label: 'Absent today',
     icon: 'account-off',
@@ -91,6 +122,11 @@ export const REQUEST_CATALOGUE = [
     form: ['shiftCode'],
   },
 ];
+
+// What the employee may raise NOW. Everything else in the catalogue is history —
+// use REQUEST_CATALOGUE (or requestMeta) to READ an existing request, and this to
+// offer a new one.
+export const OFFERED_REQUESTS = REQUEST_CATALOGUE.filter((r) => !r.retired);
 
 export function requestMeta(type) {
   return REQUEST_CATALOGUE.find((r) => r.type === type) || null;

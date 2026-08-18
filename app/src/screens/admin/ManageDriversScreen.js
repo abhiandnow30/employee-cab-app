@@ -1,10 +1,16 @@
 // ---------------------------------------------------------------------------
 // DRIVERS  (coordinator) — the people who drive
 //
-// This screen owns DRIVER ACCOUNTS: add one, see who exists, see which cab each is
-// on, and read out the code each one signs in with. A driver is a login, not a name
-// written on a vehicle — they sign in to see their trips and to share the cab's
-// position, so adding one creates an account.
+// This screen owns DRIVER ACCOUNTS: add one, see who exists, and see which cab each
+// is on. A driver is a login, not a name written on a vehicle — they sign in to see
+// their trips and to share the cab's position, so adding one creates an account.
+//
+// IT NO LONGER PRINTS ANYONE'S LOGIN CODE (Aug 2026). The code is the driver's cab's
+// last 4 digits followed by their own mobile, so the desk states that rule and the
+// driver assembles it from the vehicle in front of them — displaying the join put a
+// working password on a shared screen for no gain, since the cab and the phone are
+// both already on the card. The drift warning stays: it is the only case where the
+// rule doesn't hold, and the only thing that should ever prompt a "Fix code".
 //
 // A NAME AND A PHONE IS THE WHOLE FORM. There is no email and no password: the
 // phone derives the address Firebase keys the account by, and the code the driver
@@ -19,7 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, FlatList, Platform } from 'react-native';
+import { StyleSheet, View, FlatList } from 'react-native';
 import {
   Text, Card, Chip, Button, Portal, Dialog, TextInput, HelperText, Snackbar,
   IconButton,
@@ -29,7 +35,9 @@ import { useApp } from '../../context/AppContext';
 import { subscribeDrivers } from '../../services/profile';
 import { cabCapacity } from '../../services/cabs';
 import {
-  formatLoginCode, isShareableCode, driverLoginCode, unassignedLoginCode,
+  // No formatter here any more — the code is never rendered. These two compute what
+  // the cab link (or the lack of one) implies, purely to detect drift.
+  driverLoginCode, unassignedLoginCode,
 } from '../../utils/driverLogin';
 import { colors } from '../../theme';
 
@@ -91,10 +99,14 @@ export default function ManageDriversScreen({ navigation }) {
     setRegenFor(driver.uid);
     const res = await regenerateDriverCode(driver);
     setRegenFor('');
+    // Says that it worked, not what the code is. A successful fix sets the stored
+    // code TO the value the cab link implies, so after this the spoken rule ("last 4
+    // digits of the cab, then your mobile") is correct again — which is the useful
+    // thing to tell the desk, and it isn't a secret.
     setSnack(
       res?.ok
         ? res.code
-          ? `Login code for ${driver.name || 'that driver'}: ${formatLoginCode(res.code)}`
+          ? `Fixed. ${driver.name || 'That driver'} signs in with their cab's last 4 digits followed by their mobile number.`
           : `${driver.name || 'That driver'}'s old login code has been withdrawn.`
         : res?.message || 'Could not fix that code.'
     );
@@ -132,12 +144,12 @@ export default function ManageDriversScreen({ navigation }) {
 
   function renderDriver({ item }) {
     const cab = cabOf(item.uid);
-    // Display the code STORED on the profile, never one recomputed here — the
-    // stored value mirrors the actual Firebase password, so a locally derived one
-    // would look perfectly plausible while signing nobody in.
-    const code = isShareableCode(item.loginCode) ? item.loginCode : '';
+    // NO CODE IS DISPLAYED. It is the cab's last 4 digits followed by this driver's
+    // mobile — the cab is named on this card and the phone is two lines above it, so
+    // printing the join only put a live password on a shared screen. The desk states
+    // the rule instead; see the header hint at the bottom of this file.
 
-    // But DO compute what the cab link implies, purely to compare. The two agree in
+    // The cab link's implied code is still computed, purely to compare. The two agree in
     // every normal case; they disagree only when a rotation stopped halfway (the
     // password changed and the mirror didn't, or neither did while the cab moved on)
     // — and that is the entire reason a repair action exists. Detecting it here is
@@ -189,27 +201,10 @@ export default function ManageDriversScreen({ navigation }) {
             </View>
           ) : (
             <Text variant="bodySmall" style={styles.pending}>
-              Not linked to a cab, so no trips can be assigned and there is no login
-              code yet. Link one on the Cabs tab.
+              Not linked to a cab, so no trips can be assigned and they cannot sign in
+              at all. Link one on the Cabs tab.
             </Text>
           )}
-
-          {/* THE CODE, when there is one and it is trustworthy. Selectable so it can
-              be copied on the web, and spaced into its two halves so it can be read
-              out over the phone. */}
-          {cab && code && !drifted ? (
-            <View style={styles.codeBox}>
-              <MaterialCommunityIcons name="dialpad" size={16} color={colors.primaryDark} />
-              <View style={styles.codeCol}>
-                <Text variant="bodySmall" style={styles.codeLabel}>
-                  Login code
-                </Text>
-                <Text variant="titleMedium" style={styles.codeValue} selectable>
-                  {formatLoginCode(code)}
-                </Text>
-              </View>
-            </View>
-          ) : null}
 
           {/* ONLY WHEN SOMETHING IS ACTUALLY WRONG. Says which way it is wrong,
               because the two directions have opposite consequences: a code that
@@ -223,7 +218,7 @@ export default function ManageDriversScreen({ navigation }) {
                 </Text>
                 <Text variant="bodySmall" style={styles.codeWarnText}>
                   {cab
-                    ? `This driver is on ${cab.cabNumber}, but the code on file doesn't match it. Don't hand it out — fix it first.`
+                    ? `This driver is on ${cab.cabNumber}, but the code on file doesn't match it — "last 4 digits + your mobile" will NOT let them in until this is fixed.`
                     : 'This driver has no cab, but an old code of theirs may still work. Fixing it withdraws that code.'}
                 </Text>
               </View>
@@ -252,7 +247,7 @@ export default function ManageDriversScreen({ navigation }) {
           <Text variant="bodySmall" style={styles.hint}>
             {readOnly
               ? 'The people who drive, and the cab each one is on. The coordinator maintains this list.'
-              : 'The people who drive. Which cab each one takes is set on the Fleet screen — this is the same link seen from the driver’s side.'}
+              : 'The people who drive. Which cab each one takes is set on the Fleet screen — this is the same link seen from the driver’s side. They sign in with their cab’s last 4 digits followed by their own mobile number.'}
           </Text>
           {readOnly ? null : (
             <Button mode="contained" icon="account-plus" onPress={openAdd}>
@@ -431,16 +426,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   cabText: { color: colors.primaryDark, fontWeight: '600' },
-  codeBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F3F0FA',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginTop: 8,
-  },
   codeBoxWarn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -453,14 +438,6 @@ const styles = StyleSheet.create({
   },
   codeCol: { flex: 1 },
   codeLabel: { color: colors.muted },
-  // Monospaced and loosely tracked: this gets read aloud and typed in by hand, so
-  // 0/O and 1/l must not be a guess.
-  codeValue: {
-    color: colors.text,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
   codeWarnText: { color: '#E65100', lineHeight: 18 },
   pending: { color: '#E65100', marginTop: 8, lineHeight: 18 },
   error: { color: colors.danger, padding: 12 },

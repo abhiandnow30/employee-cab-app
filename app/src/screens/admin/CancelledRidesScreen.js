@@ -2,8 +2,9 @@
 // CANCELLED RIDES  (admin)
 // A read-only list of every ride that ended up Cancelled, so the transport desk
 // can see WHO cancelled, WHICH ride, and WHY. Two ways a ride gets here:
-//   • the employee raised a change request (Leave, Absent, Cancel one ride,
-//     Shift changed) that the coordinator or admin resolved — cancelReason/
+//   • the employee raised a change request (Leave, Cancel one ride, Shift changed
+//     — or the retired Absent, on older rows) that the coordinator or admin
+//     resolved — cancelReason/
 //     cancelStatus/cancelResolvedAt are stamped onto the booking by
 //     services/changeRequests.js at resolution time, or
 //   • the employee removed the leg from their Weekly Schedule directly (no

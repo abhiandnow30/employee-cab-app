@@ -77,7 +77,18 @@ export const ADMIN_DRAWER_ITEMS = [
   // HR, so they have no address or route and no cab can be sent for them. HR
   // approves; the coordinator sets the route (same screen, see its header).
   { label: 'Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
-  { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
+  // WHERE "ALL BOOKINGS" USED TO BE. HR gets the day board here instead — the same
+  // screen the coordinator runs on, and the one place "Add a rider" exists, which is
+  // what HR actually needs: the monthly sheet always misses somebody (a mid-month
+  // joiner, someone who turns out to need a cab) and HR is usually who hears about
+  // it. Adding them writes the roster day, so the rider appears on the coordinator's
+  // board with no re-upload. HR needn't assign the cab — the rider shows as Waiting.
+  //
+  // The Bookings screen is NOT deleted: it is still registered for both desk roles
+  // in App.js and still in the coordinator's menu. Two things live only there, so if
+  // HR ever needs them again this is the line to restore: approving/rejecting a
+  // rider's cancellation REQUEST, and the by-cab view of the last 180 days.
+  { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
   // HR needs to SEE who is driving what — which cab a ride was given to, and which
   // driver account is behind it — without owning the fleet. These two screens
   // render read-only for the admin role; the coordinator keeps the controls.
