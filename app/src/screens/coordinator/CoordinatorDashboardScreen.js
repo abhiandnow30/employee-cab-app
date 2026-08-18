@@ -31,7 +31,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from 'react';
-import { StyleSheet, View, SectionList, Pressable } from 'react-native';
+import { StyleSheet, View, SectionList, Pressable, useWindowDimensions } from 'react-native';
 import {
   Text, Card, Chip, Button, SegmentedButtons, Portal, Dialog, RadioButton,
   TextInput, Snackbar, IconButton,
@@ -66,6 +66,19 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     routeOptions, setEmployeeRoute, employeeCancellationsOn, getCabById,
     employees, shiftPolicy, addRiderToDay,
   } = useApp();
+
+  // PHONE OR NOT. One breakpoint, matching ShiftPolicyScreen's — this board is
+  // either being read on a desk monitor or on the coordinator's phone in a car
+  // park, and there is nothing in between worth a third layout.
+  //
+  // What it changes is only ARRANGEMENT, never what is on screen: the four
+  // headline numbers wrap into a 2×2 grid instead of squeezing onto one row, the
+  // rider's name and its badges stack instead of competing for the same line, and
+  // the taps grow to the 44px a thumb needs. Nothing is hidden on a small screen —
+  // a coordinator working from their phone is working the same day, and a ride
+  // they cannot see is a ride nobody drives.
+  const { width } = useWindowDimensions();
+  const isMobile = width < 640;
 
   const [date, setDate] = useState(() => todayKey());
   // Grouping is FIXED to route — the "By route / By shift" toggle was removed from
@@ -301,11 +314,22 @@ export default function CoordinatorDashboardScreen({ navigation }) {
 
   function renderSectionHeader({ section }) {
     return (
-      <View style={styles.sectionHeader}>
+      <View style={[styles.sectionHeader, isMobile && styles.sectionHeaderMobile]}>
         <View style={styles.sectionTitleWrap}>
           {/* Always a route pin now — sections are always routes. */}
-          <MaterialCommunityIcons name="map-marker" size={17} color={colors.primaryDark} />
-          <Text variant="titleSmall" style={styles.sectionTitle} numberOfLines={1}>
+          <MaterialCommunityIcons
+            name="map-marker"
+            size={isMobile ? 15 : 17}
+            color={colors.primaryDark}
+          />
+          {/* One line, always. A route name that wraps pushes "Select N" off the
+              row and the group's heading stops looking like a heading — so on a
+              phone the type shrinks and the name ellipsises instead. */}
+          <Text
+            variant="titleSmall"
+            style={[styles.sectionTitle, isMobile && styles.sectionTitleMobile]}
+            numberOfLines={1}
+          >
             {section.title}
           </Text>
           <Text variant="bodySmall" style={styles.sectionCount}>
@@ -313,7 +337,16 @@ export default function CoordinatorDashboardScreen({ navigation }) {
           </Text>
         </View>
         {section.unassigned > 0 ? (
-          <Button compact mode="text" onPress={() => selectGroup(section.data)}>
+          <Button
+            compact
+            mode="text"
+            onPress={() => selectGroup(section.data)}
+            // The whole group in one tap — worth a thumb-sized target even
+            // though the label is small. hitSlop rather than padding, so the
+            // header row's height doesn't grow to accommodate it.
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+            labelStyle={isMobile ? styles.selectLabelMobile : undefined}
+          >
             Select {section.unassigned}
           </Button>
         ) : null}
@@ -330,18 +363,31 @@ export default function CoordinatorDashboardScreen({ navigation }) {
       <Pressable onPress={() => toggle(item.key)}>
         <Card style={[styles.card, ticked && styles.cardSelected]} mode="elevated">
           <Card.Content style={styles.cardRow}>
+            {/* The tick is a picture of the card's state, not a target of its own —
+                the whole card is the Pressable, which is already far past 44px in
+                both directions. Bigger on a phone simply so it reads at arm's
+                length. */}
             <MaterialCommunityIcons
               name={ticked ? 'checkbox-marked' : 'checkbox-blank-outline'}
-              size={22}
+              size={isMobile ? 26 : 22}
               color={ticked ? colors.primary : colors.muted}
-              style={styles.check}
+              style={[styles.check, isMobile && styles.checkMobile]}
             />
             <View style={styles.cardBody}>
-              <View style={styles.rowBetween}>
-                <Text variant="titleSmall" numberOfLines={1} style={styles.name}>
+              {/* NAME AND BADGES: side by side with room, stacked without. On a
+                  phone the two badges take most of a narrow row, squeezing the
+                  name to a few ellipsised characters — and the name is the one
+                  thing on the card the coordinator is looking for. Given its own
+                  line it stays whole and the badges sit under it. */}
+              <View style={[styles.rowBetween, isMobile && styles.rowStacked]}>
+                <Text
+                  variant="titleSmall"
+                  numberOfLines={isMobile ? 2 : 1}
+                  style={[styles.name, isMobile && styles.nameStacked]}
+                >
                   {item.employeeName}
                 </Text>
-                <View style={styles.chips}>
+                <View style={[styles.chips, isMobile && styles.chipsStacked]}>
                   <Chip
                     compact
                     style={{ backgroundColor: code.bg }}
@@ -457,7 +503,10 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             onPress={() => goToDate(shiftDateKey(date, -1))}
             accessibilityLabel="Previous day"
           />
-          <Pressable style={styles.datePill} onPress={() => goToDate(todayKey())}>
+          <Pressable
+            style={[styles.datePill, isMobile && styles.datePillMobile]}
+            onPress={() => goToDate(todayKey())}
+          >
             <MaterialCommunityIcons name="calendar-today" size={17} color={colors.primary} />
             <Text style={styles.dateText}>{prettyDate(date)}</Text>
             {date !== todayKey() ? <Text style={styles.dateReset}>· today</Text> : null}
@@ -473,14 +522,21 @@ export default function CoordinatorDashboardScreen({ navigation }) {
         {/* Headline numbers — and the board's filter. Each of the first three is
             a count of a slice of the day, so tapping one shows exactly the rides
             it counted. "In / Out" is a ratio across both slices rather than a
-            subset of them, so it stays a read-only figure. */}
-        <View style={styles.stats}>
+            subset of them, so it stays a read-only figure.
+
+            On a phone the four wrap into a 2×2 grid. Four across a 360px screen
+            leaves each about 80px, which is where "In / Out" starts ellipsising
+            and a two-digit count sits directly against its neighbour — and these
+            are the figures the whole board is read from. Two rows of two keeps
+            every number at full size and every tap a comfortable one. */}
+        <View style={[styles.stats, isMobile && styles.statsGrid]}>
           <Stat
             label="Rides"
             value={stats.total}
             active={rideFilter === 'all'}
             onPress={() => setRideFilter('all')}
             showsLabel="every ride"
+            half={isMobile}
           />
           <Stat
             label="Waiting"
@@ -489,6 +545,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             active={rideFilter === 'waiting'}
             onPress={() => setRideFilter('waiting')}
             showsLabel="only rides with no cab yet"
+            half={isMobile}
           />
           <Stat
             label="Assigned"
@@ -497,6 +554,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             active={rideFilter === 'assigned'}
             onPress={() => setRideFilter('assigned')}
             showsLabel="only rides that already have a cab"
+            half={isMobile}
           />
           {/* Off the WHOLE day (dayStats), not the current direction — this is the
               figure that says how the day splits, and it stays the same as you flip
@@ -505,6 +563,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             label="In / Out"
             value={`${dayStats.inbound}/${dayStats.outbound}`}
             tone="muted"
+            half={isMobile}
           />
         </View>
 
@@ -548,7 +607,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
           </Card>
         ) : null}
 
-        <View style={styles.controls}>
+        <View style={[styles.controls, isMobile && styles.controlsMobile]}>
           {/* DIRECTION — one of the two, never both. The "By route / By shift" control
               used to sit to the left of this; grouping is fixed to route now, so this
               is the board's only view control.
@@ -569,7 +628,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             value={legFilter}
             onValueChange={changeLegFilter}
             density="small"
-            style={styles.segmentedLeg}
+            style={[styles.segmentedLeg, isMobile && styles.segmentedLegMobile]}
             buttons={[
               {
                 value: 'in',
@@ -599,28 +658,19 @@ export default function CoordinatorDashboardScreen({ navigation }) {
               },
             ]}
           />
-          {/* The same filter as the numbers above, named rather than counted —
-              it says which slice is on screen without the coordinator having to
-              read the underline, and clears back to everything in one tap. */}
-          <Button
-            compact
-            mode={rideFilter === 'all' ? 'text' : 'contained-tonal'}
-            icon={rideFilter === 'all' ? 'filter-outline' : 'filter'}
-            onPress={() => setRideFilter(rideFilter === 'all' ? 'waiting' : 'all')}
-          >
-            {rideFilter === 'waiting'
-              ? 'Waiting only'
-              : rideFilter === 'assigned'
-              ? 'Assigned only'
-              : 'All rides'}
-          </Button>
           {/* Someone needs a cab tonight who the month's roster doesn't have
               working today. Without this the coordinator could see that and not
               fix it — Roster Upload is HR's screen and they may well have gone
               home. HR reaches this same button from their own drawer, which is the
               other half of the problem: they are often the one told about a new
               joiner. One day only; a stretch of days is still Roster Upload. */}
-          <Button compact mode="text" icon="account-plus" onPress={openAddRider}>
+          <Button
+            compact
+            mode="text"
+            icon="account-plus"
+            onPress={openAddRider}
+            style={styles.addRider}
+          >
             Add a rider
           </Button>
         </View>
@@ -937,7 +987,9 @@ export default function CoordinatorDashboardScreen({ navigation }) {
 // plain figure (see "In / Out"), which is why the wrapper is chosen per call
 // rather than always being pressable: a Pressable that does nothing still
 // invites a tap.
-function Stat({ label, value, tone, active = false, onPress, showsLabel = '' }) {
+// `half` is the phone layout: the stat takes half the row so four of them wrap
+// into a 2×2 grid, and grows its own height to the 44px a thumb needs.
+function Stat({ label, value, tone, active = false, onPress, showsLabel = '', half = false }) {
   const color =
     tone === 'good' ? colors.success
     : tone === 'warn' ? '#B26A00'
@@ -953,11 +1005,17 @@ function Stat({ label, value, tone, active = false, onPress, showsLabel = '' }) 
       </Text>
     </>
   );
-  if (!onPress) return <View style={styles.stat}>{body}</View>;
+  if (!onPress) return <View style={[styles.stat, half && styles.statHalf]}>{body}</View>;
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.stat, styles.statTappable, active && { borderBottomColor: color }]}
+      style={[
+        styles.stat,
+        styles.statTappable,
+        half && styles.statHalf,
+        half && styles.statTappableMobile,
+        active && { borderBottomColor: color },
+      ]}
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
       accessibilityLabel={`${label}: ${value}.${showsLabel ? ` Show ${showsLabel}.` : ''}`}
@@ -996,6 +1054,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
+  // "Today" is a one-tap trip back from wherever the arrows took you, so it gets
+  // the full 44px on a phone — 8px of padding around a 15px line lands at ~37.
+  datePillMobile: { paddingVertical: 11, paddingHorizontal: 14 },
   dateText: { fontWeight: '600', color: colors.primaryDark, fontSize: 15 },
   dateReset: { color: colors.primary, fontSize: 12 },
 
@@ -1005,7 +1066,13 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 8,
   },
+  // 2×2 on a phone. `stats` is already a row, so wrapping plus a half-width
+  // basis on each child is the whole grid — no second container.
+  statsGrid: { flexWrap: 'wrap', rowGap: 6 },
   stat: { alignItems: 'center', minWidth: 64 },
+  // Just under half, so two sit per row with the row-gap between them and the
+  // third and fourth drop to the second line.
+  statHalf: { flexBasis: '46%', flexGrow: 1 },
   // A transparent border on every tappable stat, coloured in only when it's the
   // active one — so selecting a filter can't shift the row's height.
   statTappable: {
@@ -1014,6 +1081,8 @@ const styles = StyleSheet.create({
     paddingBottom: 2,
     paddingHorizontal: 6,
   },
+  // The number and its label come to ~40px; this takes the filter past 44.
+  statTappableMobile: { paddingTop: 4, paddingBottom: 6 },
   statValue: { fontWeight: 'bold' },
   statLabel: { color: colors.muted },
 
@@ -1025,11 +1094,28 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
     flexWrap: 'wrap',
   },
+  // Tighter gutters so IN/OUT and "Add a rider" still share one row on a 360px
+  // screen. flexWrap above is the safety net for anything narrower.
+  controlsMobile: { gap: 6, paddingHorizontal: 6 },
   // Two short segments. It no longer shares the row with a grouping control, so it
   // takes only the width it needs and the filter/Add-a-rider buttons keep the rest.
   // 200, not 170: at 170 each half was ~85px and a bold "OUT" beside its icon
   // ellipsised to "O…", which is the one word on the control that has to be legible.
   segmentedLeg: { flexGrow: 0, flexShrink: 0, minWidth: 200 },
+  // 176 is the floor that still fits a bold "OUT" beside its icon — the reason
+  // the desktop minimum is 200 in the first place. Any narrower and the label
+  // ellipsises, so below this the row wraps rather than the words breaking.
+  segmentedLegMobile: { minWidth: 176 },
+  // Pushed to the far right of the row, away from IN/OUT. Those two decide which
+  // list is on screen; this one opens a dialog and changes the day's roster — sat
+  // directly beside them it read as a third segment of the same control. The gap
+  // between is the separation.
+  //
+  // marginLeft:auto rather than justifyContent on the row, because the row wraps
+  // on a very narrow screen: 'space-between' would drop the button to a second
+  // line and then align it LEFT again, whereas auto margin keeps it right
+  // wherever it lands.
+  addRider: { marginLeft: 'auto' },
   // THE ACTIVE HALF. Filled with the brand blue — the same colour the sidebar and
   // primary buttons use, so this reads as part of the app rather than a new idea.
   // Paper applies a segment's own `style` last ([buttonStyle, styles.button, style]
@@ -1057,27 +1143,73 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 8,
   },
+  sectionHeaderMobile: { paddingLeft: 8, paddingRight: 2, marginTop: 6, marginBottom: 6 },
   sectionTitleWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
   sectionTitle: { color: colors.primaryDark, fontWeight: 'bold', flexShrink: 1 },
+  sectionTitleMobile: { fontSize: 13 },
   sectionCount: { color: colors.primaryDark, opacity: 0.7 },
+  selectLabelMobile: { fontSize: 12, marginHorizontal: 4 },
 
   card: { marginBottom: 10 },
   cardSelected: { borderWidth: 2, borderColor: colors.primary },
   cardRow: { flexDirection: 'row', alignItems: 'flex-start' },
   check: { marginRight: 10, marginTop: 2 },
-  cardBody: { flex: 1 },
+  // Clear air between the tick and the name it belongs to, so a thumb aiming at
+  // one doesn't obscure the other.
+  checkMobile: { marginRight: 14, marginTop: 1 },
+  // EVERYTHING RIGHT OF THE TICK, and it must fill the card. Without flex: 1 this
+  // View sizes to its own widest line — the address — so the card looks full width
+  // while its contents end early, and the badges pinned "right" land against the
+  // address instead of the card's edge. minWidth: 0 lets it shrink below that
+  // content width too, so a long address wraps rather than widening the card.
+  cardBody: { flex: 1, minWidth: 0 },
   rowBetween: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+    // Takes the card's full width, so "the right" means the card's right edge and
+    // not wherever this row's own content happens to end. Without it the row can
+    // be sized to its content inside the column, and the badges drift inward by a
+    // different amount on every card — which is exactly how they were landing.
+    alignSelf: 'stretch',
   },
-  name: { flex: 1 },
-  chips: { flexDirection: 'row', gap: 6 },
+  // The phone version of the same row: name on its own line, badges beneath it,
+  // both left-aligned with everything else on the card.
+  rowStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: 4 },
+  // minWidth: 0 lets a long name ellipsise instead of pushing the badges off the
+  // right edge — a flex item's default floor is its content, which a name can
+  // easily exceed.
+  name: { flex: 1, minWidth: 0 },
+  // flex: 1 is what shares a ROW; stacked, it would fight the column's height
+  // instead. Full width and no flex is the same instruction in one direction.
+  nameStacked: { flex: 0, width: '100%' },
+  // HARD RIGHT. The auto margin eats all the free space to the badges' left, so
+  // the shift code and the status sit against the card's right edge on every row
+  // and read as a column down the board — the coordinator scans "who is still
+  // Pending" vertically, which only works if they all start at the same x.
+  // Belt and braces with the row's space-between, deliberately: it is the badges'
+  // OWN style, so it survives the row being restyled or stacked.
+  // flexShrink: 0 keeps the two chips full-size and on one line; they are short
+  // and squeezing "Pending" is never the right sacrifice.
+  chips: { flexDirection: 'row', gap: 6, marginLeft: 'auto', flexShrink: 0 },
+  // Stacked, the row above is a COLUMN — and an auto left margin in a column
+  // pushes across the cross axis, which would fling the badges to the far right
+  // on their own line, adrift from the name they describe. Back to zero so they
+  // line up under the name with the route and address lines below.
+  chipsStacked: { marginLeft: 0 },
   metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginTop: 4 },
   meta: { color: colors.muted, flex: 1 },
   overnight: { color: '#4527A0', marginTop: 4, fontStyle: 'italic' },
-  noRouteRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  // Wraps, because "No route set" plus a Set route button is close to a narrow
+  // card's full width.
+  noRouteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+    flexWrap: 'wrap',
+  },
   noRouteText: { color: '#B26A00' },
   assignedText: { color: colors.success, fontWeight: 'bold', marginTop: 6 },
 

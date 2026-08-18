@@ -43,6 +43,16 @@ export const ADMIN_HISTORY_DAYS = 180;
 // Hard ceiling on the admin list, so one very busy period can't blow up memory.
 export const ADMIN_MAX_BOOKINGS = 2000;
 
+// How far back a DRIVER's trip list reaches. One day, not zero: the night run is a
+// 10 PM drop, so a driver still finishing it at 00:10 would otherwise watch their
+// in-progress trips vanish at midnight. The screen narrows this further — see
+// DriverHomeScreen — but the subscription has to fetch yesterday for it to be able
+// to.
+export const DRIVER_WINDOW_DAYS = 1;
+// Backstop only. Two days of one cab is a couple of dozen trips at most; this is
+// here so a data problem can't stream thousands of documents onto a phone.
+export const DRIVER_MAX_TRIPS = 200;
+
 // Newest first. Pending local writes have no server timestamp yet, so treat
 // those as newest so a just-created booking jumps to the top immediately.
 function byNewest(a, b) {
@@ -166,10 +176,69 @@ export function subscribeAllBookings(cb, onError, { sinceDays = ADMIN_HISTORY_DA
   return onSnapshot(q, (snap) => cb(toList(snap)), onError);
 }
 
-// Live list of bookings assigned to one cab (driver). Returns an unsubscribe fn.
-export function subscribeCabBookings(cabId, cb, onError) {
-  const q = query(collection(firestore, COL), where('assignedCabId', '==', cabId));
-  return onSnapshot(q, (snap) => cb(toList(snap)), onError);
+// Live list of bookings assigned to one cab (driver), bounded to the current run's
+// window. Returns an unsubscribe fn.
+//
+// THIS USED TO BE UNBOUNDED — `where('assignedCabId', '==', cabId)` and nothing
+// else — so it streamed every trip the cab had ever been given. Two problems, one
+// visible and one not: the driver's screen showed last week's finished trips next
+// to tonight's, and the payload grew forever (~700 documents after a year of two
+// trips a day, re-fetched on every load, to render tonight's two).
+//
+// `date` is an ISO "YYYY-MM-DD" string, so a string range orders correctly. But an
+// equality on one field plus a range on another needs a COMPOSITE INDEX
+// (assignedCabId ASC, date ASC) — it is in firestore.indexes.json and must be
+// deployed:  firebase deploy --only firestore:indexes
+//
+// Until that index exists Firestore rejects the query with `failed-precondition`,
+// which would leave every driver looking at an empty list. So that one error falls
+// back to the old unbounded query with the same filter applied client-side: the
+// driver sees the correct trips either way, and the console says which path ran.
+// Remove the fallback once the index is deployed everywhere, if you'd rather the
+// misconfiguration be loud.
+export function subscribeCabBookings(cabId, cb, onError, { sinceDays = DRIVER_WINDOW_DAYS } = {}) {
+  const from = shiftDateKey(todayKey(), -sinceDays);
+  const inWindow = (list) => list.filter((b) => String(b.date || '') >= from);
+  let active = null;
+  let stopped = false;
+
+  function openUnbounded(reason) {
+    console.warn(
+      '[bookings] cab trip query needs a composite index (assignedCabId, date) — ' +
+        'falling back to an unbounded read. Deploy firestore.indexes.json. ' +
+        reason
+    );
+    if (stopped) return;
+    const q = query(collection(firestore, COL), where('assignedCabId', '==', cabId));
+    active = onSnapshot(q, (snap) => cb(inWindow(toList(snap))), onError);
+  }
+
+  const q = query(
+    collection(firestore, COL),
+    where('assignedCabId', '==', cabId),
+    where('date', '>=', from),
+    limit(DRIVER_MAX_TRIPS)
+  );
+  active = onSnapshot(
+    q,
+    (snap) => cb(toList(snap)),
+    (err) => {
+      if (stopped) return;
+      // A missing index is a deployment state, not a failure the driver can act
+      // on. Anything else (permission denied, offline) is a real error and goes
+      // to the caller as before.
+      if (err?.code === 'failed-precondition') {
+        openUnbounded(err?.message || '');
+        return;
+      }
+      onError?.(err);
+    }
+  );
+  // Reads `active` at call time, so it stops whichever listener is the live one.
+  return () => {
+    stopped = true;
+    if (active) active();
+  };
 }
 
 // A batch rather than a plain update: the cab and the rider's start OTP have to

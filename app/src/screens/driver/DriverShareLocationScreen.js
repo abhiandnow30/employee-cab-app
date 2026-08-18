@@ -25,6 +25,8 @@ export default function DriverShareLocationScreen({ navigation }) {
     sharingError,
     startSharingLocation,
     stopSharingLocation,
+    sharingBackground,
+    trackingFresh,
   } = useApp();
   const cabId = currentUser?.cabId;
   const cab = cabId ? getCabById(cabId) : null;
@@ -68,9 +70,18 @@ export default function DriverShareLocationScreen({ navigation }) {
             </View>
           ) : null}
 
+          {/* The same four states the dashboard shows, for the same reason: a screen
+              that says "sharing" while nothing is published is worse than one that
+              admits it doesn't know. */}
           <Text variant="bodyLarge" style={styles.status}>
             {sharing
-              ? '🟢 Sharing live location'
+              ? trackingFresh === false
+                ? '⚠️ On, but no GPS signal reaching the server'
+                : trackingFresh === null
+                  ? '🟡 Starting — waiting for the first fix'
+                  : sharingBackground
+                    ? '🟢 Sharing live location (continues in the background)'
+                    : '🟢 Sharing live location — only while this app is open'
               : busy
                 ? 'Requesting permission…'
                 : denied
@@ -79,6 +90,19 @@ export default function DriverShareLocationScreen({ navigation }) {
                     ? '⚠️ Error'
                     : 'Not sharing'}
           </Text>
+          {/* WHY THIS DISTINCTION IS SPELLED OUT. Foreground-only means the cab goes
+              dark the moment the driver locks the phone or opens Google Maps from the
+              Navigate button — which is most of a trip. The fix is a system setting,
+              so the driver has to be told what to change. */}
+          {sharing && !sharingBackground ? (
+            <View style={styles.warnBox}>
+              <Text variant="bodySmall" style={styles.warnText}>
+                Set location access to “Allow all the time” in your phone's settings
+                so employees keep seeing your cab when your screen is off or you
+                switch to a navigation app.
+              </Text>
+            </View>
+          ) : null}
 
           {sharingCoords && (
             <Text variant="bodySmall" style={styles.coords}>

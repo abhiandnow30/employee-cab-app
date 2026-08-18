@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Platform } from 'react-native';
 import * as Location from 'expo-location';
 import {
   STATUS, CANCEL_STATUS, CANCEL_CUTOFF_HOURS, CAB_ROUTES,
@@ -66,7 +67,14 @@ import {
   stampBookingEmpIds,
 } from '../services/bookings';
 import { addFeedbackDoc, addRatingDoc } from '../services/feedback';
-import { updateMyLocation, clearMyLocation } from '../services/tracking';
+import {
+  updateMyLocation, clearMyLocation, claimLocationNode, releaseLocationNode,
+  LIVE_WINDOW_MS,
+} from '../services/tracking';
+// NATIVE ONLY. expo-task-manager has no web build, and importing it in a browser
+// bundle throws at module load — so the background task is required lazily, inside
+// the native branches below, and web keeps the foreground watcher it always had.
+// eslint-disable-next-line global-require
 import {
   subscribeCabs, removeCabSafely, unlinkCabDriver, linkCabDriver, cabCapacity,
   addCab, updateCab,
@@ -529,7 +537,12 @@ export function AppProvider({ children }) {
   }
 
   async function logout() {
-    stopSharingLocation();
+    // AWAITED, deliberately. stopSharingLocation now also stops the OS task and
+    // deletes driverLocations/<uid>, and that delete needs the auth token — signing
+    // out first would have the rules refuse it and leave the last fix published for
+    // a driver who is no longer signed in. onDisconnect would eventually clear it,
+    // but "eventually" is a minute of a phantom cab on the desk's map.
+    await stopSharingLocation();
     await signOutUser();
   }
 
@@ -597,7 +610,9 @@ export function AppProvider({ children }) {
     if (currentUser.role === 'admin' || currentUser.role === 'coordinator') {
       unsub = subscribeAllBookings(setBookings, onErr);
     } else if (currentUser.role === 'driver') {
-      // Drivers see trips assigned to their cab.
+      // Drivers see trips assigned to their cab, and only for the current run's
+      // window — the query is date-bounded (DRIVER_WINDOW_DAYS in services/bookings)
+      // rather than streaming every trip the cab has ever been given.
       unsub = currentUser.cabId
         ? subscribeCabBookings(currentUser.cabId, setBookings, onErr)
         : (setBookings([]), () => {});
@@ -841,34 +856,116 @@ export function AppProvider({ children }) {
   // database rules only let a driver write their own node, so no one can spoof
   // another cab's position.
   //
-  // NOTE: this is foreground sharing (while the app is open). True background
-  // sharing (phone locked) needs expo-task-manager + a custom dev build.
+  // TWO PATHS, ONE FEED.
+  //
+  //   NATIVE — Location.startLocationUpdatesAsync drives a TaskManager task (see
+  //     services/locationTask.js). Tracking survives the phone locking, a call, and
+  //     the driver switching to Google Maps via Navigate. Requires a development or
+  //     production build: background location does NOT work in Expo Go.
+  //   WEB — the original watchPositionAsync watcher. The browser has no background
+  //     location at all: updates stop when the tab is hidden or the laptop sleeps.
+  //     Kept because the desk and employees use the web app, and it is honest about
+  //     what it is — `trackingBackground` below tells the UI which path is running.
+  //
+  // The published data is identical either way: updateMyLocation() writing
+  // driverLocations/<uid> with a server timestamp.
   const [sharingLocation, setSharingLocation] = useState(false);
   const [sharingCoords, setSharingCoords] = useState(null);
   const [sharingError, setSharingError] = useState('');
+  // When the last fix was actually WRITTEN, not when the switch was flipped.
+  // "The switch is on" and "GPS is reaching the database" are different facts, and
+  // the OTP gate needs the second one — see trackingFresh below.
+  const [sharingSince, setSharingSince] = useState(null);
+  // Whether the OS task is running (survives backgrounding) or only the foreground
+  // watcher is. The driver is told which, because the difference is the whole point.
+  const [sharingBackground, setSharingBackground] = useState(false);
+  const [lastFixAt, setLastFixAt] = useState(null);
   const locationWatcher = useRef(null);
   const sharingUid = useRef(null);
 
-  function stopSharingLocation() {
+  // Every published fix funnels through here, on both paths, so freshness is
+  // measured in one place.
+  const notePublishedFix = useCallback((coords) => {
+    setSharingCoords(coords);
+    setLastFixAt(Date.now());
+  }, []);
+
+  async function stopSharingLocation() {
+    // Foreground watcher (web, and the first fix on native).
     if (locationWatcher.current) {
       locationWatcher.current.remove();
       locationWatcher.current = null;
     }
-    // Clear the published position too. Leaving the last fix behind made a
-    // parked cab look live to every employee watching it.
+    // The OS-driven task. Stopped before the node is cleared, or a fix already in
+    // flight could re-create what we just deleted.
+    if (Platform.OS !== 'web') {
+      try {
+        const task = require('../services/locationTask');
+        await task.forgetSharingDriver();
+        await task.stopBackgroundUpdates();
+      } catch (e) {
+        console.warn('[tracking] could not stop background updates:', e?.message);
+      }
+    }
+    // Clear the published position too. Leaving the last fix behind made a parked
+    // cab look live to every employee watching it.
     if (sharingUid.current) {
-      clearMyLocation(sharingUid.current).catch((e) =>
+      const uid = sharingUid.current;
+      // TWO INDEPENDENT CALLS, NOT A CHAIN. Clearing the node was chained behind
+      // the onDisconnect cancel with .finally() — so if that acknowledgement never
+      // came back, the position was never deleted and the cab stayed on the desk's
+      // map after the driver switched sharing off. The delete is the part that
+      // matters, so nothing is allowed to gate it.
+      clearMyLocation(uid).catch((e) =>
         console.warn('[tracking] could not clear location:', e?.message)
+      );
+      // Cancel the standing server-side delete too: this is a deliberate stop, and a
+      // queued onDisconnect could otherwise fire against a node the driver
+      // legitimately starts publishing to again later in the same session.
+      releaseLocationNode(uid).catch((e) =>
+        console.warn('[tracking] could not cancel onDisconnect:', e?.message)
       );
       sharingUid.current = null;
     }
     setSharingLocation(false);
+    setSharingBackground(false);
     setSharingCoords(null);
+    setSharingSince(null);
+    setLastFixAt(null);
   }
 
   // Start streaming this device's location for the driver's cab. Returns
   // { ok, denied?, message? } so the caller can show the right feedback.
-  async function startSharingLocation() {
+  // The foreground watcher. On WEB it is the whole implementation; on NATIVE it
+  // runs alongside the task purely to get a first fix on screen immediately — the
+  // OS task's first delivery can be several seconds out, and a driver watching
+  // "Waiting for GPS" while nothing happens turns sharing off again.
+  async function startForegroundWatcher(uid) {
+    if (locationWatcher.current) locationWatcher.current.remove();
+    locationWatcher.current = await Location.watchPositionAsync(
+      { accuracy: Location.Accuracy.High, distanceInterval: 5, timeInterval: 3000 },
+      (loc) => {
+        const { latitude, longitude } = loc.coords;
+        notePublishedFix({ latitude, longitude });
+        updateMyLocation(uid, { latitude, longitude }).catch((e) => {
+          // A rejected write means the rules refused it, or we're offline — say so
+          // rather than silently pretending to broadcast.
+          console.warn('[tracking] location write failed:', e?.message);
+          setSharingError('Could not publish your location. Check your connection.');
+        });
+      }
+    );
+  }
+
+  // Start publishing this driver's location. Returns { ok, denied?, message? } so
+  // the caller can show the right feedback.
+  //
+  // `resumed` is set by the restart path below: it suppresses the background
+  // permission PROMPT, because a driver reopening the app has not asked for
+  // anything and should not be interrogated by a system dialog on launch. If the
+  // grant is already there the task starts silently; if it isn't, sharing comes
+  // back as foreground-only and says so.
+  async function startSharingLocation({ resumed = false } = {}) {
     setSharingError('');
     const uid = currentUser?.uid;
     if (!currentUser?.cabId) {
@@ -876,29 +973,62 @@ export function AppProvider({ children }) {
       setSharingError(message);
       return { ok: false, message };
     }
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
+
+    // FOREGROUND FIRST, ALWAYS. expo-location refuses background permission unless
+    // foreground is already granted, so the order here is a requirement of the API
+    // and not a preference.
+    const fg = await Location.requestForegroundPermissionsAsync();
+    if (fg.status !== 'granted') {
       setSharingError('Location permission denied.');
       return { ok: false, denied: true };
     }
+
+    let background = false;
+    if (Platform.OS !== 'web') {
+      try {
+        // "Allow all the time" on Android / "Always" on iOS. A refusal is NOT a
+        // failure: the driver still gets foreground tracking, which is what the app
+        // had before, and the UI is told which one is running.
+        const bg = resumed
+          ? await Location.getBackgroundPermissionsAsync()
+          : await Location.requestBackgroundPermissionsAsync();
+        background = bg.status === 'granted';
+      } catch (e) {
+        console.warn('[tracking] background permission check failed:', e?.message);
+      }
+    }
+
     try {
-      if (locationWatcher.current) locationWatcher.current.remove();
       sharingUid.current = uid;
-      locationWatcher.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, distanceInterval: 5, timeInterval: 3000 },
-        (loc) => {
-          const { latitude, longitude } = loc.coords;
-          setSharingCoords({ latitude, longitude });
-          updateMyLocation(uid, { latitude, longitude }).catch((e) => {
-            // A rejected write means the rules refused it — tell the driver
-            // rather than silently pretending to broadcast.
-            console.warn('[tracking] location write failed:', e?.message);
-            setSharingError('Could not publish your location. Check your connection.');
-          });
-        }
+      // NOT AWAITED. This is a server-side safety net, and it was blocking the thing
+      // it protects: `.remove()` only resolves once RTDB acknowledges it, so on a
+      // slow or proxied connection the driver could never turn sharing on. Tracking
+      // starts now; the cleanup registers as soon as the socket allows, and until it
+      // does, LIVE_WINDOW_MS is what stops a stale fix reading as live.
+      claimLocationNode(uid).catch((e) =>
+        console.warn('[tracking] onDisconnect arming failed:', e?.message)
       );
+
+      if (background) {
+        const task = require('../services/locationTask');
+        // Persist the intent + uid first: the task reads both, and on Android it can
+        // start delivering the instant startBackgroundUpdates resolves.
+        await task.rememberSharingDriver(uid);
+        await task.startBackgroundUpdates();
+      }
+      // Always run the foreground watcher too — see the note on it above.
+      await startForegroundWatcher(uid);
+
       setSharingLocation(true);
-      return { ok: true };
+      setSharingBackground(background);
+      setSharingSince(Date.now());
+      if (!background && Platform.OS !== 'web') {
+        setSharingError(
+          'Tracking only while the app is open. Allow location "all the time" in ' +
+            'settings so the cab stays visible when your screen is off.'
+        );
+      }
+      return { ok: true, background };
     } catch (e) {
       sharingUid.current = null;
       const message = e.message || 'Could not start location updates.';
@@ -908,11 +1038,72 @@ export function AppProvider({ children }) {
   }
 
   // Stop sharing automatically if the user logs out or is no longer a driver
-  // with a cab — never keep broadcasting for someone who shouldn't be.
+  // with a cab — never keep broadcasting for someone who shouldn't be. This also
+  // clears the persisted intent, so a driver whose cab was unlinked doesn't have
+  // tracking silently resume the next time they open the app.
   useEffect(() => {
     if (!currentUser || currentUser.role !== 'driver' || !currentUser.cabId) {
       stopSharingLocation();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid, currentUser?.role, currentUser?.cabId]);
+
+  // RESUME AFTER A RESTART.
+  //
+  // The switch used to be plain React state initialised to false, so any reload,
+  // crash or OS process kill left sharing off with nothing saying so — the driver
+  // had to notice and turn it back on. The intent now lives in AsyncStorage, and
+  // this is what honours it.
+  //
+  // THREE RULES, ALL OF THEM ABOUT NOT LYING:
+  //   • Only resume if the driver had it ON. A deliberate OFF stays off — this
+  //     never re-enables tracking behind their back.
+  //   • Only resume if the permission is still granted. It can be revoked from
+  //     system settings between runs, and `resumed: true` means we CHECK the
+  //     background grant rather than prompting on launch.
+  //   • If it can't resume, leave the switch OFF and put the reason in
+  //     sharingError. Showing "ON" while nothing is publishing is the one outcome
+  //     worth going out of the way to prevent.
+  useEffect(() => {
+    if (Platform.OS === 'web') return; // no background task, nothing to resume
+    if (currentUser?.role !== 'driver' || !currentUser?.cabId) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const task = require('../services/locationTask');
+        const { wanted, uid } = await task.readSharingIntent();
+        if (cancelled || !wanted) return;
+        // Belt and braces: the stored uid must be THIS driver. A shared device that
+        // switched accounts must not resume publishing under the previous one.
+        if (uid && uid !== currentUser.uid) {
+          await task.forgetSharingDriver();
+          await task.stopBackgroundUpdates();
+          return;
+        }
+        const fg = await Location.getForegroundPermissionsAsync();
+        if (fg.status !== 'granted') {
+          await task.forgetSharingDriver();
+          await task.stopBackgroundUpdates();
+          if (!cancelled) {
+            setSharingError(
+              'Location sharing was on, but permission is no longer granted. Turn it back on to share your cab.'
+            );
+          }
+          return;
+        }
+        // The OS may still be running the task from before the restart. Either way
+        // startSharingLocation is idempotent — startBackgroundUpdates checks
+        // hasStartedLocationUpdatesAsync first.
+        if (!cancelled) await startSharingLocation({ resumed: true });
+      } catch (e) {
+        console.warn('[tracking] could not resume sharing:', e?.message);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.uid, currentUser?.role, currentUser?.cabId]);
 
@@ -2391,6 +2582,18 @@ export function AppProvider({ children }) {
     sharingError,
     startSharingLocation,
     stopSharingLocation,
+    sharingBackground,
+    sharingSince,
+    lastFixAt,
+    // IS GPS ACTUALLY REACHING THE DATABASE? `sharingLocation` only says the switch
+    // is on and a watcher was created; this says a fix was published inside the
+    // same freshness window employees judge the cab by, so the driver's screen and
+    // the rider's screen can never disagree about whether the cab is live.
+    //
+    // Null until the first fix — deliberately three states, not two: "on but no fix
+    // yet" is normal for the first few seconds and must not read as a failure.
+    trackingFresh:
+      sharingLocation && lastFixAt ? Date.now() - lastFixAt < LIVE_WINDOW_MS : null,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

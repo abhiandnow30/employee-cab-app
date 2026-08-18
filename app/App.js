@@ -104,8 +104,12 @@ const linking = {
       AddressRequests: 'address-requests',
       CabRequests: 'cab-requests',
       Messages: 'messages',
-      // Coordinator
-      CoordinatorHome: 'coordinator',
+      // Coordinator — and HR/Admin. The screen NAME still says CoordinatorHome
+      // because that is where it started, but the board is shared by both desk
+      // roles (see the Stack.Screen comment) and "Today's Rides" is the label both
+      // of them see in their own menu. A URL saying /coordinator while an admin
+      // reads it invites the question of whether they are on the wrong screen.
+      CoordinatorHome: 'todays-rides',
       Requests: 'requests',
       // Driver
       DriverHome: 'driver',
@@ -237,7 +241,7 @@ function AppHeader({ navigation, route, options, back }) {
         <Appbar.Content
           title={title}
           color="#FFFFFF"
-          titleStyle={styles.appbarTitle}
+          titleStyle={[styles.appbarTitle, width < 640 && styles.appbarTitleSmall]}
           style={styles.appbarContent}
           // Tapping the brand title returns to the role's home screen.
           onPress={currentUser ? () => navigation.navigate(homeRoute) : undefined}
@@ -869,6 +873,10 @@ const styles = StyleSheet.create({
   // that hides the sidebar and title behind the edge of the screen.
   appbarContent: { alignItems: 'center', minWidth: 0 },
   appbarTitle: { fontWeight: 'bold', letterSpacing: 0.3, textAlign: 'center' },
+  // On a phone the title shares the bar with the ☰ button, the logo chip and —
+  // for an employee — three action icons. At the default size it truncates; 18
+  // keeps the whole screen name readable in the space that's left.
+  appbarTitleSmall: { fontSize: 18 },
   msgDialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
   splash: {
     flex: 1,

@@ -27,6 +27,37 @@ export function shiftDateKey(dateKey, days) {
   return `${date.getFullYear()}-${mm}-${dd}`;
 }
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+// "2026-08-19" → "Wed 19 Aug". THE one date format shown to a person: an ISO key
+// is how dates are stored, compared and keyed, and it should never reach a screen
+// — nobody reads "2026-08-19" and thinks "tomorrow". An unparseable key comes back
+// unchanged rather than as "NaN", so a bad document shows something honest.
+export function prettyDateKey(dateKey) {
+  const [y, m, d] = String(dateKey || '').split('-').map((n) => parseInt(n, 10));
+  if (!y || !m || !d) return String(dateKey || '');
+  const date = new Date(y, m - 1, d);
+  return `${DAY_NAMES[date.getDay()]} ${String(d).padStart(2, '0')} ${MONTH_NAMES[m - 1]}`;
+}
+
+// "Today" / "Tomorrow" / "Yesterday", or null for any other day. These three are
+// how a rider actually thinks about their cab, and they answer "is this the one
+// I'm waiting for?" without the reader having to work out what today's date is.
+// Null rather than a fallback string, so the caller can decide whether to prefix
+// it or show the plain date on its own.
+export function relativeDayLabel(dateKey) {
+  const key = String(dateKey || '');
+  if (!key) return null;
+  const today = todayKey();
+  if (key === today) return 'Today';
+  if (key === shiftDateKey(today, 1)) return 'Tomorrow';
+  if (key === shiftDateKey(today, -1)) return 'Yesterday';
+  return null;
+}
+
 // "07:00 AM" / "05:00 PM" → minutes since midnight (null if not a time).
 export function timeToMinutes(str) {
   const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(String(str).trim());

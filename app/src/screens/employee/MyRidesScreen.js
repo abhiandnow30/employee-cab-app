@@ -12,8 +12,8 @@
 // in firestore.rules against the server clock.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, FlatList } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, View, SectionList, useWindowDimensions } from 'react-native';
 import {
   Text, Card, Chip, Divider, Button, Portal, Dialog, TextInput,
   HelperText, Snackbar,
@@ -23,12 +23,23 @@ import { useApp } from '../../context/AppContext';
 import RideStartCode from '../../components/RideStartCode';
 import { statusColors, colors } from '../../theme';
 import { callNumber } from '../../utils/externalLinks';
-import { formatDeadline } from '../../utils/datetime';
+import {
+  formatDeadline, prettyDateKey, relativeDayLabel, isPastDateKey, timeToMinutes,
+} from '../../utils/datetime';
 import { STATUS } from '../../data/mockData';
+
+// The statuses where a ride is over — nothing about it can change any more. Used
+// to split the list and to decide whether a "why you can't cancel" line is worth
+// showing: on a trip that finished last Tuesday it is just noise.
+const FINISHED = [STATUS.COMPLETED, STATUS.CANCELLED, STATUS.NO_SHOW];
 
 export default function MyRidesScreen({ navigation }) {
   const { myBookings, getCabById, currentUser, rideCancelState, cancelAssignedRide } = useApp();
   const rides = myBookings();
+  // Same one breakpoint as the rest of the app (see ShiftPolicyScreen). A rider is
+  // usually on their phone, so this is the layout that matters most here.
+  const { width } = useWindowDimensions();
+  const isMobile = width < 640;
   // The employee's home pickup route, set by the admin in Shift Roster
   // (employees/<uid>.roster.route, e.g. "ECIL Cab"). Shown in brackets after a
   // "Home" pickup so the employee sees which route their cab comes on.
@@ -50,6 +61,41 @@ export default function MyRidesScreen({ navigation }) {
     const t = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(t);
   }, []);
+
+  // WHAT'S NEXT, THEN WHAT HAPPENED. The list arrived in whatever order the
+  // subscription held — newest first — which put a cab three days away above the
+  // one arriving tonight, and buried tonight's under last week's cancellations.
+  //
+  // Upcoming is sorted NEAREST FIRST (the opposite of past), because the only
+  // question this screen exists to answer is "when is my next cab, and is it
+  // coming?" — that ride belongs at the top, not at the end of a scroll. Past is
+  // most-recent first, which is how anybody reads back through history.
+  const sections = useMemo(() => {
+    const upcoming = [];
+    const past = [];
+    for (const r of rides) {
+      const over = FINISHED.includes(r.status) || isPastDateKey(r.date);
+      (over ? past : upcoming).push(r);
+    }
+    // ISO keys compare as text; the shift time breaks a tie within one day, so a
+    // morning pickup sits above that evening's drop.
+    upcoming.sort(
+      (a, b) =>
+        String(a.date).localeCompare(String(b.date)) ||
+        (timeToMinutes(a.shift) ?? 0) - (timeToMinutes(b.shift) ?? 0)
+    );
+    past.sort(
+      (a, b) =>
+        String(b.date).localeCompare(String(a.date)) ||
+        (timeToMinutes(b.shift) ?? 0) - (timeToMinutes(a.shift) ?? 0)
+    );
+    return [
+      { title: 'Upcoming', data: upcoming },
+      { title: 'Past rides', data: past },
+      // An empty half is dropped rather than shown with a "nothing here" line —
+      // a rider with no history doesn't need a heading telling them so.
+    ].filter((s) => s.data.length);
+  }, [rides]);
 
   function openCancel(ride) {
     setReason('');
@@ -91,31 +137,69 @@ export default function MyRidesScreen({ navigation }) {
     // shown when it can't be cancelled) comes from AppContext, so this screen
     // and the submit path can never disagree about the deadline.
     const cancelState = rideCancelState(item);
-    const showCancel = !!item.assignedCabId && item.status !== STATUS.CANCELLED;
+    const hasCab = !!item.assignedCabId;
+    const over = FINISHED.includes(item.status);
+    // THE BUTTON IS ONLY THERE WHEN IT WORKS. It used to render greyed out on
+    // every ride that had a cab — including trips already under way and trips
+    // finished weeks ago — each one paired with a sentence explaining why the
+    // button beneath it does nothing. A disabled control is still a control: it
+    // reads as "you can do this" until you try. Now the reason stands alone when
+    // cancelling is closed, and a finished ride shows neither.
+    const canCancel = hasCab && cancelState.canCancel;
+    const showClosedReason = hasCab && !cancelState.canCancel && !over && !!cancelState.reason;
+
+    const statusColor = statusColors[item.status] || colors.muted;
+    const relative = relativeDayLabel(item.date);
+    const isDrop = item.direction !== 'Home → Office';
 
     return (
-      <Card style={styles.card} mode="elevated">
-        <Card.Content>
+      <Card style={[styles.card, isMobile && styles.cardMobile]} mode="elevated">
+        {/* The status as a colour down the edge of the card, not only as a chip in
+            the corner. Scrolling the list, this is what separates "a cab is coming"
+            from "this one is done" before a single word has been read. */}
+        <View style={[styles.accent, { backgroundColor: statusColor }]} />
+        <Card.Content style={isMobile ? styles.bodyMobile : undefined}>
+          {/* THE DATE IS THE HEADING. It used to be the direction, with a raw ISO
+              key ("2026-08-19") on the line below — but every ride on this screen
+              is one of the same two journeys, so the direction never told the rider
+              which card they were looking at. The day does. */}
           <View style={styles.rowBetween}>
-            <Text variant="titleMedium">{item.direction}</Text>
+            <View style={styles.whenWrap}>
+              <Text variant="titleMedium" style={styles.when}>
+                {relative ? `${relative} · ` : ''}
+                {prettyDateKey(item.date)}
+              </Text>
+            </View>
             <Chip
               compact
-              style={{ backgroundColor: statusColors[item.status] || '#9E9E9E' }}
+              style={{ backgroundColor: statusColor }}
               textStyle={styles.chipText}
             >
               {item.status}
             </Chip>
           </View>
 
-          <Text variant="bodyMedium" style={styles.detail}>
-            {/* The shift's own start/end — a deadline (pickup) or
-                earliest-bound (drop), never a promised cab instant; the
-                driver/desk coordinate the exact timing. */}
-            {item.date} · {item.direction === 'Home → Office' ? 'by' : 'after'} {item.shift}
-          </Text>
-          <Text variant="bodyMedium" style={styles.detail}>
-            Pickup: {item.pickup}{pickupSuffix}
-          </Text>
+          {/* Direction and time on one line with the leg's own icon — the same pair
+              of icons the driver's and coordinator's screens use for in vs out. */}
+          <View style={styles.metaRow}>
+            <MaterialCommunityIcons
+              name={isDrop ? 'home-import-outline' : 'home-export-outline'}
+              size={15}
+              color={colors.muted}
+            />
+            <Text variant="bodyMedium" style={styles.meta}>
+              {/* The shift's own start/end — a deadline (pickup) or
+                  earliest-bound (drop), never a promised cab instant; the
+                  driver/desk coordinate the exact timing. */}
+              {item.direction} · {isDrop ? 'after' : 'by'} {item.shift}
+            </Text>
+          </View>
+          <View style={styles.metaRow}>
+            <MaterialCommunityIcons name="map-marker-outline" size={15} color={colors.muted} />
+            <Text variant="bodyMedium" style={styles.meta}>
+              Pickup: {item.pickup}{pickupSuffix}
+            </Text>
+          </View>
 
           {/* Why this ride was cancelled, on the rider's own copy — so someone
               looking back at the list can see it was them and what they said. */}
@@ -133,66 +217,74 @@ export default function MyRidesScreen({ navigation }) {
           {cab && (
             <>
               <Divider style={styles.divider} />
-              <Text variant="labelLarge">Your cab</Text>
-              <Text variant="bodyMedium" style={styles.detail}>
-                {cab.cabNumber}
-              </Text>
-              <Text variant="bodyMedium" style={styles.detail}>
-                Driver: {cab.driverName}
-              </Text>
-              {/* Tappable, not just printed. This was plain text, so a rider
-                  standing on the road at 8 PM had to memorise the number and
-                  retype it into the dialer. callNumber() opens the dialer
-                  pre-filled — the person still presses call. */}
-              {cab.driverPhone ? (
-                <Button
-                  mode="text"
-                  icon="phone"
-                  compact
-                  onPress={() => callNumber(cab.driverPhone)}
-                  style={styles.callBtn}
-                  contentStyle={styles.callBtnContent}
-                >
-                  {cab.driverPhone}
-                </Button>
-              ) : null}
+              {/* ONE ROW, NOT FOUR LINES. This was a "Your cab" label above the
+                  number, the driver on the next line and the phone on a third —
+                  four stacked lines for three short facts. Cab and driver read as
+                  one identity ("TS 08 TR 3456 · manmadha"), with Call as the only
+                  thing here that does anything, so it sits apart on the right. */}
+              <View style={[styles.cabRow, isMobile && styles.cabRowMobile]}>
+                <MaterialCommunityIcons name="car-side" size={18} color={colors.primary} />
+                <View style={styles.cabText}>
+                  <Text variant="titleSmall" style={styles.cabNumber}>
+                    {cab.cabNumber}
+                  </Text>
+                  {cab.driverName ? (
+                    <Text variant="bodySmall" style={styles.cabDriver}>
+                      {cab.driverName}
+                    </Text>
+                  ) : null}
+                </View>
+                {/* Tappable, not just printed. This was plain text, so a rider
+                    standing on the road at 8 PM had to memorise the number and
+                    retype it into the dialer. callNumber() opens the dialer
+                    pre-filled — the person still presses call.
+                    The number itself is no longer the label: at the kerb the rider
+                    wants to reach the driver, not read out ten digits. */}
+                {cab.driverPhone ? (
+                  <Button
+                    mode="contained-tonal"
+                    icon="phone"
+                    compact
+                    onPress={() => callNumber(cab.driverPhone)}
+                    style={styles.callBtn}
+                    accessibilityLabel={`Call the driver on ${cab.driverPhone}`}
+                  >
+                    Call
+                  </Button>
+                ) : null}
+              </View>
             </>
           )}
 
-          {showCancel ? (
+          {canCancel ? (
             <>
               <Divider style={styles.divider} />
               <Button
                 mode="outlined"
                 icon="calendar-remove"
                 onPress={() => openCancel(item)}
-                // Greyed out once the deadline is behind us. The submit path
-                // refuses it too — this is the courtesy, not the control.
-                disabled={!cancelState.canCancel}
                 textColor={colors.danger}
                 style={styles.cancelBtn}
               >
-                Cancel Ride
+                Cancel this ride
               </Button>
-              {cancelState.canCancel ? (
-                cancelState.deadline ? (
-                  <Text variant="bodySmall" style={styles.deadlineHint}>
-                    You can cancel until {formatDeadline(cancelState.deadline)}.
-                  </Text>
-                ) : null
-              ) : (
-                <View style={styles.closedRow}>
-                  <MaterialCommunityIcons
-                    name="clock-alert-outline"
-                    size={15}
-                    color={colors.warning}
-                  />
-                  <Text variant="bodySmall" style={styles.closedText}>
-                    {cancelState.reason}
-                  </Text>
-                </View>
-              )}
+              {cancelState.deadline ? (
+                <Text variant="bodySmall" style={styles.deadlineHint}>
+                  You can cancel until {formatDeadline(cancelState.deadline)}.
+                </Text>
+              ) : null}
             </>
+          ) : showClosedReason ? (
+            <View style={styles.closedRow}>
+              <MaterialCommunityIcons
+                name="clock-alert-outline"
+                size={15}
+                color={colors.warning}
+              />
+              <Text variant="bodySmall" style={styles.closedText}>
+                {cancelState.reason}
+              </Text>
+            </View>
           ) : null}
         </Card.Content>
       </Card>
@@ -206,17 +298,24 @@ export default function MyRidesScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <View style={styles.centerCol}>
+      {/* Compact and quiet. It was a full-size filled button taking a row of its
+          own above the rides — the loudest thing on a screen where the rides are
+          the point, and redundant on desktop where Home is in the sidebar. Still
+          here because on a phone the drawer is behind a tap, and this is the one
+          screen an employee lands on from a notification. */}
       <Button
-        icon="home"
-        mode="contained-tonal"
+        icon="chevron-left"
+        mode="text"
+        compact
         onPress={() => navigation.navigate('EmployeeHome')}
         style={styles.homeBtn}
       >
-        Back to Home
+        Home
       </Button>
 
       {rides.length === 0 ? (
         <View style={styles.empty}>
+          <MaterialCommunityIcons name="calendar-blank-outline" size={44} color={colors.muted} />
           <Text variant="titleMedium" style={styles.emptyTitle}>
             No rides yet
           </Text>
@@ -226,10 +325,23 @@ export default function MyRidesScreen({ navigation }) {
           </Text>
         </View>
       ) : (
-        <FlatList
-          data={rides}
+        <SectionList
+          sections={sections}
           keyExtractor={(item) => item.id}
           renderItem={renderRide}
+          renderSectionHeader={({ section }) => (
+            <View style={styles.sectionHeader}>
+              <Text variant="labelLarge" style={styles.sectionTitle}>
+                {section.title}
+              </Text>
+              <Text variant="bodySmall" style={styles.sectionCount}>
+                {section.data.length}
+              </Text>
+            </View>
+          )}
+          // Sticky headers would sit over the cards as you scroll; there are only
+          // ever two of them, so they cost less floating away with the list.
+          stickySectionHeadersEnabled={false}
           contentContainerStyle={styles.listContent}
         />
       )}
@@ -257,8 +369,14 @@ export default function MyRidesScreen({ navigation }) {
                 <Text variant="bodyMedium" style={styles.summaryLine}>
                   {cancelFor.direction}
                 </Text>
+                {/* Same wording as the card it was opened from — this is the last
+                    screen before a cab is stood down, so "which ride was that?"
+                    must not need a trip back to the list. */}
                 <Text variant="bodySmall" style={styles.summaryMeta}>
-                  {cancelFor.date} ·{' '}
+                  {relativeDayLabel(cancelFor.date)
+                    ? `${relativeDayLabel(cancelFor.date)} · `
+                    : ''}
+                  {prettyDateKey(cancelFor.date)} ·{' '}
                   {cancelFor.direction === 'Home → Office' ? 'by' : 'after'}{' '}
                   {cancelFor.shift}
                 </Text>
@@ -337,30 +455,76 @@ export default function MyRidesScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
-  homeBtn: { margin: 12, marginBottom: 0, alignSelf: 'flex-start' },
+  homeBtn: { marginTop: 8, marginLeft: 4, alignSelf: 'flex-start' },
   listContent: { padding: 12, paddingBottom: 90 },
-  card: { marginBottom: 12 },
+
+  // "Upcoming" / "Past rides". A quiet label with its count, not a filled banner —
+  // it separates two groups, it isn't an action.
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  sectionTitle: { color: colors.primaryDark, textTransform: 'uppercase', letterSpacing: 0.5 },
+  sectionCount: { color: colors.muted },
+
+  // overflow: hidden is what makes the accent stripe follow the card's rounded
+  // corners instead of squaring them off.
+  card: { marginBottom: 12, overflow: 'hidden' },
+  cardMobile: { marginBottom: 10 },
+  bodyMobile: { paddingHorizontal: 12 },
+  // The status colour down the left edge. Absolute so it spans the full height
+  // whatever the card ends up containing — a card with a start code panel is much
+  // taller than a cancelled one.
+  accent: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4 },
+
   rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
     marginBottom: 6,
   },
+  whenWrap: { flex: 1, minWidth: 0 },
+  when: { fontWeight: 'bold', color: colors.text },
   chipText: { color: 'white', fontSize: 12 },
-  detail: { opacity: 0.8, marginTop: 2 },
-  // Pulled flush with the text above it — a default Button's padding would make
-  // the number look like a separate action block rather than the driver's line.
-  callBtn: { alignSelf: 'flex-start', marginLeft: -8, marginTop: 2 },
-  callBtnContent: { paddingHorizontal: 4 },
+
+  metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 3 },
+  meta: { color: colors.muted, flex: 1 },
+
   divider: { marginVertical: 10 },
+
+  // Cab, driver and the call button on one line. Tinted so the block reads as
+  // "your ride is this vehicle" rather than as more body text.
+  cabRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: colors.background,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  // A phone can't fit cab number, driver and a button across one line without the
+  // number ellipsising — and the cab number is what the rider matches against the
+  // vehicle in front of them.
+  cabRowMobile: { flexWrap: 'wrap', rowGap: 8 },
+  cabText: { flex: 1, minWidth: 0 },
+  cabNumber: { fontWeight: 'bold', color: colors.text },
+  cabDriver: { color: colors.muted },
+  callBtn: { flexShrink: 0 },
+
   cancelBtn: { alignSelf: 'flex-start' },
-  deadlineHint: { marginTop: 6, opacity: 0.7 },
-  closedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  deadlineHint: { marginTop: 6, color: colors.muted },
+  closedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
   closedText: { color: colors.warning, flex: 1 },
   cancelledNote: { marginTop: 6, fontStyle: 'italic', color: colors.danger },
-  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  emptyTitle: { marginBottom: 6 },
-  emptyText: { textAlign: 'center', opacity: 0.7 },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 8 },
+  emptyTitle: { color: colors.text },
+  emptyText: { textAlign: 'center', color: colors.muted, maxWidth: 320 },
   dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
   summary: {
     backgroundColor: colors.background,

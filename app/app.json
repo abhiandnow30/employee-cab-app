@@ -17,12 +17,23 @@
           "comgooglemaps",
           "maps",
           "tel"
+        ],
+        "//UIBackgroundModes": "REQUIRED for background location on iOS. Without 'location' here the OS stops delivering fixes the moment the app leaves the foreground, which is exactly the failure this is meant to fix. Needs a development/production build — Expo Go cannot do background location.",
+        "UIBackgroundModes": [
+          "location"
         ]
       }
     },
     "android": {
       "//package": "Required to build for Android at all.",
       "package": "com.neutara.cabservice",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -37,7 +48,19 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "This app uses your location to share the cab's live position with employees."
+          "//": "The three background flags are what generate the manifest entries and the Info.plist keys. The permission strings are shown verbatim in the system dialog, so they say WHY — a driver who doesn't understand the ask taps Deny.",
+          "locationWhenInUsePermission": "Used to share your cab's position with the employees you are collecting, while you are on a trip.",
+          "locationAlwaysAndWhenInUsePermission": "Allow all the time so employees can still see your cab when your screen is off or you switch to a navigation app. Sharing only runs while you turn it on for a trip.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "isIosBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "react-native-maps",
+        {
+          "//": "Android needs a Google Maps key; iOS uses Apple Maps, which needs none. THIS VALUE IS A PLACEHOLDER — app.config.js overwrites it with EXPO_PUBLIC_GOOGLE_MAPS_API_KEY from the environment, because static app.json does not interpolate process.env (verified: it resolved to the literal string). Never paste the real key here; app.json is committed.",
+          "androidGoogleMapsApiKey": ""
         }
       ],
       "expo-web-browser"

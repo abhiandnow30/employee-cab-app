@@ -51,7 +51,11 @@ export const DRAWER_ITEMS = [
 // registered but unreachable — the only navigation they had was the back arrow.
 export const DRIVER_DRAWER_ITEMS = [
   { label: 'My Trips', icon: 'car-clock', screen: 'DriverHome' },
-  { label: 'Share Location', icon: 'crosshairs-gps', screen: 'DriverShareLocation' },
+  // NO "Share Location" ROW. Sharing is a switch on My Trips now, so a menu item
+  // leading to a screen whose only control has moved is a second door to a room
+  // the driver is already standing in. The screen itself is still registered and
+  // still reachable — tapping the sharing line on My Trips opens it — because it
+  // holds the live coordinates and the warning for a cab that isn't linked back.
   { label: 'Profile', icon: 'account', screen: 'Profile' },
 ];
 
@@ -61,7 +65,6 @@ export const DRIVER_DRAWER_ITEMS = [
 // coordinator's job and deliberately absent here.
 export const ADMIN_DRAWER_ITEMS = [
   { label: 'Upload Roster', icon: 'file-upload-outline', screen: 'RosterUpload' },
-  { label: 'Shift Timings', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
   // The transport desk itself. Its own screen rather than a role toggle inside
   // Add Employee: a coordinator is an account but not a rider, so none of the
@@ -102,6 +105,12 @@ export const ADMIN_DRAWER_ITEMS = [
   // anyone can type into and split a carpool across two spellings.
   { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
   { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
+  // NEAR THE BOTTOM ON PURPOSE. What the shift codes MEAN — the hours each one
+  // runs and which of them get a cab — is set once and then left alone for months,
+  // whereas everything above it is opened daily or weekly. It sat second, directly
+  // under Upload Roster, which put the rarest screen in the menu at the top of it.
+  // Second-from-last keeps it a click away without it being in the way.
+  { label: 'Shift Timings', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
 ];
 
