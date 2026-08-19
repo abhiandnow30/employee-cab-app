@@ -342,6 +342,82 @@ export async function cancelAssignedBooking(bookingId, { reason, uid }) {
   });
 }
 
+// THE DESK CANCELS A RIDE ON THE EMPLOYEE'S BEHALF.
+//
+// The case this exists for: the employee messages the desk on Teams, WhatsApp or
+// the phone — "emergency, I don't need the cab tonight" — and never opens the app.
+// Before this there was no way to act on that: approveCancel() needs a request the
+// rider never made, and the rider's own button is shut inside the 4-hour cutoff,
+// which is exactly when an emergency happens.
+//
+// THREE THINGS MAKE THIS DIFFERENT FROM THE EMPLOYEE PATHS, and all three are
+// deliberate:
+//
+// 1. NO CUTOFF. The desk is trusted to run the day (see deskEditing in
+//    firestore.rules) and already moves rides by hand. The employee's 4-hour rule
+//    is untouched — this is a different actor, not a loophole in theirs.
+//
+// 2. IT DOES NOT TOUCH cancelStatus / cancelReason / cancelResolvedAt. Those are
+//    the EMPLOYEE'S cancellation-request record. Writing them here would (a) make
+//    a desk decision read as "the desk approved the rider's request" on every
+//    screen that shows attribution, and (b) destroy a pending request if one
+//    happened to exist. The desk's own reason lives in `cancellationReason`.
+//
+// 3. IT RECORDS WHO AND IN WHAT CAPACITY. `cancellationSource: 'desk'` is what
+//    every consumer keys off — the employee's My Rides card, the Cancelled Rides
+//    report, and employeeCancellationsOn(), which counts rider drop-outs and must
+//    not count this. `cancelledByRole` preserves whether it was HR or the
+//    coordinator, because "who stood this cab down" is an operational question
+//    asked days later.
+//
+// The cab is deliberately LEFT on the document, same as cancelAssignedBooking:
+// the seat frees itself the moment the status is Cancelled (every consumer skips
+// cancelled rides), and keeping assignedCabId is what lets the desk still see
+// which cab was freed.
+export async function deskCancelBooking(bookingId, { reason, uid, role }) {
+  const text = String(reason || '').trim();
+  return updateDoc(doc(firestore, COL, bookingId), {
+    status: STATUS.CANCELLED,
+    cancelledAt: serverTimestamp(),
+    cancelledBy: uid || null,
+    cancelledByRole: role || null,
+    cancellationSource: 'desk',
+    // Omitted entirely when empty: an ABSENT field reads as "not recorded", an
+    // empty string reads as "recorded as nothing". The screens already branch on
+    // presence, and the rules bound it only when it is there.
+    ...(text ? { cancellationReason: text } : {}),
+  });
+}
+
+// The same cancellation for a ride that has NO booking document yet.
+//
+// The day board is derived from the roster: a booking is only written when a cab is
+// assigned (which is what keeps ~11,000 rides a month from becoming 11,000
+// documents), so an unassigned ride has nothing to update. Cancelling one has to
+// leave a record behind anyway — otherwise the roster still says the rider is
+// travelling, tomorrow's board shows the ride again, and nothing anywhere says the
+// desk was told. So the document is created already cancelled.
+//
+// `fields` comes from bookingFromRide(), so the shape is identical to the one the
+// assign path creates — same denormalised name/address the driver's list needs, same
+// `source: 'roster'`.
+export async function createDeskCancelledBooking(fields, { reason, uid, role }) {
+  const text = String(reason || '').trim();
+  return addDoc(collection(firestore, COL), {
+    ...fields,
+    status: STATUS.CANCELLED,
+    createdAt: serverTimestamp(),
+    cancelledAt: serverTimestamp(),
+    cancelledBy: uid || null,
+    cancelledByRole: role || null,
+    cancellationSource: 'desk',
+    // Omitted entirely when empty: an ABSENT field reads as "not recorded", an
+    // empty string reads as "recorded as nothing". The screens already branch on
+    // presence, and the rules bound it only when it is there.
+    ...(text ? { cancellationReason: text } : {}),
+  });
+}
+
 // Admin approves or rejects a pending cancellation request.
 //   approve → the booking is Cancelled and the request marked Approved
 //   reject  → the request is marked Rejected; the booking stays active

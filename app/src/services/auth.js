@@ -270,6 +270,16 @@ export function friendlyAuthError(e, { driver = false } = {}) {
     case 'auth/popup-closed-by-user':
     case 'auth/cancelled-popup-request':
       return ''; // the person just closed the popup — not a real error
+    // THE POPUP NEVER OPENED. This was falling through to the default branch, which
+    // showed Firebase's own wording — "Unable to establish a connection with the
+    // popup" — to someone whose only actual problem is a blocked popup and who has
+    // no idea that is what happened. It is the one Microsoft failure the person can
+    // fix themselves, so it says how.
+    case 'auth/popup-blocked':
+      return (
+        'Your browser blocked the Microsoft sign-in window. Allow pop-ups for this ' +
+        'site (the icon in the address bar), then try again.'
+      );
     case 'auth/credential-already-in-use':
       return 'That Microsoft account is already linked to a different employee.';
     case 'auth/account-exists-with-different-credential':

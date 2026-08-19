@@ -188,10 +188,9 @@ export default function MyRidesScreen({ navigation }) {
               color={colors.muted}
             />
             <Text variant="bodyMedium" style={styles.meta}>
-              {/* The shift's own start/end — a deadline (pickup) or
-                  earliest-bound (drop), never a promised cab instant; the
-                  driver/desk coordinate the exact timing. */}
-              {item.direction} · {isDrop ? 'after' : 'by'} {item.shift}
+              {/* Scheduled time, plainly — the "by / after" qualifier was dropped at
+                  explicit request. See DeskCancelDialog for the full note. */}
+              {item.direction} · {item.shift}
             </Text>
           </View>
           <View style={styles.metaRow}>
@@ -203,7 +202,22 @@ export default function MyRidesScreen({ navigation }) {
 
           {/* Why this ride was cancelled, on the rider's own copy — so someone
               looking back at the list can see it was them and what they said. */}
-          {item.status === STATUS.CANCELLED && item.cancellationReason ? (
+          {/* WHO CANCELLED IT. Two very different sentences, and getting them the
+              wrong way round matters: telling a rider "you cancelled this" about a
+              ride the transport desk stood down after their own phone call is both
+              wrong and confusing, and this is the rider's record of what happened.
+              `cancellationSource === 'desk'` is written only by the desk path, so it
+              is the thing to key on — not the presence of a reason, which both
+              paths write. */}
+          {item.status === STATUS.CANCELLED && item.cancellationSource === 'desk' ? (
+            <View style={styles.deskCancelledBox}>
+              <MaterialCommunityIcons name="headset" size={15} color={colors.danger} />
+              <Text variant="bodySmall" style={styles.deskCancelledText}>
+                Ride cancelled by Transport Desk
+                {item.cancellationReason ? ` — ${item.cancellationReason}` : ''}
+              </Text>
+            </View>
+          ) : item.status === STATUS.CANCELLED && item.cancellationReason ? (
             <Text variant="bodySmall" style={styles.cancelledNote}>
               You cancelled this ride: “{item.cancellationReason}”
             </Text>
@@ -376,9 +390,7 @@ export default function MyRidesScreen({ navigation }) {
                   {relativeDayLabel(cancelFor.date)
                     ? `${relativeDayLabel(cancelFor.date)} · `
                     : ''}
-                  {prettyDateKey(cancelFor.date)} ·{' '}
-                  {cancelFor.direction === 'Home → Office' ? 'by' : 'after'}{' '}
-                  {cancelFor.shift}
+                  {prettyDateKey(cancelFor.date)} · {cancelFor.shift}
                 </Text>
                 {dialogState?.deadline ? (
                   <Text variant="bodySmall" style={styles.summaryMeta}>
@@ -522,6 +534,16 @@ const styles = StyleSheet.create({
   closedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
   closedText: { color: colors.warning, flex: 1 },
   cancelledNote: { marginTop: 6, fontStyle: 'italic', color: colors.danger },
+  deskCancelledBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 8,
+    backgroundColor: '#FDECEA',
+    borderRadius: 8,
+    padding: 8,
+  },
+  deskCancelledText: { color: colors.danger, flex: 1, lineHeight: 17 },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 8 },
   emptyTitle: { color: colors.text },
   emptyText: { textAlign: 'center', color: colors.muted, maxWidth: 320 },

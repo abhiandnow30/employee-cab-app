@@ -47,7 +47,7 @@ export default function RosterHistoryScreen() {
               <Text variant="bodyMedium" style={styles.detail}>
                 {/* The shift's own start/end — a deadline (pickup) or
                     earliest-bound (drop), never a promised cab instant. */}
-                {item.date} · {item.direction === 'Home → Office' ? 'by' : 'after'} {item.shift}
+                {item.date} · {item.shift}
               </Text>
               <Text variant="bodyMedium" style={styles.detail}>
                 Pickup: {item.pickup}

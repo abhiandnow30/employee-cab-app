@@ -40,6 +40,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import Dropdown from '../../components/Dropdown';
 import RideStartCode from '../../components/RideStartCode';
+import DeskCancelDialog from '../../components/DeskCancelDialog';
 // groupByShift is no longer imported — the board groups by route only. It is still
 // exported from services/rides.js, so restoring the removed toggle means adding it
 // back here and nothing more.
@@ -64,7 +65,8 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   const {
     ridesOn, assignCabToRides, cabs, rosterMonth, setRosterMonth, monthRosters,
     routeOptions, setEmployeeRoute, employeeCancellationsOn, getCabById,
-    employees, shiftPolicy, addRiderToDay,
+    employees, shiftPolicy, addRiderToDay, deskCancelRide, deskCancellationsOn,
+    deskCancelState,
   } = useApp();
 
   // PHONE OR NOT. One breakpoint, matching ShiftPolicyScreen's — this board is
@@ -125,6 +127,9 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   const [routeChoice, setRouteChoice] = useState(null);
   // "Add a rider" — the employee picked and the shift chosen for them, for the
   // day currently on screen.
+  // The ride the desk is standing down. Only ever one at a time — this is a
+  // per-rider decision taken while someone is on the phone.
+  const [cancelFor, setCancelFor] = useState(null);
   const [addRiderOpen, setAddRiderOpen] = useState(false);
   const [addRiderUid, setAddRiderUid] = useState(null);
   const [addRiderCode, setAddRiderCode] = useState(null);
@@ -169,6 +174,17 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   const riderCancellations = useMemo(
     () => employeeCancellationsOn(date),
     [employeeCancellationsOn, date]
+  );
+
+  // Rides the DESK stood down — usually HR, acting on a message the rider sent them.
+  // The coordinator has to see these: they are the person assigning cabs, and a row
+  // disappearing off the board with nothing said is indistinguishable from having
+  // mis-read it. Separate from the rider's own cancellations above because they are
+  // different news: one is a rider dropping out, the other is a decision already
+  // taken at the desk.
+  const deskCancellations = useMemo(
+    () => deskCancellationsOn(date),
+    [deskCancellationsOn, date]
   );
 
   // Switching direction drops the current selection, the same way moving to another
@@ -295,6 +311,30 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     }
   }
 
+  function openDeskCancel(ride) {
+    setCancelFor(ride);
+  }
+
+  async function confirmDeskCancel() {
+    if (!cancelFor) return;
+    setBusy(true);
+    // No reason is passed — see DeskCancelDialog's header for what that costs and
+    // why it was chosen. deskCancelRide still accepts one, so re-adding a reason is
+    // a UI change and nothing more.
+    const res = await deskCancelRide(cancelFor);
+    setBusy(false);
+    if (!res?.ok) {
+      setError(res?.message || 'Could not cancel that ride.');
+      return;
+    }
+    const name = cancelFor.employeeName || 'Rider';
+    setCancelFor(null);
+    // Untick it if it was selected — a cancelled ride must not be sitting in a
+    // selection the coordinator then assigns a cab to.
+    setSelected((prev) => prev.filter((k) => k !== cancelFor.key));
+    setSnack(`${name}'s ride cancelled. The seat is free.`);
+  }
+
   async function confirmAssign() {
     if (!chosenCab || !selectedRides.length) return;
     setBusy(true);
@@ -359,6 +399,10 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     const cab = assigned ? cabs.find((c) => c.id === item.assignedCabId) : null;
     const ticked = isSelected(item.key);
     const code = SHIFT_COLORS[item.shiftCode] || { bg: '#EEE', fg: colors.text };
+    // The DESK's window (30 minutes), not the rider's (4 hours) — same helper, its own
+    // cutoff. Reads the booking when there is one and the derived ride when there
+    // isn't; both carry date, shift and status.
+    const deskCancel = deskCancelState(item.booking || item);
     return (
       <Pressable onPress={() => toggle(item.key)}>
         <Card style={[styles.card, ticked && styles.cardSelected]} mode="elevated">
@@ -419,12 +463,13 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   color={colors.muted}
                 />
                 <Text variant="bodySmall" style={styles.meta}>
-                  {/* The shift's own start/end — a deadline (pickup) or
-                      earliest-bound (drop) on the employee's schedule, never a
-                      promised cab instant. The driver/desk decide the actual
-                      timing on the day. */}
-                  {item.direction} · {item.direction === 'Home → Office' ? 'by' : 'after'}{' '}
-                  {item.shift}
+                  {/* The scheduled time, shown plainly. It used to read "by 09:00 PM" for a
+                  pickup and "after 10:00 PM" for a drop — the shift's own start/end
+                  rather than a promised cab instant. Dropped at explicit request: the
+                  ride IS scheduled at that time, and "after 10:00 PM" read as vague
+                  where the desk wanted a time. The underlying field is unchanged, so
+                  restoring the qualifier is a wording change only. */}
+                  {item.direction} · {item.shift}
                 </Text>
               </View>
               {item.employeeAddress ? (
@@ -467,6 +512,41 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   </Button>
                 </View>
               ) : null}
+              {/* STAND THIS CAB DOWN. The employee messaged the desk on Teams,
+                  WhatsApp or the phone — an emergency, they aren't travelling — and
+                  will never open the app to cancel it themselves. Nothing else on
+                  this board could act on that: approving a cancellation needs a
+                  request the rider never made, and the rider's own button is shut
+                  inside the 4-hour cutoff, which is exactly when this happens.
+                  Text button, not a filled one: it is the exception, and assigning
+                  cabs is what this screen is for.
+                  The responder is claimed so cancelling can't also tick the rider
+                  for assignment — the whole card is a Pressable. Same trick as
+                  RideStartCode above. */}
+              <View onStartShouldSetResponder={() => true} style={styles.deskCancelRow}>
+                {deskCancel.canCancel ? (
+                  <Button
+                    compact
+                    mode="text"
+                    icon="calendar-remove"
+                    textColor={colors.danger}
+                    onPress={() => openDeskCancel(item)}
+                    disabled={busy}
+                  >
+                    Cancel ride
+                  </Button>
+                ) : (
+                  /* THE REASON, NOT A DEAD BUTTON. Only shows in the last 30 minutes
+                     before a pickup, or once the trip is under way — rare, unlike the
+                     4-hour version this replaced, which closed the whole evening board
+                     by 6 PM. A greyed button repeated down every card would read as
+                     "you can do this" fifteen times over. */
+                  <Text variant="bodySmall" style={styles.cancelClosed}>
+                    {deskCancel.reason}
+                  </Text>
+                )}
+              </View>
+
               {/* Every ride on this board comes from the roster. There is no
                   "approved extra ride" badge because there are no extra rides —
                   the company runs the 8 PM pickup and the 10 PM drop, full stop. */}
@@ -599,6 +679,47 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                     </Text>
                     <Text variant="bodySmall" style={styles.cancelWhy}>
                       “{b.cancellationReason || b.cancelReason || 'No reason given'}”
+                    </Text>
+                  </View>
+                );
+              })}
+            </Card.Content>
+          </Card>
+        ) : null}
+
+        {/* WHAT THE DESK CANCELLED. Amber, not red: this is not a problem, it is a
+            decision someone already made and the coordinator needs to know about —
+            these riders are off the board and their seats are free. Who cancelled it
+            is named, because "why has this rider gone?" is answered by a person. */}
+        {deskCancellations.length ? (
+          <Card mode="outlined" style={styles.deskCancelCard}>
+            <Card.Content>
+              <View style={styles.cancelHead}>
+                <MaterialCommunityIcons name="headset" size={18} color={colors.warning} />
+                <Text variant="titleSmall" style={styles.deskCancelTitle}>
+                  {deskCancellations.length} ride
+                  {deskCancellations.length === 1 ? '' : 's'} cancelled by the desk
+                </Text>
+              </View>
+              <Text variant="bodySmall" style={styles.cancelIntro}>
+                Already off the board below — do not assign a cab for these.
+              </Text>
+              {deskCancellations.map((b) => {
+                const cab = b.assignedCabId ? getCabById(b.assignedCabId) : null;
+                return (
+                  <View key={b.id} style={styles.cancelRow}>
+                    <Text variant="bodyMedium" style={styles.cancelName}>
+                      {b.employeeName || 'Employee'}
+                      {b.empId ? ` · ${b.empId}` : ''}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.cancelMeta}>
+                      {b.direction} · {b.shift}
+                      {cab ? ` · seat free on ${cab.cabNumber}` : ''}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.deskCancelWho}>
+                      Cancelled by the transport desk
+                      {b.cancelledByRole ? ` (${b.cancelledByRole})` : ''}
+                      {b.cancellationReason ? ` — ${b.cancellationReason}` : ''}
                     </Text>
                   </View>
                 );
@@ -763,7 +884,11 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                 setPickerOpen(true);
               }}
             >
-              Assign cab to {selected.length}
+              {/* selectedRides, not selected.length. A ride cancelled by HR while the
+                  coordinator had it ticked leaves a stale key behind: the write
+                  (confirmAssign) works off selectedRides and would have given the cab
+                  to two riders while this button promised three. */}
+              Assign cab to {selectedRides.length}
             </Button>
           </View>
         ) : null}
@@ -772,7 +897,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
       {/* Cab picker */}
       <Portal>
         <Dialog visible={pickerOpen} onDismiss={() => setPickerOpen(false)} style={styles.dialog}>
-          <Dialog.Title>Assign a cab to {selected.length} rider(s)</Dialog.Title>
+          <Dialog.Title>Assign a cab to {selectedRides.length} rider(s)</Dialog.Title>
           <Dialog.ScrollArea>
             <View style={styles.dialogBody}>
               {cabs.length === 0 ? (
@@ -906,6 +1031,16 @@ export default function CoordinatorDashboardScreen({ navigation }) {
         </Dialog>
       </Portal>
 
+      {/* The desk standing a ride down for a rider who asked off-app. */}
+      <DeskCancelDialog
+        visible={!!cancelFor}
+        ride={cancelFor}
+        cab={cancelFor?.assignedCabId ? getCabById(cancelFor.assignedCabId) : null}
+        busy={busy}
+        onDismiss={() => setCancelFor(null)}
+        onConfirm={confirmDeskCancel}
+      />
+
       {/* Route picker — the one employee field the rules let a coordinator write.
           It saves to the profile, so it also fixes every other day this month. */}
       <Portal>
@@ -1030,6 +1165,9 @@ const styles = StyleSheet.create({
   col: { flex: 1, width: '100%', maxWidth: 820, alignSelf: 'center' },
 
   cancelCard: { marginHorizontal: 8, marginBottom: 8, borderColor: colors.danger },
+  deskCancelCard: { marginHorizontal: 8, marginBottom: 8, borderColor: colors.warning },
+  deskCancelTitle: { color: colors.warning },
+  deskCancelWho: { color: colors.warning, marginTop: 2 },
   cancelHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   cancelTitle: { color: colors.danger },
   cancelIntro: { opacity: 0.7, marginTop: 2 },
@@ -1203,6 +1341,10 @@ const styles = StyleSheet.create({
   overnight: { color: '#4527A0', marginTop: 4, fontStyle: 'italic' },
   // Wraps, because "No route set" plus a Set route button is close to a narrow
   // card's full width.
+  // Sits under the meta lines, pulled left so the text button lines up with them
+  // rather than floating in the middle of the card.
+  deskCancelRow: { alignSelf: 'flex-start', marginTop: 2, marginLeft: -8 },
+  cancelClosed: { color: colors.muted, marginLeft: 8, marginTop: 4 },
   noRouteRow: {
     flexDirection: 'row',
     alignItems: 'center',

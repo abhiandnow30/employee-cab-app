@@ -14,7 +14,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { Platform } from 'react-native';
 import * as Location from 'expo-location';
 import {
-  STATUS, CANCEL_STATUS, CANCEL_CUTOFF_HOURS, CAB_ROUTES,
+  STATUS, CANCEL_STATUS, CANCEL_CUTOFF_HOURS, DESK_CANCEL_CUTOFF_HOURS, CAB_ROUTES,
 } from '../data/mockData';
 import {
   watchAuth, signIn, signOutUser, friendlyAuthError,
@@ -58,6 +58,8 @@ import {
   requestCancelBooking,
   resolveCancelRequest,
   cancelAssignedBooking,
+  deskCancelBooking,
+  createDeskCancelledBooking,
   subscribeMyBookings,
   subscribeAllBookings,
   subscribeCabBookings,
@@ -1341,8 +1343,12 @@ export function AppProvider({ children }) {
   // cutoff itself is canRequestCancel + CANCEL_CUTOFF_HOURS — the app's existing
   // policy, not a second copy of it — and the deadline shown to the employee is
   // derived from the same parse of date + shift.
-  function rideCancelState(booking) {
-    const deadline = booking ? cancelDeadline(booking.date, booking.shift, CANCEL_CUTOFF_HOURS) : null;
+  // `cutoffHours` defaults to the EMPLOYEE's window, so every existing caller keeps
+  // its behaviour untouched. The desk passes its own — see deskCancelState below.
+  // Parameterised rather than duplicated: one definition of "already under way",
+  // "already cancelled" and "deadline passed", with only the number differing.
+  function rideCancelState(booking, cutoffHours = CANCEL_CUTOFF_HOURS) {
+    const deadline = booking ? cancelDeadline(booking.date, booking.shift, cutoffHours) : null;
     const base = { canCancel: false, deadline, reason: '' };
     if (!booking) return { ...base, reason: 'That ride no longer exists.' };
     if (booking.status === STATUS.CANCELLED) {
@@ -1355,13 +1361,20 @@ export function AppProvider({ children }) {
     ].includes(booking.status)) {
       return { ...base, reason: 'This ride is already under way, so it can no longer be cancelled.' };
     }
-    if (!canRequestCancel(booking.date, booking.shift, CANCEL_CUTOFF_HOURS)) {
+    if (!canRequestCancel(booking.date, booking.shift, cutoffHours)) {
       return {
         ...base,
         reason: 'Cancellation is no longer available. The cancellation deadline has passed.',
       };
     }
     return { canCancel: true, deadline, reason: '' };
+  }
+
+  // The DESK's window on the same ride: 30 minutes instead of the rider's 4 hours.
+  // A thin wrapper on purpose — the screens and the submit guard must both ask the
+  // same question, and there is no second copy of the logic to fall out of step.
+  function deskCancelState(booking) {
+    return rideCancelState(booking, DESK_CANCEL_CUTOFF_HOURS);
   }
 
   // The employee drops a ride outright, giving a reason. Unlike requestCancel()
@@ -1404,6 +1417,141 @@ export function AppProvider({ children }) {
         b.status === STATUS.CANCELLED &&
         b.cancelledBy &&
         b.cancelledBy === b.employeeId
+    );
+  }
+
+  // THE DESK CANCELS A RIDE FOR AN EMPLOYEE WHO ASKED OFF-APP.
+  //
+  // Teams, WhatsApp, a phone call at 8 PM — the rider tells the desk they no longer
+  // need the cab and never opens the app. Neither existing path covers that:
+  // approveCancel() needs a request that was never raised, and cancelAssignedRide()
+  // is the rider's own button, gated by the 4-hour cutoff they are almost certainly
+  // now inside.
+  //
+  // THE CUTOFF APPLIES TO THE DESK TOO. (Reversed at explicit request — this
+  // originally exempted the desk, on the reasoning that an emergency reported at
+  // 7:50 PM for an 8:00 PM pickup is exactly what the desk has to be able to act on.
+  // The decision now is that one deadline governs everyone.)
+  //
+  // THE DESK'S WINDOW IS ITS OWN: DESK_CANCEL_CUTOFF_HOURS (30 minutes), against the
+  // employee's 4 hours. The desk is who gets phoned at 9:40 PM about a 10 PM drop, and
+  // holding them to the rider's deadline would have closed every ride on the evening
+  // board by 6 PM — see the note on the constant.
+  //
+  // The last 30 minutes stay closed to everyone, deliberately: by then the driver is
+  // at or near the pickup, and the honest record is a no-show, not a cancellation.
+  //
+  // ALSO CHECKED: the role, and the ride's state. A finished ride has nothing left to
+  // cancel, and cancelling an already-cancelled one would overwrite the record of who
+  // did it first.
+  //
+  // Takes `ride` (a derived ride from the day board) OR a booking — the board's
+  // unassigned rides have no document yet, so this handles both: update if there is
+  // one, create it already-cancelled if there is not.
+  async function deskCancelRide(rideOrBooking, reason) {
+    if (!isDeskRole(currentUser?.role)) {
+      return { ok: false, message: 'Only the transport desk can cancel a ride.' };
+    }
+    // OPTIONAL, at explicit request. The dialog no longer asks for one, so this is
+    // normally empty and the record says who/when/which role but not why. Still
+    // accepted and still bounded, so re-adding the picker is a UI change only.
+    const text = String(reason || '').trim().slice(0, 500);
+
+    const target = rideOrBooking?.booking || rideOrBooking;
+    if (!target) return { ok: false, message: 'That ride no longer exists.' };
+
+    const status = target.status || rideOrBooking?.status;
+    // Mirrors the rules, and mirrors what the button offers — a screen left open can
+    // outlive the state it was drawn for.
+    if (status === STATUS.CANCELLED) {
+      return { ok: false, message: 'That ride is already cancelled.' };
+    }
+    if (status === STATUS.COMPLETED || status === STATUS.NO_SHOW) {
+      return { ok: false, message: 'That trip has already finished — nothing to cancel.' };
+    }
+    // Re-checked HERE, at submit time, not merely when the button was drawn: a dialog
+    // can sit open across the deadline. firestore.rules checks it again against the
+    // SERVER's clock, which is the only check a wound-back device can't get past.
+    // `target` is a booking when one exists and the derived ride when it doesn't —
+    // both carry `date` and `shift`, which is all the deadline needs.
+    if (!canRequestCancel(target.date, target.shift, DESK_CANCEL_CUTOFF_HOURS)) {
+      return {
+        ok: false,
+        message:
+          'Too close to the pickup time to cancel — the cab may already be on its way. ' +
+          'If nobody travels, the driver marks it as a no-show.',
+      };
+    }
+
+    const audit = { reason: text, uid: currentUser.uid, role: currentUser.role };
+    try {
+      if (target.id) {
+        await deskCancelBooking(target.id, audit);
+      } else {
+        // No booking document — a rostered ride nobody has assigned a cab to yet.
+        // bookingFromRide gives it the same shape the assign path would have, so the
+        // record is a normal booking that happens to start life cancelled.
+        const ride = rideOrBooking;
+        if (!ride?.employeeId || !ride?.date) {
+          return { ok: false, message: 'Could not identify that ride.' };
+        }
+        // Same departAt as the assign path uses (line ~2344), so a desk-cancelled
+        // ride carries the same absolute timestamp the rules and reports read.
+        await createDeskCancelledBooking(
+          bookingFromRide(ride, toDateTime(ride.date, ride.shift)),
+          audit
+        );
+      }
+    } catch (e) {
+      return failure(e, 'Could not cancel that ride.');
+    }
+
+    // The rider asked for this off-app, but they still get the confirmation in the
+    // app — and so does anyone the desk cancelled without being asked. Uses the
+    // EXISTING notification mechanism (NOTIFY.RIDE_CANCELLED + rideCancelledMessage
+    // were already defined and unused); nothing new was introduced for this.
+    // Best-effort: a failed notice must not undo a cancellation that has committed.
+    const employeeId = target.employeeId || rideOrBooking?.employeeId;
+    if (employeeId) {
+      const msg = rideCancelledMessage(
+        {
+          date: target.date || rideOrBooking?.date,
+          direction: target.direction || rideOrBooking?.direction,
+        },
+        // No trailing dash when there is no reason — which is now the normal case.
+        text
+          ? `Cancelled by the transport desk — ${text}`
+          : 'Cancelled by the transport desk.'
+      );
+      notify({
+        employeeId,
+        type: NOTIFY.RIDE_CANCELLED,
+        title: msg.title,
+        body: msg.body,
+        payload: { bookingId: target.id || null, date: target.date || rideOrBooking?.date },
+      }).catch((e) => console.warn('[notify] desk cancellation notice failed:', e?.message));
+    }
+
+    return { ok: true };
+  }
+
+  // Rides the DESK stood down on a given date — the coordinator's view of "what did
+  // HR cancel while I was working the board?".
+  //
+  // WHY THIS EXISTS AT ALL. A cancelled ride is filtered out of ridesOn(), so it
+  // simply disappears from the day board. That is right — the coordinator must not be
+  // able to assign a cab to it — but a row vanishing with no explanation is its own
+  // problem: the coordinator is the one who assigns cabs, and "did that rider drop
+  // out, or did I mis-read the board?" is not a question they should have to ask.
+  //
+  // Kept SEPARATE from employeeCancellationsOn() rather than merged into it. Those
+  // two are different events with different consequences — a rider cancelling is
+  // news about the rider; the desk cancelling is news about a decision someone at
+  // the desk already made — and merging them would also put desk cancellations into
+  // the rider drop-out count, which is exactly what that function exists to keep out.
+  function deskCancellationsOn(date) {
+    return bookings.filter(
+      (b) => b.date === date && b.status === STATUS.CANCELLED && b.cancellationSource === 'desk'
     );
   }
 
@@ -2527,7 +2675,10 @@ export function AppProvider({ children }) {
     // Employee-driven cancellation of a ride they no longer need (with reason).
     rideCancelState,
     cancelAssignedRide,
+    deskCancelRide,
     employeeCancellationsOn,
+    deskCancellationsOn,
+    deskCancelState,
     approveCancel,
     rejectCancel,
     pendingCancelRequests,

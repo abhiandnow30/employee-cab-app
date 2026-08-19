@@ -29,7 +29,10 @@ import { COMPANY_NAME, companyLogo, SUPPORT_HELPLINE } from '../branding';
 import { colors } from '../theme';
 import { CAB_CODE_LENGTH, DRIVER_PHONE_LENGTH } from '../utils/driverLogin';
 
-export default function DriverLoginScreen({ navigation }) {
+// No `navigation` prop: signing in swaps the whole stack by role (see App.js), so
+// this screen never navigated anywhere itself — the only call was the removed
+// "Employee or admin sign in" link.
+export default function DriverLoginScreen() {
   const { loginDriver } = useApp();
 
   const [cabDigits, setCabDigits] = useState('');
@@ -154,15 +157,12 @@ export default function DriverLoginScreen({ navigation }) {
               {SUPPORT_HELPLINE}.
             </Text>
 
-            <Button
-              mode="text"
-              compact
-              onPress={() => navigation.navigate('Login')}
-              style={styles.link}
-              disabled={loading}
-            >
-              Employee or admin sign in
-            </Button>
+            {/* NO "Employee or admin sign in" LINK. Removed at explicit request. The
+                main sign-in screen still links INTO this one, so the route is how
+                anyone gets here in the first place; this was only the way back. If a
+                driver lands here by a stale bookmark and needs the
+                employee screen, it is /login — worth restoring this button if that
+                turns out to happen. */}
           </Card.Content>
         </Card>
       </View>
@@ -201,5 +201,4 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: colors.muted,
   },
-  link: { marginTop: 6 },
 });

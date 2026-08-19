@@ -20,7 +20,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeEmployees } from '../../services/profile';
 import { isBookingPast, isPastDateKey } from '../../utils/datetime';
-import { SOURCE } from '../../data/mockData';
+import { SOURCE, STATUS } from '../../data/mockData';
+import DeskCancelDialog from '../../components/DeskCancelDialog';
 import { statusColors, colors } from '../../theme';
 import CalendarFilter, { rangeLabel } from '../../components/CalendarFilter';
 
@@ -29,6 +30,7 @@ const NO_ROUTE = 'No route set';
 export default function BookingsScreen({ navigation }) {
   const {
     bookings, cabs, cabCapacity, getCabById, assignCabToGroup, approveCancel, rejectCancel,
+    deskCancelRide, deskCancelState,
   } = useApp();
 
   const [selected, setSelected] = useState([]); // booking ids ticked for grouping
@@ -41,6 +43,10 @@ export default function BookingsScreen({ navigation }) {
   const [dateRange, setDateRange] = useState(null); // { start, end } (YYYY-MM-DD) or null = all dates
   const [expandedCabIds, setExpandedCabIds] = useState(() => new Set()); // which cab accordions are open
   const [helpOpen, setHelpOpen] = useState(false); // "How this works" explainer dialog
+  // The booking the desk is standing down for a rider who asked off-app. Same dialog
+  // the day board uses — see DeskCancelDialog.
+  const [cancelFor, setCancelFor] = useState(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   // Live employee profiles, so each booking can show its owner's route + pickup
   // address (these live on the profile, not on the booking itself).
@@ -151,6 +157,26 @@ export default function BookingsScreen({ navigation }) {
       return String(a.cab?.cabNumber || '').localeCompare(String(b.cab?.cabNumber || ''));
     });
 
+  function openDeskCancel(booking) {
+    setCancelFor(booking);
+  }
+
+  async function confirmDeskCancel() {
+    if (!cancelFor) return;
+    setCancelBusy(true);
+    // No reason — see DeskCancelDialog's header.
+    const res = await deskCancelRide(cancelFor);
+    setCancelBusy(false);
+    if (!res?.ok) {
+      setError(res?.message || 'Could not cancel that ride.');
+      return;
+    }
+    // Untick it if it was selected for grouping — a cancelled ride must never end up
+    // in an assignment.
+    setSelected((prev) => prev.filter((id) => id !== cancelFor.id));
+    setCancelFor(null);
+  }
+
   async function resolve(bookingId, approve) {
     setResolving(bookingId);
     const res = await (approve ? approveCancel(bookingId) : rejectCancel(bookingId));
@@ -249,7 +275,7 @@ export default function BookingsScreen({ navigation }) {
         <Text variant="bodyMedium" style={styles.detail}>
           {/* The shift's own start/end — a deadline (pickup) or
               earliest-bound (drop), never a promised cab instant. */}
-          {item.date} · {item.direction === 'Home → Office' ? 'by' : 'after'} {item.shift}
+          {item.date} · {item.shift}
         </Text>
         {/* Where to pick them up: the real address from their roster if we
             have it, otherwise the generic pickup label on the booking. */}
@@ -297,6 +323,42 @@ export default function BookingsScreen({ navigation }) {
             </Text>
           </View>
         )}
+
+        {/* A ride the desk stood down. Says so plainly, with the reason, so this row
+            cannot be mistaken for an approved employee request. */}
+        {item.status === STATUS.CANCELLED && item.cancellationSource === 'desk' ? (
+          <View style={styles.deskCancelledBox}>
+            <MaterialCommunityIcons name="headset" size={16} color="#C62828" />
+            <Text variant="bodySmall" style={styles.deskCancelledText}>
+              Cancelled by Transport Desk
+              {item.cancellationReason ? ` — ${item.cancellationReason}` : ''}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* THE DESK CANCELS FOR A RIDER WHO ASKED OFF-APP. Offered only on an
+            ACTIVE ride: a cancelled one would overwrite the record of who cancelled
+            it first, and a completed or no-show trip has nothing left to stand down.
+            A ride with a pending REQUEST is deliberately still cancellable — the
+            approve button below is the tidier route, but if the rider then phones in
+            an emergency the desk should not have to approve a request to act on it. */}
+        {/* Gated on the DESK's own window — 30 minutes, against the rider's 4 hours.
+            deskCancelState also covers the cancelled/completed/no-show cases, so the
+            status tests this used to duplicate are gone. */}
+        {deskCancelState(item).canCancel ? (
+          <View style={styles.deskCancelRow}>
+            <Button
+              compact
+              mode="text"
+              icon="calendar-remove"
+              textColor="#C62828"
+              onPress={() => openDeskCancel(item)}
+              disabled={cancelBusy}
+            >
+              Cancel ride
+            </Button>
+          </View>
+        ) : null}
 
         {/* --- Pending cancellation request: approve or reject --- */}
         {pendingCancel && (
@@ -640,6 +702,17 @@ export default function BookingsScreen({ navigation }) {
       </Portal>
 
       {/* Guard / error feedback (e.g. a selected ride slipped into the past) */}
+      {/* Same dialog as the coordinator's day board — one place the desk's reason is
+          captured, so the two screens can't drift apart on a field the employee reads. */}
+      <DeskCancelDialog
+        visible={!!cancelFor}
+        ride={cancelFor}
+        cab={cancelFor?.assignedCabId ? getCabById(cancelFor.assignedCabId) : null}
+        busy={cancelBusy}
+        onDismiss={() => setCancelFor(null)}
+        onConfirm={confirmDeskCancel}
+      />
+
       <Snackbar visible={!!error} onDismiss={() => setError('')} duration={4000}>
         {error}
       </Snackbar>
@@ -731,6 +804,17 @@ const styles = StyleSheet.create({
   },
   cancelHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   cancelTitle: { color: '#C62828' },
+  deskCancelRow: { alignSelf: 'flex-start', marginTop: 4, marginLeft: -8 },
+  deskCancelledBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 8,
+    backgroundColor: '#FDECEA',
+    borderRadius: 8,
+    padding: 8,
+  },
+  deskCancelledText: { color: '#7A1F1A', flex: 1, lineHeight: 17 },
   cancelReason: { marginTop: 4, fontStyle: 'italic', color: '#7A1F1A' },
   cancelReasonMuted: { marginTop: 4, opacity: 0.6 },
   cancelActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },

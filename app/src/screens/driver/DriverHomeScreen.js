@@ -358,7 +358,7 @@ export default function DriverHomeScreen({ navigation }) {
           <Text variant="bodySmall" style={styles.when}>
             {/* The shift's own start/end — a deadline (pickup) or earliest-bound
                 (drop). Exact departure timing is the driver's call. */}
-            {day} · {isIn ? 'by' : 'after'} {item.shift}
+            {day} · {item.shift}
           </Text>
 
           {/* WHERE. Label above value, not "Pickup: <address>" on one wrapping line —

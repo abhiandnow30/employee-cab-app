@@ -41,15 +41,25 @@ export default function CancelledRidesScreen() {
     return bookings
       .filter((b) => b.status === 'Cancelled')
       .sort((a, b) => {
-        const ta = a.cancelResolvedAt?.seconds ?? a.cancelRequestedAt?.seconds ?? 0;
-        const tb = b.cancelResolvedAt?.seconds ?? b.cancelRequestedAt?.seconds ?? 0;
+        // cancelledAt first: a DESK cancellation writes only that one, deliberately
+        // (it must not touch the employee's request fields), so without it here every
+        // desk cancellation sorted to the bottom as timestamp 0.
+        const ta =
+          a.cancelledAt?.seconds ?? a.cancelResolvedAt?.seconds ?? a.cancelRequestedAt?.seconds ?? 0;
+        const tb =
+          b.cancelledAt?.seconds ?? b.cancelResolvedAt?.seconds ?? b.cancelRequestedAt?.seconds ?? 0;
         return tb - ta;
       });
   }, [bookings]);
 
   function renderRide({ item }) {
-    const when = formatWhen(item.cancelResolvedAt || item.cancelRequestedAt);
-    const viaRequest = !!item.cancelReason || item.cancelStatus === 'Approved';
+    const when = formatWhen(item.cancelledAt || item.cancelResolvedAt || item.cancelRequestedAt);
+    // THREE WAYS A RIDE GETS CANCELLED, and this report is where they must be told
+    // apart. Desk is checked FIRST: it writes no cancelStatus and no cancelReason, so
+    // the viaRequest test below would have labelled it a schedule drop by the
+    // employee — attributing the desk's decision to the rider.
+    const byDesk = item.cancellationSource === 'desk';
+    const viaRequest = !byDesk && (!!item.cancelReason || item.cancelStatus === 'Approved');
     return (
       <Card style={styles.card} mode="outlined">
         <Card.Content>
@@ -73,14 +83,20 @@ export default function CancelledRidesScreen() {
 
           <View style={styles.reasonBox}>
             <MaterialCommunityIcons
-              name={viaRequest ? 'account-cancel-outline' : 'calendar-remove-outline'}
+              name={
+                byDesk ? 'headset' : viaRequest ? 'account-cancel-outline' : 'calendar-remove-outline'
+              }
               size={15}
               color={colors.muted}
             />
             <Text variant="bodySmall" style={styles.reasonText}>
-              {viaRequest
-                ? `Reason: ${item.cancelReason || 'Not specified'}`
-                : 'Removed from the weekly schedule by the employee'}
+              {byDesk
+                ? `Cancelled by Transport Desk${
+                    item.cancelledByRole ? ` (${item.cancelledByRole})` : ''
+                  } — ${item.cancellationReason || 'No reason recorded'}`
+                : viaRequest
+                  ? `Reason: ${item.cancelReason || 'Not specified'}`
+                  : 'Removed from the weekly schedule by the employee'}
               {when ? `  ·  ${when}` : ''}
             </Text>
           </View>

@@ -255,8 +255,7 @@ export default function TrackCabScreen({ navigation }) {
               (pickup) or earliest-bound (drop), never a promised cab instant
               — the ETA below is the live, real estimate. */}
           <Text variant="bodyMedium" style={styles.trip}>
-            {trackedBooking.direction} · {trackedBooking.date} ·{' '}
-            {trackedBooking.direction === 'Home → Office' ? 'by' : 'after'} {trackedBooking.shift}
+            {trackedBooking.direction} · {trackedBooking.date} · {trackedBooking.shift}
           </Text>
           <Text variant="bodySmall" style={styles.detail}>
             Pickup: {pickupPoint?.label || trackedBooking.pickup || '—'}

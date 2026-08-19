@@ -95,6 +95,24 @@ export const BOOKING_LEAD_HOURS = 9;
 // the ride; the admin then approves or rejects it.
 export const CANCEL_CUTOFF_HOURS = 4;
 
+// THE DESK'S OWN DEADLINE — 30 minutes, not 4 hours.
+//
+// Two different actors, two different windows, and the gap between them is the
+// point. The employee's 4 hours exists so a seat freed up is still usable: at 4
+// hours' notice the coordinator can re-plan the run. The desk's 30 minutes exists
+// for the opposite reason — they are the ones being phoned at 9:40 PM about a 10 PM
+// drop, and refusing them would leave a cab driving to collect somebody who has
+// already said they aren't coming.
+//
+// Expressed in HOURS as a fraction because that is what every existing helper takes
+// (canRequestCancel, cancelDeadline, hoursUntil all work in fractional hours), so
+// this needs no parallel set of minute-based functions.
+//
+// Anything inside the last 30 minutes is deliberately still refused: at that point
+// the driver is at or near the pickup, and the honest record of what happened is a
+// no-show, not a cancellation.
+export const DESK_CANCEL_CUTOFF_HOURS = 0.5;
+
 // The state of a cancellation request on a booking (separate from `status`, so
 // the ride stays active until the admin approves).
 //   Requested → employee asked to cancel, waiting on the transport desk
