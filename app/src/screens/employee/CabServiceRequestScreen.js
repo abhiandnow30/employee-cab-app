@@ -23,7 +23,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import ScreenContainer from '../../components/ScreenContainer';
 import { useApp } from '../../context/AppContext';
-import { colors, spacing } from '../../theme';
+import { colors, spacing, font, radius, shadow } from '../../theme';
 import { SUPPORT_HELPLINE } from '../../branding';
 
 export default function CabServiceRequestScreen({ navigation }) {
@@ -109,6 +109,7 @@ export default function CabServiceRequestScreen({ navigation }) {
               mode="contained"
               icon="home"
               style={styles.submit}
+              contentStyle={styles.submitContent}
               onPress={() => navigation.navigate('EmployeeHome')}
             >
               Go to home
@@ -143,7 +144,7 @@ export default function CabServiceRequestScreen({ navigation }) {
                 icon="close-circle"
                 compact
                 textStyle={styles.chipText}
-                style={[styles.chip, { backgroundColor: '#FDECEA' }]}
+                style={[styles.chip, { backgroundColor: colors.dangerSoft }]}
               >
                 Previous request rejected
               </Chip>
@@ -232,6 +233,7 @@ export default function CabServiceRequestScreen({ navigation }) {
             loading={busy}
             disabled={busy}
             style={styles.submit}
+            contentStyle={styles.submitContent}
           >
             Send to transport desk
           </Button>
@@ -261,38 +263,57 @@ function Detail({ label, value }) {
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.surface },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
   centered: { alignItems: 'center' },
   title: {
-    fontWeight: 'bold',
+    fontFamily: font.bold,
     color: colors.text,
     marginTop: spacing.md,
     textAlign: 'center',
   },
   body: {
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
     marginTop: spacing.sm,
-    lineHeight: 20,
+    lineHeight: 21,
   },
-  divider: { alignSelf: 'stretch', marginVertical: spacing.lg },
-  input: { marginBottom: spacing.md },
-  hint: { marginTop: -spacing.md, marginBottom: spacing.xs },
-  submit: { marginTop: spacing.md, paddingVertical: spacing.xs },
+  divider: { alignSelf: 'stretch', marginVertical: spacing.xl, backgroundColor: colors.border },
+  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
+  hint: { marginTop: -spacing.md, marginBottom: spacing.xs, color: colors.muted },
+  submit: { marginTop: spacing.lg, borderRadius: radius.md, ...shadow.brand },
+  submitContent: { paddingVertical: 6 },
   help: {
     color: colors.muted,
     textAlign: 'center',
-    marginTop: spacing.md,
+    marginTop: spacing.lg,
+    lineHeight: 19,
   },
-  rejected: { marginTop: spacing.md, alignItems: 'center' },
-  chip: { alignSelf: 'center' },
-  chipText: { color: colors.danger, fontSize: 12 },
+  rejected: { marginTop: spacing.lg, alignItems: 'center' },
+  chip: { alignSelf: 'center', backgroundColor: colors.dangerSoft },
+  chipText: { color: colors.danger, fontSize: 12, fontFamily: font.semibold },
   rejectedReason: {
     color: colors.muted,
     textAlign: 'center',
     marginTop: spacing.xs,
   },
-  detailRow: { alignSelf: 'stretch', marginBottom: spacing.md },
-  detailLabel: { color: colors.muted },
-  detailValue: { color: colors.text, fontWeight: '600' },
+  // Label above value, in a tinted tray — the read-only echo of what was
+  // submitted, so it must not look like another editable field.
+  detailRow: {
+    alignSelf: 'stretch',
+    marginBottom: spacing.md,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  detailLabel: { color: colors.muted, letterSpacing: 0.3 },
+  detailValue: { color: colors.text, fontFamily: font.semibold, marginTop: 2 },
 });

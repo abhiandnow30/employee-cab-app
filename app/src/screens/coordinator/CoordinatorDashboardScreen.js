@@ -49,7 +49,7 @@ import { routeKey } from '../../services/roster';
 import { cabCapacity } from '../../services/cabs';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
 import { SHIFT_COLORS, legsForShift, shiftSummary } from '../../data/shifts';
-import { statusColors, colors } from '../../theme';
+import { statusColors, colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -398,7 +398,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     const assigned = !!item.assignedCabId;
     const cab = assigned ? cabs.find((c) => c.id === item.assignedCabId) : null;
     const ticked = isSelected(item.key);
-    const code = SHIFT_COLORS[item.shiftCode] || { bg: '#EEE', fg: colors.text };
+    const code = SHIFT_COLORS[item.shiftCode] || { bg: colors.surfaceAlt, fg: colors.text };
     // The DESK's window (30 minutes), not the rider's (4 hours) — same helper, its own
     // cutoff. Reads the booking when there is one and the derived ride when there
     // isn't; both carry date, shift and status.
@@ -444,7 +444,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                     style={{
                       backgroundColor: assigned
                         ? statusColors[item.status] || colors.success
-                        : '#FFF4E0',
+                        : colors.warningSoft,
                     }}
                     textStyle={{
                       color: assigned ? '#FFFFFF' : '#B26A00',
@@ -1161,52 +1161,82 @@ function Stat({ label, value, tone, active = false, onPress, showsLabel = '', ha
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  col: { flex: 1, width: '100%', maxWidth: 820, alignSelf: 'center' },
+  container: { flex: 1, backgroundColor: colors.background },
+  col: { flex: 1, width: '100%', maxWidth: 860, alignSelf: 'center' },
 
-  cancelCard: { marginHorizontal: 8, marginBottom: 8, borderColor: colors.danger },
-  deskCancelCard: { marginHorizontal: 8, marginBottom: 8, borderColor: colors.warning },
-  deskCancelTitle: { color: colors.warning },
+  // The two "someone wants out of a ride" cards. Each carries its own tint and
+  // a matching left rule, so the board's two kinds of exception are told apart
+  // before a word is read.
+  cancelCard: {
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: '#F3C2BD',
+    borderLeftWidth: 4,
+    borderLeftColor: colors.danger,
+    backgroundColor: colors.dangerSoft,
+  },
+  deskCancelCard: {
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: '#F2E3C4',
+    borderLeftWidth: 4,
+    borderLeftColor: colors.warning,
+    backgroundColor: colors.warningSoft,
+  },
+  deskCancelTitle: { color: colors.warning, fontFamily: font.semibold },
   deskCancelWho: { color: colors.warning, marginTop: 2 },
-  cancelHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cancelTitle: { color: colors.danger },
-  cancelIntro: { opacity: 0.7, marginTop: 2 },
-  cancelRow: { marginTop: 8 },
-  cancelName: { fontWeight: 'bold' },
-  cancelMeta: { opacity: 0.75, marginTop: 1 },
+  cancelHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  cancelTitle: { color: colors.danger, fontFamily: font.semibold },
+  cancelIntro: { color: colors.textSecondary, marginTop: 2 },
+  cancelRow: { marginTop: spacing.md },
+  cancelName: { fontFamily: font.semibold, color: colors.text },
+  cancelMeta: { color: colors.textSecondary, marginTop: 1 },
   cancelWhy: { fontStyle: 'italic', marginTop: 2, color: colors.text },
 
   dateBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 8,
-    paddingTop: 8,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
   },
   datePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#EAF2FE',
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    gap: spacing.sm,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
   // "Today" is a one-tap trip back from wherever the arrows took you, so it gets
   // the full 44px on a phone — 8px of padding around a 15px line lands at ~37.
   datePillMobile: { paddingVertical: 11, paddingHorizontal: 14 },
-  dateText: { fontWeight: '600', color: colors.primaryDark, fontSize: 15 },
-  dateReset: { color: colors.primary, fontSize: 12 },
+  dateText: { fontFamily: font.semibold, color: colors.primaryDark, fontSize: 15 },
+  dateReset: { color: colors.primary, fontSize: 12, fontFamily: font.medium },
 
+  // The day's numbers, in their own white panel — they are a summary of the
+  // board, not a row floating on the page background.
   stats: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
   },
   // 2×2 on a phone. `stats` is already a row, so wrapping plus a half-width
   // basis on each child is the whole grid — no second container.
-  statsGrid: { flexWrap: 'wrap', rowGap: 6 },
+  statsGrid: { flexWrap: 'wrap', rowGap: spacing.sm },
   stat: { alignItems: 'center', minWidth: 64 },
   // Just under half, so two sit per row with the row-gap between them and the
   // third and fourth drop to the second line.
@@ -1217,24 +1247,25 @@ const styles = StyleSheet.create({
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
     paddingBottom: 2,
-    paddingHorizontal: 6,
+    paddingHorizontal: spacing.sm,
   },
   // The number and its label come to ~40px; this takes the filter past 44.
-  statTappableMobile: { paddingTop: 4, paddingBottom: 6 },
-  statValue: { fontWeight: 'bold' },
-  statLabel: { color: colors.muted },
+  statTappableMobile: { paddingTop: spacing.xs, paddingBottom: spacing.sm },
+  statValue: { fontFamily: font.bold, color: colors.text },
+  statLabel: { color: colors.muted, letterSpacing: 0.3 },
 
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 10,
-    paddingBottom: 6,
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
     flexWrap: 'wrap',
   },
   // Tighter gutters so IN/OUT and "Add a rider" still share one row on a 360px
   // screen. flexWrap above is the safety net for anything narrower.
-  controlsMobile: { gap: 6, paddingHorizontal: 6 },
+  controlsMobile: { gap: spacing.sm, paddingHorizontal: spacing.sm },
   // Two short segments. It no longer shares the row with a grouping control, so it
   // takes only the width it needs and the filter/Add-a-rider buttons keep the rest.
   // 200, not 170: at 170 each half was ~85px and a bold "OUT" beside its icon
@@ -1253,7 +1284,7 @@ const styles = StyleSheet.create({
   // on a very narrow screen: 'space-between' would drop the button to a second
   // line and then align it LEFT again, whereas auto margin keeps it right
   // wherever it lands.
-  addRider: { marginLeft: 'auto' },
+  addRider: { marginLeft: 'auto', borderRadius: radius.md },
   // THE ACTIVE HALF. Filled with the brand blue — the same colour the sidebar and
   // primary buttons use, so this reads as part of the app rather than a new idea.
   // Paper applies a segment's own `style` last ([buttonStyle, styles.button, style]
@@ -1262,39 +1293,60 @@ const styles = StyleSheet.create({
   legSegOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   // THE INACTIVE HALF. Still a segment — outlined, on the card surface — but plainly
   // the one that isn't chosen.
-  legSegOff: { backgroundColor: colors.surface, borderColor: colors.border },
+  legSegOff: { backgroundColor: colors.surface, borderColor: colors.borderStrong },
   // White on #0129AC is ~10:1, well past AA; the heavier weight is the non-colour
   // half of the signal, so the state survives a greyscale screen or colour blindness.
-  legLabelOn: { color: '#FFFFFF', fontWeight: '800' },
-  legLabelOff: { color: colors.muted, fontWeight: '600' },
+  legLabelOn: { color: '#FFFFFF', fontFamily: font.semibold },
+  legLabelOff: { color: colors.textSecondary, fontFamily: font.medium },
 
-  list: { padding: 10, paddingBottom: 90 },
+  list: { padding: spacing.md, paddingBottom: 96 },
+  // A route heading: tinted band with a brand left rule, so the board reads as
+  // groups of riders rather than one long undifferentiated list.
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#E3F0FF',
-    borderRadius: 8,
-    paddingLeft: 10,
-    paddingRight: 4,
-    paddingVertical: 3,
-    marginTop: 8,
-    marginBottom: 8,
+    backgroundColor: colors.primarySoft,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+    borderRadius: radius.sm,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.xs,
+    paddingVertical: spacing.xs,
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
   },
-  sectionHeaderMobile: { paddingLeft: 8, paddingRight: 2, marginTop: 6, marginBottom: 6 },
-  sectionTitleWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
-  sectionTitle: { color: colors.primaryDark, fontWeight: 'bold', flexShrink: 1 },
+  sectionHeaderMobile: {
+    paddingLeft: spacing.sm,
+    paddingRight: 2,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  sectionTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flex: 1,
+  },
+  sectionTitle: { color: colors.primaryDark, fontFamily: font.semibold, flexShrink: 1 },
   sectionTitleMobile: { fontSize: 13 },
-  sectionCount: { color: colors.primaryDark, opacity: 0.7 },
-  selectLabelMobile: { fontSize: 12, marginHorizontal: 4 },
+  sectionCount: { color: colors.primaryDark, opacity: 0.75 },
+  selectLabelMobile: { fontSize: 12, marginHorizontal: spacing.xs },
 
-  card: { marginBottom: 10 },
-  cardSelected: { borderWidth: 2, borderColor: colors.primary },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  cardSelected: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.primarySofter },
   cardRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  check: { marginRight: 10, marginTop: 2 },
+  check: { marginRight: spacing.md, marginTop: 2 },
   // Clear air between the tick and the name it belongs to, so a thumb aiming at
   // one doesn't obscure the other.
-  checkMobile: { marginRight: 14, marginTop: 1 },
+  checkMobile: { marginRight: spacing.lg, marginTop: 1 },
   // EVERYTHING RIGHT OF THE TICK, and it must fill the card. Without flex: 1 this
   // View sizes to its own widest line — the address — so the card looks full width
   // while its contents end early, and the badges pinned "right" land against the
@@ -1305,7 +1357,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
+    gap: spacing.sm,
     // Takes the card's full width, so "the right" means the card's right edge and
     // not wherever this row's own content happens to end. Without it the row can
     // be sized to its content inside the column, and the badges drift inward by a
@@ -1314,11 +1366,11 @@ const styles = StyleSheet.create({
   },
   // The phone version of the same row: name on its own line, badges beneath it,
   // both left-aligned with everything else on the card.
-  rowStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: 4 },
+  rowStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: spacing.xs },
   // minWidth: 0 lets a long name ellipsise instead of pushing the badges off the
   // right edge — a flex item's default floor is its content, which a name can
   // easily exceed.
-  name: { flex: 1, minWidth: 0 },
+  name: { flex: 1, minWidth: 0, color: colors.text },
   // flex: 1 is what shares a ROW; stacked, it would fight the column's height
   // instead. Full width and no flex is the same instruction in one direction.
   nameStacked: { flex: 0, width: '100%' },
@@ -1330,35 +1382,47 @@ const styles = StyleSheet.create({
   // OWN style, so it survives the row being restyled or stacked.
   // flexShrink: 0 keeps the two chips full-size and on one line; they are short
   // and squeezing "Pending" is never the right sacrifice.
-  chips: { flexDirection: 'row', gap: 6, marginLeft: 'auto', flexShrink: 0 },
+  chips: { flexDirection: 'row', gap: spacing.sm, marginLeft: 'auto', flexShrink: 0 },
   // Stacked, the row above is a COLUMN — and an auto left margin in a column
   // pushes across the cross axis, which would fling the badges to the far right
   // on their own line, adrift from the name they describe. Back to zero so they
   // line up under the name with the route and address lines below.
   chipsStacked: { marginLeft: 0 },
-  metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginTop: 4 },
-  meta: { color: colors.muted, flex: 1 },
-  overnight: { color: '#4527A0', marginTop: 4, fontStyle: 'italic' },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  meta: { color: colors.textSecondary, flex: 1 },
+  overnight: { color: '#5B3FBF', marginTop: spacing.xs, fontStyle: 'italic' },
   // Wraps, because "No route set" plus a Set route button is close to a narrow
   // card's full width.
   // Sits under the meta lines, pulled left so the text button lines up with them
   // rather than floating in the middle of the card.
   deskCancelRow: { alignSelf: 'flex-start', marginTop: 2, marginLeft: -8 },
-  cancelClosed: { color: colors.muted, marginLeft: 8, marginTop: 4 },
+  cancelClosed: { color: colors.muted, marginLeft: spacing.sm, marginTop: spacing.xs },
   noRouteRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: spacing.xs,
     marginTop: 2,
     flexWrap: 'wrap',
   },
-  noRouteText: { color: '#B26A00' },
-  assignedText: { color: colors.success, fontWeight: 'bold', marginTop: 6 },
+  noRouteText: { color: colors.warning, fontFamily: font.medium },
+  assignedText: { color: colors.success, fontFamily: font.semibold, marginTop: spacing.sm },
 
-  empty: { alignItems: 'center', marginTop: 50, gap: 8, paddingHorizontal: 24 },
-  emptyText: { color: colors.muted, textAlign: 'center' },
-  emptyHint: { color: colors.muted, textAlign: 'center', lineHeight: 18 },
+  empty: {
+    alignItems: 'center',
+    marginTop: 56,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xl,
+  },
+  emptyText: { color: colors.text, textAlign: 'center', fontFamily: font.semibold },
+  emptyHint: { color: colors.muted, textAlign: 'center', lineHeight: 20 },
 
+  // Floats over the list, so it needs to read as a bar in front of the page and
+  // not as the last row of it.
   actionBar: {
     position: 'absolute',
     left: 0,
@@ -1367,19 +1431,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 12,
+    padding: spacing.md,
     backgroundColor: colors.surface,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+    ...shadow.lg,
   },
-  assignBtn: { flex: 1, marginLeft: 10 },
+  assignBtn: { flex: 1, marginLeft: spacing.md, borderRadius: radius.md },
 
-  dialog: { width: '100%', maxWidth: 480, alignSelf: 'center' },
-  dialogBody: { paddingVertical: 8 },
-  dialogHint: { color: colors.muted, marginTop: 10, lineHeight: 18 },
-  dialogLabel: { marginTop: 14, marginBottom: 4, color: colors.text },
+  dialog: { width: '100%', maxWidth: 500, alignSelf: 'center' },
+  dialogBody: { paddingVertical: spacing.sm },
+  dialogHint: { color: colors.muted, marginTop: spacing.md, lineHeight: 19 },
+  dialogLabel: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.xs,
+    color: colors.text,
+    fontFamily: font.semibold,
+  },
   // The routes already in use, offered as one-tap chips under the free-text
   // field — typing a route in full at 9 PM is exactly when a typo happens.
-  routeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  routeChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
   routeChip: { marginBottom: 2 },
 });

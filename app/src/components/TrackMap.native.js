@@ -26,7 +26,7 @@ import { Text } from 'react-native-paper';
 import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { DEFAULT_CENTER } from './leaflet';
-import { colors } from '../theme';
+import { colors, radius } from '../theme';
 
 // Tight enough to see which road the cab is on. Matches the web map's zoom 15.
 const SPAN = 0.01;
@@ -110,14 +110,16 @@ export default function TrackMap({ latitude, longitude, route, destination }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, overflow: 'hidden', borderRadius: 8, backgroundColor: colors.background },
+  wrap: { flex: 1, overflow: 'hidden', borderRadius: radius.md, backgroundColor: colors.background },
   map: { ...StyleSheet.absoluteFillObject },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: 'rgba(238,242,248,0.92)',
+    // Matches the page background at 92%, so "nothing to draw yet" reads as part
+    // of the page rather than as a grey sheet thrown over a broken map.
+    backgroundColor: 'rgba(244,247,252,0.92)',
     padding: 16,
   },
   overlayText: { color: colors.muted, textAlign: 'center' },

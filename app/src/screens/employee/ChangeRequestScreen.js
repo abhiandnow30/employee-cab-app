@@ -28,7 +28,7 @@ import {
 } from '../../data/changeRequests';
 import { WORKING_CODES, shiftSummary } from '../../data/shifts';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -337,53 +337,101 @@ export default function ChangeRequestScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  scroll: { padding: 12, alignItems: 'center' },
-  col: { width: '100%', maxWidth: 640 },
-  card: { marginBottom: 14 },
-  sub: { color: colors.muted, marginTop: 2, lineHeight: 18 },
+  scroll: { padding: spacing.lg, paddingBottom: spacing.xxl, alignItems: 'center' },
+  col: { width: '100%', maxWidth: 680 },
+  card: {
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  sub: { color: colors.muted, marginTop: spacing.xs, lineHeight: 19 },
 
-  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
+  typeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+    marginTop: spacing.lg,
+  },
+  // Picking one of these is the whole decision on this screen, so the tiles are
+  // generous and the chosen one goes solid brand — not merely tinted.
   typeTile: {
     flexGrow: 1,
     flexBasis: 140,
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 14,
-    paddingHorizontal: 10,
-    borderRadius: 12,
+    gap: spacing.sm,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
   },
-  typeTileActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  typeTileHover: { backgroundColor: '#F5F9FF', borderColor: colors.primaryLight },
-  typeLabel: { fontSize: 13, fontWeight: '600', color: colors.text, textAlign: 'center' },
+  typeTileActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+    ...shadow.brand,
+  },
+  typeTileHover: { backgroundColor: colors.primarySofter, borderColor: colors.primaryLight },
+  typeLabel: {
+    fontSize: 13,
+    fontFamily: font.semibold,
+    color: colors.text,
+    textAlign: 'center',
+  },
   typeLabelActive: { color: '#FFFFFF' },
 
   blurbBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#EAF2FE',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginTop: 14,
+    gap: spacing.sm,
+    backgroundColor: colors.primarySofter,
+    borderWidth: 1,
+    borderColor: colors.primarySoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    marginTop: spacing.lg,
   },
-  blurbText: { color: colors.primaryDark, flex: 1, lineHeight: 18 },
-  divider: { marginVertical: 14 },
-  label: { marginTop: 14, marginBottom: 6, color: colors.text, fontWeight: '600' },
+  blurbText: { color: colors.primaryDark, flex: 1, lineHeight: 19 },
+  divider: { marginVertical: spacing.lg, backgroundColor: colors.border },
+  label: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    color: colors.text,
+    fontFamily: font.semibold,
+  },
 
-  routeNote: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14 },
-  routeText: { color: colors.muted, flex: 1, lineHeight: 18 },
+  routeNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  routeText: { color: colors.muted, flex: 1, lineHeight: 19 },
 
-  actions: { flexDirection: 'row', gap: 12, marginTop: 16 },
-  actionBtn: { flex: 1, borderRadius: 10 },
-  submitBtn: { flex: 2, borderRadius: 10 },
+  actions: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.xl },
+  actionBtn: { flex: 1, borderRadius: radius.md },
+  submitBtn: { flex: 2, borderRadius: radius.md },
 
-  reqRow: { borderLeftWidth: 3, paddingLeft: 12, paddingVertical: 10, marginTop: 10 },
-  reqTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  reqType: { fontWeight: '600', flex: 1 },
+  reqRow: {
+    borderLeftWidth: 3,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceAlt,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.md,
+    paddingVertical: spacing.md,
+    marginTop: spacing.md,
+  },
+  reqTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  reqType: { fontFamily: font.semibold, flex: 1, color: colors.text },
   reqMeta: { color: colors.muted, marginTop: 3 },
-  reqNote: { color: colors.text, marginTop: 4, fontStyle: 'italic' },
+  reqNote: { color: colors.textSecondary, marginTop: spacing.xs, fontStyle: 'italic' },
 });

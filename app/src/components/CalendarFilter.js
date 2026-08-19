@@ -21,7 +21,7 @@ import { StyleSheet, View, Pressable } from 'react-native';
 import { Text, Portal, Dialog, Button, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { todayKey, shiftDateKey } from '../utils/datetime';
-import { colors } from '../theme';
+import { colors, font, radius, shadow, spacing } from '../theme';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -278,49 +278,68 @@ export default function CalendarFilter({ value, onChange }) {
 }
 
 const styles = StyleSheet.create({
+  // Reads as a filter chip: tinted, bordered, brand-coloured label.
   trigger: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#EFF3F9',
+    gap: spacing.sm,
+    backgroundColor: colors.primarySofter,
     borderWidth: 1,
-    borderColor: '#D6E0EE',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderColor: colors.primarySoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 9,
   },
-  triggerText: { color: colors.primaryDark, fontWeight: '600', maxWidth: 220 },
-  dialog: { width: '100%', maxWidth: 620, alignSelf: 'center' },
-  body: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+  triggerText: {
+    color: colors.primaryDark,
+    fontFamily: font.semibold,
+    fontSize: 13.5,
+    maxWidth: 220,
+  },
+  dialog: { width: '100%', maxWidth: 640, alignSelf: 'center' },
+  body: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xl },
   calCol: { flexGrow: 1, minWidth: 300 },
   monthBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: spacing.md,
   },
-  arrow: { padding: 4 },
-  dowRow: { flexDirection: 'row', width: CELL * 7 },
+  arrow: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceAlt,
+  },
+  dowRow: { flexDirection: 'row', width: CELL * 7, marginBottom: spacing.xs },
   dowText: {
     width: CELL,
     textAlign: 'center',
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: font.semibold,
+    letterSpacing: 0.4,
     color: colors.muted,
   },
   grid: { flexDirection: 'row', flexWrap: 'wrap', width: CELL * 7 },
   cell: { width: CELL, height: CELL, alignItems: 'center', justifyContent: 'center' },
-  dayCell: { borderRadius: 8 },
-  inRange: { backgroundColor: '#EAF2FE' },
+  dayCell: { borderRadius: radius.sm },
+  inRange: { backgroundColor: colors.primarySoft },
   edge: { backgroundColor: colors.primary },
   dayText: { fontSize: 13, color: colors.text },
-  inRangeText: { color: colors.primaryDark, fontWeight: '600' },
-  edgeText: { color: '#FFFFFF', fontWeight: 'bold' },
-  help: { color: colors.muted, marginTop: 8 },
+  inRangeText: { color: colors.primaryDark, fontFamily: font.semibold },
+  edgeText: { color: '#FFFFFF', fontFamily: font.semibold },
+  help: { color: colors.muted, marginTop: spacing.md },
   presetCol: { flexGrow: 1, minWidth: 150 },
-  presetLabel: { color: colors.text, marginBottom: 4 },
-  presetBtn: { alignSelf: 'flex-start' },
+  presetLabel: {
+    color: colors.muted,
+    marginBottom: spacing.sm,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  presetBtn: { alignSelf: 'stretch', borderRadius: radius.sm },
   presetContent: { justifyContent: 'flex-start' },
-  presetDivider: { marginVertical: 8 },
-  footBtn: { minWidth: 96 },
+  presetDivider: { marginVertical: spacing.md, backgroundColor: colors.border },
+  footBtn: { minWidth: 104, borderRadius: radius.md },
 });

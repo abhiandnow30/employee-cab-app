@@ -9,7 +9,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Text } from 'react-native-paper';
 import { loadLeaflet, addTileLayer, DEFAULT_CENTER } from './leaflet';
-import { colors } from '../theme';
+import { colors, radius } from '../theme';
 
 export default function TrackMap({ latitude, longitude, route, destination }) {
   const containerRef = useRef(null); // the DOM <div> Leaflet draws into
@@ -70,7 +70,10 @@ export default function TrackMap({ latitude, longitude, route, destination }) {
       // A distinct green pin for the pickup point.
       const icon = L.divIcon({
         className: '',
-        html: '<div style="background:#2E7D32;width:16px;height:16px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>',
+        html:
+          `<div style="background:${colors.success};width:16px;height:16px;` +
+          `border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;` +
+          `box-shadow:0 1px 4px rgba(16,24,40,.4)"></div>`,
         iconSize: [16, 16],
         iconAnchor: [8, 16],
       });
@@ -111,7 +114,12 @@ export default function TrackMap({ latitude, longitude, route, destination }) {
 }
 
 const styles = StyleSheet.create({
-  map: { flex: 1, minHeight: 320, borderRadius: 8, overflow: 'hidden' },
-  fallback: { backgroundColor: '#E8EEF5', alignItems: 'center', justifyContent: 'center', padding: 20 },
-  fallbackText: { color: colors.muted, textAlign: 'center' },
+  map: { flex: 1, minHeight: 320, borderRadius: radius.md, overflow: 'hidden' },
+  fallback: {
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  fallbackText: { color: colors.muted, textAlign: 'center', lineHeight: 20 },
 });

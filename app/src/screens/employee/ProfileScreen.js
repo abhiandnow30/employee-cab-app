@@ -21,7 +21,7 @@ import { useApp } from '../../context/AppContext';
 import ScreenContainer from '../../components/ScreenContainer';
 import { REQUEST_STATUS } from '../../services/addressRequests';
 import { formatLoginCode, isShareableCode } from '../../utils/driverLogin';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 import useMicrosoftAuthRequest from '../../utils/useMicrosoftAuthRequest';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -34,9 +34,9 @@ function formatDate(ts) {
 }
 
 const STATUS_STYLE = {
-  [REQUEST_STATUS.PENDING]: { bg: '#FFF4E0', fg: '#B26A00', icon: 'clock-outline' },
-  [REQUEST_STATUS.APPROVED]: { bg: '#E7F4E8', fg: colors.success, icon: 'check-circle-outline' },
-  [REQUEST_STATUS.REJECTED]: { bg: '#FDECEC', fg: colors.danger, icon: 'close-circle-outline' },
+  [REQUEST_STATUS.PENDING]: { bg: colors.warningSoft, fg: '#B26A00', icon: 'clock-outline' },
+  [REQUEST_STATUS.APPROVED]: { bg: colors.successSoft, fg: colors.success, icon: 'check-circle-outline' },
+  [REQUEST_STATUS.REJECTED]: { bg: colors.dangerSoft, fg: colors.danger, icon: 'close-circle-outline' },
 };
 
 function StatusChip({ status }) {
@@ -46,7 +46,7 @@ function StatusChip({ status }) {
       compact
       icon={s.icon}
       style={{ backgroundColor: s.bg }}
-      textStyle={{ color: s.fg, fontWeight: 'bold' }}
+      textStyle={{ color: s.fg, fontFamily: font.bold }}
     >
       {status}
     </Chip>
@@ -365,46 +365,65 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { paddingVertical: 4 },
-  header: { alignItems: 'center', marginBottom: 24 },
-  name: { marginTop: 12, fontWeight: 'bold' },
-  role: { opacity: 0.7 },
-  card: { marginBottom: 20 },
-  // The driver reads this off the screen and types it into a login box, so 0/O
-  // and 1/l must not be a guess.
+  container: { paddingVertical: spacing.xs },
+  header: { alignItems: 'center', marginBottom: spacing.xl },
+  name: { marginTop: spacing.md, fontFamily: font.bold, color: colors.text },
+  role: { color: colors.muted, marginTop: 2 },
+  card: {
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
   codeValue: {
+    // Deliberately NOT Poppins: a monospaced face is what keeps 0/O and 1/l
+    // apart, and the driver reads this off the screen to type it into a login
+    // box, so a guess here costs them the login.
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 16,
-    fontWeight: '700',
     letterSpacing: 1.5,
     color: colors.text,
   },
-  help: { opacity: 0.7, marginTop: 4, marginBottom: 12 },
-  requestBtn: { marginTop: 4 },
-  requestsTitle: { marginBottom: 8 },
+  help: { color: colors.muted, marginTop: spacing.xs, marginBottom: spacing.md },
+  requestBtn: { marginTop: spacing.xs, borderRadius: radius.md, alignSelf: 'flex-start' },
+  requestsTitle: { marginBottom: spacing.md, color: colors.text },
+  // A status-coloured left rule plus a tinted tray, so a stack of these reads
+  // as a list of decisions rather than as indented paragraphs.
   requestRow: {
     borderLeftWidth: 3,
-    paddingLeft: 12,
-    paddingVertical: 8,
-    marginBottom: 8,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceAlt,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.md,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.md,
   },
-  requestTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  requestWhen: { opacity: 0.6 },
-  requestNew: { marginTop: 6 },
-  rejectReason: { color: colors.danger, marginTop: 4 },
-  logout: { paddingVertical: 4, marginTop: 4 },
-  dialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
-  dialogBody: { paddingVertical: 8 },
-  currentLabel: { opacity: 0.8, marginBottom: 4 },
+  requestTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  requestWhen: { color: colors.muted },
+  requestNew: { marginTop: spacing.sm, color: colors.text },
+  rejectReason: { color: colors.danger, marginTop: spacing.xs },
+  logout: { marginTop: spacing.xs, borderRadius: radius.md },
+  dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
+  dialogBody: { paddingVertical: spacing.sm },
+  currentLabel: { color: colors.muted, marginBottom: spacing.xs },
   currentBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 6,
-    backgroundColor: '#EDF3FB',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
+    gap: spacing.sm,
+    backgroundColor: colors.primarySofter,
+    borderWidth: 1,
+    borderColor: colors.primarySoft,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
   },
   currentText: { flex: 1, color: colors.text },
-  input: { marginBottom: 10 },
+  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
 });

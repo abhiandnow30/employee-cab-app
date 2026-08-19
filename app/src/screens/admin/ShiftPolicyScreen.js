@@ -20,7 +20,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import useSyncedDraft from '../../utils/useSyncedDraft';
 import { WORKING_CODES, NON_WORKING_CODES, legsForShift, hhmmToMinutes } from '../../data/shifts';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 // One glance-icon per shift code — purely a display touch, no meaning any
 // other screen depends on. Neutral (one tint for all) rather than
@@ -293,7 +293,7 @@ export default function ShiftPolicyScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
+  screen: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
   scrollContent: { alignItems: 'center' },
   col: { width: '100%', maxWidth: 1180 },
@@ -303,10 +303,11 @@ const styles = StyleSheet.create({
 
   card: {
     minWidth: 0,
-    borderRadius: 16,
+    borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
+    ...shadow.sm,
   },
   cardContent: {},
 
@@ -315,71 +316,91 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: spacing.md,
   },
-  identity: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 },
   iconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#EAF2FE',
+    width: 46,
+    height: 46,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconWrapCompact: { width: 36, height: 36, borderRadius: 10 },
-  nameInput: { flex: 1, backgroundColor: 'transparent', height: 40 },
-  nameInputContent: { fontSize: 18, fontWeight: '700', color: colors.text, paddingHorizontal: 0 },
+  iconWrapCompact: { width: 38, height: 38, borderRadius: radius.sm },
+  nameInput: { flex: 1, backgroundColor: 'transparent', height: 42 },
+  nameInputContent: {
+    fontSize: 18,
+    fontFamily: font.semibold,
+    color: colors.text,
+    paddingHorizontal: 0,
+  },
 
   generatesCol: { alignItems: 'flex-end', gap: 2 },
-  generatesLabel: { color: colors.muted, fontSize: 11, fontWeight: '500' },
+  generatesLabel: { color: colors.muted, fontSize: 11, fontFamily: font.medium },
 
-  section: { marginTop: 20 },
+  section: { marginTop: spacing.xl },
   sectionTitle: {
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: font.semibold,
     color: colors.muted,
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 8,
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm,
   },
   box: {
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    padding: spacing.lg,
   },
-  timingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  timingArrow: { marginTop: 4 },
+  timingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  timingArrow: { marginTop: spacing.xs },
   timeInput: { flex: 1, backgroundColor: colors.surface },
 
-  cabRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
-  cabLabel: { fontSize: 15, fontWeight: '600', color: colors.text },
+  cabRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  cabLabel: { fontSize: 15, fontFamily: font.medium, color: colors.text },
   cabDivider: { height: 1, backgroundColor: colors.border },
 
   statusPanel: {
-    marginTop: 20,
-    borderRadius: 12,
-    backgroundColor: '#F7F9FC',
+    marginTop: spacing.xl,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 14,
-    gap: 8,
+    padding: spacing.lg,
+    gap: spacing.sm,
   },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
-  statusText: { fontSize: 13, fontWeight: '600' },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  statusText: { fontSize: 13, fontFamily: font.medium },
 
+  // Pinned under the cards; the shadow is what stops the last card appearing to
+  // slide under a flat strip of the same white.
   footerBar: {
     backgroundColor: colors.surface,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+    ...shadow.lg,
   },
   footerInner: {
     width: '100%',
     maxWidth: 1180,
     alignSelf: 'center',
-    paddingVertical: 16,
+    paddingVertical: spacing.lg,
   },
-  footerError: { marginBottom: 4 },
-  footerButtons: { flexDirection: 'row', gap: 12 },
-  footerBtn: { flex: 1 },
+  footerError: { marginBottom: spacing.xs },
+  footerButtons: { flexDirection: 'row', gap: spacing.md },
+  footerBtn: { flex: 1, borderRadius: radius.md },
 });

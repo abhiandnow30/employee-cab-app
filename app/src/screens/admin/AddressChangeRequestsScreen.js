@@ -32,7 +32,7 @@ import {
   subscribeAllAddressRequests, approveAddressRequest, rejectAddressRequest,
   REQUEST_STATUS,
 } from '../../services/addressRequests';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 // The dropdown value meaning "not on a route".
 const NO_ROUTE = '__none__';
@@ -46,15 +46,15 @@ function formatWhen(ts) {
 }
 
 const STATUS_STYLE = {
-  [REQUEST_STATUS.PENDING]: { bg: '#FFF4E0', fg: '#B26A00' },
-  [REQUEST_STATUS.APPROVED]: { bg: '#E7F4E8', fg: colors.success },
-  [REQUEST_STATUS.REJECTED]: { bg: '#FDECEC', fg: colors.danger },
+  [REQUEST_STATUS.PENDING]: { bg: colors.warningSoft, fg: '#B26A00' },
+  [REQUEST_STATUS.APPROVED]: { bg: colors.successSoft, fg: colors.success },
+  [REQUEST_STATUS.REJECTED]: { bg: colors.dangerSoft, fg: colors.danger },
 };
 
 function StatusChip({ status }) {
   const s = STATUS_STYLE[status] || STATUS_STYLE[REQUEST_STATUS.PENDING];
   return (
-    <Chip compact style={{ backgroundColor: s.bg }} textStyle={{ color: s.fg, fontWeight: 'bold' }}>
+    <Chip compact style={{ backgroundColor: s.bg }} textStyle={{ color: s.fg, fontFamily: font.bold }}>
       {status}
     </Chip>
   );
@@ -383,34 +383,65 @@ export default function AddressChangeRequestsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerCol: { flex: 1, width: '100%', maxWidth: 640, alignSelf: 'center', padding: 12 },
-  tabs: { marginBottom: 12 },
-  list: { paddingBottom: 24 },
-  card: { marginBottom: 12 },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  name: { flex: 1 },
-  when: { opacity: 0.6, marginTop: 2 },
-  divider: { marginVertical: 10 },
-  fieldLabel: { opacity: 0.7 },
-  newLabel: { marginTop: 8 },
-  fieldValue: { marginTop: 2 },
+  container: { flex: 1, backgroundColor: colors.background },
+  centerCol: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 680,
+    alignSelf: 'center',
+    padding: spacing.lg,
+  },
+  tabs: { marginBottom: spacing.lg },
+  list: { paddingBottom: spacing.xl },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  name: { flex: 1, minWidth: 0, color: colors.text },
+  when: { color: colors.muted, marginTop: 2 },
+  divider: { marginVertical: spacing.md, backgroundColor: colors.border },
+  // "Current" / "Requested" — small, spaced, uppercase, so the two addresses
+  // below them are told apart at a glance rather than by reading both.
+  fieldLabel: {
+    color: colors.muted,
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+  },
+  newLabel: { marginTop: spacing.md },
+  fieldValue: { marginTop: 2, color: colors.text, lineHeight: 21 },
   rejectBox: {
-    backgroundColor: '#FDECEC',
-    borderRadius: 8,
-    padding: 10,
-    marginTop: 10,
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: '#F3C2BD',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.md,
   },
   rejectText: { color: colors.danger },
-  reviewedBy: { opacity: 0.6, marginTop: 10 },
-  actions: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  actionBtn: { flex: 1 },
+  reviewedBy: { color: colors.muted, marginTop: spacing.md },
+  actions: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg },
+  actionBtn: { flex: 1, borderRadius: radius.md },
   rejectBtn: { borderColor: colors.danger },
-  error: { color: colors.danger, marginBottom: 8 },
-  empty: { alignItems: 'center', paddingVertical: 48, gap: 10 },
-  emptyText: { opacity: 0.7 },
-  dialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
-  dialogText: { marginBottom: 12, opacity: 0.8 },
-  dialogLabel: { marginTop: 14, marginBottom: 6 },
+  error: { color: colors.danger, marginBottom: spacing.md },
+  empty: { alignItems: 'center', paddingVertical: 56, gap: spacing.md },
+  emptyText: { color: colors.muted },
+  dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
+  dialogText: { marginBottom: spacing.md, color: colors.textSecondary, lineHeight: 21 },
+  dialogLabel: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    color: colors.text,
+    fontFamily: font.semibold,
+  },
   input: { backgroundColor: colors.surface },
 });

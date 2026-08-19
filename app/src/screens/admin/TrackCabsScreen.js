@@ -15,7 +15,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeDriverLocation, isLiveFix } from '../../services/tracking';
 import FleetMap from '../../components/FleetMap';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 function timeAgo(updatedAt, now) {
   if (!updatedAt) return null;
@@ -121,8 +121,8 @@ export default function TrackCabsScreen() {
                 <Chip
                   compact
                   icon={isLive ? 'circle' : noDriver ? 'account-off-outline' : 'circle-outline'}
-                  style={{ backgroundColor: isLive ? '#E8F5E9' : '#F1F3F5' }}
-                  textStyle={{ color: isLive ? '#2E7D32' : colors.muted, fontSize: 12 }}
+                  style={{ backgroundColor: isLive ? colors.successSoft : colors.surfaceAlt }}
+                  textStyle={{ color: isLive ? colors.success : colors.muted, fontSize: 12 }}
                 >
                   {isLive
                     ? 'LIVE'
@@ -150,23 +150,52 @@ export default function TrackCabsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, width: '100%', maxWidth: 900, alignSelf: 'center', padding: 12 },
+  container: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
+    padding: spacing.lg,
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
-    gap: 8,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
   },
-  hint: { opacity: 0.7, flex: 1 },
-  countChip: { backgroundColor: '#EAF2FE' },
-  mapWrap: { height: 380, marginBottom: 12 },
+  hint: { color: colors.muted, flex: 1, lineHeight: 19 },
+  countChip: { backgroundColor: colors.primarySoft },
+  // The map is a panel on the page, so it carries the same rounding, border and
+  // lift as every card below it.
+  mapWrap: {
+    height: 400,
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    ...shadow.sm,
+  },
   list: { flex: 1 },
-  listContent: { paddingBottom: 16 },
-  card: { marginBottom: 8 },
-  cardContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  cabInfo: { flex: 1 },
+  listContent: { paddingBottom: spacing.lg },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  cardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  cabInfo: { flex: 1, minWidth: 0 },
   driver: { color: colors.muted, marginTop: 2 },
-  empty: { alignItems: 'center', marginTop: 30 },
-  emptyText: { color: colors.muted, marginTop: 8 },
+  empty: { alignItems: 'center', marginTop: spacing.xxxl },
+  emptyText: { color: colors.muted, marginTop: spacing.sm },
 });

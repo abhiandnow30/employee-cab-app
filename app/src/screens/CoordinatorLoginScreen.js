@@ -22,11 +22,12 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState, useRef } from 'react';
-import { StyleSheet, View, Image, KeyboardAvoidingView, Platform } from 'react-native';
-import { Text, TextInput, Button, HelperText, Card } from 'react-native-paper';
+import { StyleSheet } from 'react-native';
+import { Text, TextInput, Button, HelperText } from 'react-native-paper';
 import { useApp } from '../context/AppContext';
-import { COMPANY_NAME, companyLogo, SUPPORT_HELPLINE } from '../branding';
-import { colors } from '../theme';
+import AuthLayout from '../components/AuthLayout';
+import { SUPPORT_HELPLINE } from '../branding';
+import { colors, font, radius, shadow, spacing } from '../theme';
 import { COORDINATOR_PHONE_LENGTH, PASSCODE_LENGTH } from '../utils/coordinatorLogin';
 
 // No `navigation` prop: signing in swaps the whole stack by role (see App.js), so
@@ -65,137 +66,110 @@ export default function CoordinatorLoginScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <View style={styles.inner}>
-        <Card style={styles.card} mode="elevated">
-          <Card.Content style={styles.cardContent}>
-            <Image source={companyLogo} style={styles.brandLogo} resizeMode="contain" />
-            <Text variant="titleMedium" style={styles.brandName}>
-              {COMPANY_NAME}
-            </Text>
-            <View style={styles.brandDivider} />
-            <Text variant="titleLarge" style={styles.title}>
-              Coordinator Sign In
-            </Text>
-            <Text variant="bodySmall" style={styles.subtitle}>
-              Your phone number and the passcode HR gave you
-            </Text>
+    <AuthLayout title="Coordinator Sign In" subtitle="Your phone number and the passcode HR gave you.">
+      {/* Digits only and capped at the exact length in both boxes, so a
+          mistyped entry is caught here rather than coming back as a generic
+          Firebase error. Filling the phone box hands focus to the passcode. */}
+      <TextInput
+        label="Your phone number"
+        value={phone}
+        onChangeText={(t) => {
+          const digits = t.replace(/[^0-9]/g, '').slice(0, COORDINATOR_PHONE_LENGTH);
+          setPhone(digits);
+          if (digits.length === COORDINATOR_PHONE_LENGTH) codeRef.current?.focus();
+        }}
+        mode="outlined"
+        placeholder="e.g. 9848094029"
+        keyboardType="number-pad"
+        maxLength={COORDINATOR_PHONE_LENGTH}
+        autoCapitalize="none"
+        autoCorrect={false}
+        left={<TextInput.Icon icon="phone" />}
+        style={styles.input}
+        returnKeyType="next"
+        blurOnSubmit={false}
+        onSubmitEditing={() => codeRef.current?.focus()}
+      />
+      <HelperText type="info" visible={true} style={styles.hint}>
+        The number the transport desk has on file for you.
+      </HelperText>
 
-            {/* Digits only and capped at the exact length in both boxes, so a
-                mistyped entry is caught here rather than coming back as a generic
-                Firebase error. Filling the phone box hands focus to the passcode. */}
-            <TextInput
-              label="Your phone number"
-              value={phone}
-              onChangeText={(t) => {
-                const digits = t.replace(/[^0-9]/g, '').slice(0, COORDINATOR_PHONE_LENGTH);
-                setPhone(digits);
-                if (digits.length === COORDINATOR_PHONE_LENGTH) codeRef.current?.focus();
-              }}
-              mode="outlined"
-              placeholder="e.g. 9848094029"
-              keyboardType="number-pad"
-              maxLength={COORDINATOR_PHONE_LENGTH}
-              autoCapitalize="none"
-              autoCorrect={false}
-              left={<TextInput.Icon icon="phone" />}
-              style={styles.input}
-              returnKeyType="next"
-              blurOnSubmit={false}
-              onSubmitEditing={() => codeRef.current?.focus()}
-            />
-            <HelperText type="info" visible={true} style={styles.hint}>
-              The number the transport desk has on file for you.
-            </HelperText>
+      <TextInput
+        ref={codeRef}
+        label={`Passcode — ${PASSCODE_LENGTH} digits`}
+        value={passcode}
+        onChangeText={(t) => setPasscode(t.replace(/[^0-9]/g, '').slice(0, PASSCODE_LENGTH))}
+        mode="outlined"
+        placeholder="e.g. 4071"
+        keyboardType="number-pad"
+        maxLength={PASSCODE_LENGTH}
+        autoCapitalize="none"
+        autoCorrect={false}
+        left={<TextInput.Icon icon="shield-key-outline" />}
+        style={styles.input}
+        returnKeyType="go"
+        onSubmitEditing={handleLogin}
+      />
+      <HelperText type="info" visible={true} style={styles.hint}>
+        Given to you by HR when your account was created.
+      </HelperText>
 
-            <TextInput
-              ref={codeRef}
-              label={`Passcode — ${PASSCODE_LENGTH} digits`}
-              value={passcode}
-              onChangeText={(t) => setPasscode(t.replace(/[^0-9]/g, '').slice(0, PASSCODE_LENGTH))}
-              mode="outlined"
-              placeholder="e.g. 4071"
-              keyboardType="number-pad"
-              maxLength={PASSCODE_LENGTH}
-              autoCapitalize="none"
-              autoCorrect={false}
-              left={<TextInput.Icon icon="shield-key-outline" />}
-              style={styles.input}
-              returnKeyType="go"
-              onSubmitEditing={handleLogin}
-            />
-            <HelperText type="info" visible={true} style={styles.hint}>
-              Given to you by HR when your account was created.
-            </HelperText>
+      {error ? (
+        <HelperText type="error" visible={true} style={styles.error}>
+          {error}
+        </HelperText>
+      ) : null}
 
-            {error ? (
-              <HelperText type="error" visible={true} style={styles.error}>
-                {error}
-              </HelperText>
-            ) : null}
+      <Button
+        mode="contained"
+        onPress={handleLogin}
+        style={styles.button}
+        contentStyle={styles.buttonContent}
+        labelStyle={styles.buttonLabel}
+        loading={loading}
+        disabled={loading}
+      >
+        Sign In
+      </Button>
 
-            <Button
-              mode="contained"
-              onPress={handleLogin}
-              style={styles.button}
-              loading={loading}
-              disabled={loading}
-            >
-              Sign In
-            </Button>
+      {/* No self-service reset exists, so point at the only thing that
+          actually works rather than at a link that would go nowhere. */}
+      <Text variant="bodySmall" style={styles.help}>
+        Lost your passcode? HR can issue a new one from the Coordinators
+        screen — call the desk on {SUPPORT_HELPLINE}.
+      </Text>
 
-            {/* No self-service reset exists, so point at the only thing that
-                actually works rather than at a link that would go nowhere. */}
-            <Text variant="bodySmall" style={styles.help}>
-              Lost your passcode? HR can issue a new one from the Coordinators
-              screen — call the desk on {SUPPORT_HELPLINE}.
-            </Text>
-
-            {/* NO "Employee or admin sign in" LINK. Removed at explicit request. The
-                main sign-in screen still links INTO this one, so the route is how
-                anyone gets here in the first place; this was only the way back. If a
-                coordinator or driver lands here by a stale bookmark and needs the
-                employee screen, it is /login — worth restoring this button if that
-                turns out to happen. */}
-          </Card.Content>
-        </Card>
-      </View>
-    </KeyboardAvoidingView>
+      {/* NO "Employee or admin sign in" LINK. Removed at explicit request. The
+          main sign-in screen still links INTO this one, so the route is how
+          anyone gets here in the first place; this was only the way back. If a
+          coordinator or driver lands here by a stale bookmark and needs the
+          employee screen, it is /login — worth restoring this button if that
+          turns out to happen. */}
+    </AuthLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  inner: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-  card: { width: '100%', maxWidth: 380, borderRadius: 12 },
-  cardContent: { paddingVertical: 24 },
-  brandLogo: { width: 96, height: 64, alignSelf: 'center' },
-  brandName: {
-    textAlign: 'center',
-    fontWeight: 'bold',
-    color: colors.text,
-    marginTop: 4,
-  },
-  brandDivider: {
-    height: 1,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    width: '60%',
-    marginVertical: 14,
-  },
-  title: { textAlign: 'center', fontWeight: 'bold', color: colors.primary },
-  subtitle: { textAlign: 'center', marginBottom: 20, opacity: 0.6 },
-  input: { marginBottom: 0 },
-  hint: { marginTop: -2, marginBottom: 4 },
+  input: { marginBottom: 0, backgroundColor: colors.surface },
+  hint: { marginTop: -2, marginBottom: spacing.xs, color: colors.muted },
   error: { marginTop: 2, marginBottom: 2 },
-  button: { marginTop: 6, paddingVertical: 2, borderRadius: 8 },
+  // Squarer and taller than Paper's default pill — that shape is what makes the
+  // primary action read as the one thing on the form to press.
+  button: { marginTop: spacing.md, borderRadius: radius.md, ...shadow.brand },
+  buttonContent: { paddingVertical: 8 },
+  buttonLabel: { fontFamily: font.semibold, fontSize: 15, letterSpacing: 0.2 },
+  // The fallback route when the login itself can't work — set apart in a tinted
+  // tray so it reads as help, not as more form.
   help: {
     textAlign: 'center',
-    marginTop: 16,
-    lineHeight: 18,
-    color: colors.muted,
+    marginTop: spacing.xl,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    lineHeight: 19,
+    color: colors.textSecondary,
   },
 });

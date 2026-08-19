@@ -17,7 +17,7 @@ import { StyleSheet, View, FlatList } from 'react-native';
 import { Text, Card, Chip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -136,34 +136,49 @@ export default function CancelledRidesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  container: { flex: 1, backgroundColor: colors.background },
+  centerCol: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingTop: 12,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
   },
-  hint: { opacity: 0.7, flex: 1 },
-  countChip: { backgroundColor: '#FDECEC' },
-  list: { padding: 12 },
-  card: { marginBottom: 12 },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  chip: { backgroundColor: '#ECEFF1' },
-  chipText: { color: '#546E7A', fontSize: 12 },
-  line: { marginTop: 6, fontWeight: '600', color: colors.text },
+  hint: { color: colors.muted, flex: 1, lineHeight: 19 },
+  countChip: { backgroundColor: colors.dangerSoft },
+  list: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  chip: { backgroundColor: colors.surfaceAlt },
+  chipText: { color: colors.textSecondary, fontSize: 11.5, fontFamily: font.semibold },
+  line: { marginTop: spacing.sm, fontFamily: font.semibold, color: colors.text },
   detail: { color: colors.muted, marginTop: 2 },
   reasonBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 6,
-    marginTop: 10,
-    backgroundColor: '#F7F8FA',
-    borderRadius: 8,
-    padding: 8,
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
   },
-  reasonText: { flex: 1, color: colors.muted, lineHeight: 18 },
-  empty: { alignItems: 'center', marginTop: 50 },
-  emptyText: { color: colors.muted, marginTop: 8 },
+  reasonText: { flex: 1, color: colors.textSecondary, lineHeight: 19 },
+  empty: { alignItems: 'center', marginTop: 56 },
+  emptyText: { color: colors.muted, marginTop: spacing.sm },
 });

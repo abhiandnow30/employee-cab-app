@@ -25,12 +25,12 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Dropdown from '../../components/Dropdown';
 import { useApp } from '../../context/AppContext';
-import { colors, spacing } from '../../theme';
+import { colors, spacing, font, radius, shadow } from '../../theme';
 
 const STATUS_TINT = {
-  Pending: { bg: '#FFF6E5', fg: colors.warning, icon: 'clock-outline' },
-  Approved: { bg: '#E8F5E9', fg: colors.success, icon: 'check-circle' },
-  Rejected: { bg: '#FDECEA', fg: colors.danger, icon: 'close-circle' },
+  Pending: { bg: colors.warningSoft, fg: colors.warning, icon: 'clock-outline' },
+  Approved: { bg: colors.successSoft, fg: colors.success, icon: 'check-circle' },
+  Rejected: { bg: colors.dangerSoft, fg: colors.danger, icon: 'close-circle' },
 };
 
 export default function CabRequestsScreen() {
@@ -415,45 +415,60 @@ function Field({ icon, label, value }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  inner: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center', padding: spacing.lg },
-  header: { marginBottom: spacing.md },
-  headerTitle: { fontWeight: 'bold', color: colors.text },
-  headerBody: { color: colors.muted, marginTop: spacing.xs, lineHeight: 18 },
-  filter: { marginBottom: spacing.md },
+  screen: { flex: 1, backgroundColor: colors.background },
+  inner: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    padding: spacing.lg,
+  },
+  header: { marginBottom: spacing.lg },
+  headerTitle: { fontFamily: font.bold, color: colors.text },
+  headerBody: { color: colors.muted, marginTop: spacing.xs, lineHeight: 20 },
+  filter: { marginBottom: spacing.lg },
   list: { paddingBottom: spacing.xl },
-  card: { backgroundColor: colors.surface, marginBottom: spacing.md },
-  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   cardWho: { flex: 1, minWidth: 0 },
-  name: { fontWeight: 'bold', color: colors.text },
+  name: { fontFamily: font.semibold, color: colors.text },
   muted: { color: colors.muted },
   statusChip: { alignSelf: 'flex-start' },
-  divider: { marginVertical: spacing.md },
-  field: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm },
+  divider: { marginVertical: spacing.md, backgroundColor: colors.border },
+  field: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.sm },
   fieldText: { flex: 1, minWidth: 0 },
-  fieldValue: { color: colors.text },
+  fieldValue: { color: colors.text, lineHeight: 21 },
   fieldLabel: {
     color: colors.muted,
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
     marginBottom: spacing.xs,
+    letterSpacing: 0.3,
   },
   actions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: spacing.sm,
-    marginTop: spacing.md,
+    marginTop: spacing.lg,
   },
   decided: { marginTop: spacing.sm },
-  empty: { alignItems: 'center', paddingVertical: spacing.xl * 2 },
+  empty: { alignItems: 'center', paddingVertical: 56 },
   emptyText: {
     color: colors.muted,
     textAlign: 'center',
     marginTop: spacing.md,
-    maxWidth: 320,
+    maxWidth: 340,
+    lineHeight: 20,
   },
-  dialog: { width: '100%', maxWidth: 520, alignSelf: 'center' },
+  dialog: { width: '100%', maxWidth: 540, alignSelf: 'center' },
   dialogBody: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
-  dialogHint: { color: colors.muted, marginBottom: spacing.md, lineHeight: 18 },
-  input: { marginBottom: spacing.md },
-  hint: { marginTop: 0 },
+  dialogHint: { color: colors.muted, marginBottom: spacing.md, lineHeight: 19 },
+  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
+  hint: { marginTop: 0, color: colors.muted },
 });

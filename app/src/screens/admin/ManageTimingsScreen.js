@@ -18,7 +18,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import useSyncedDraft from '../../utils/useSyncedDraft';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 // A plain-text normaliser for the route list: just trim.
 function normalizeText(input) {
@@ -194,21 +194,38 @@ export default function ManageTimingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scroll: { padding: 12 },
-  centerCol: { width: '100%', maxWidth: 640, alignSelf: 'center' },
-  hint: { opacity: 0.7, marginBottom: 12 },
-  card: { marginBottom: 14 },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  cardHeadText: { flex: 1 },
-  subtitle: { opacity: 0.6 },
-  divider: { marginVertical: 10 },
-  emptyList: { fontStyle: 'italic', opacity: 0.55, marginBottom: 10 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  chip: { backgroundColor: '#E3F0FF' },
-  addRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  addInput: { flex: 1 },
-  addBtn: { marginTop: 4 },
-  footer: { flexDirection: 'row', gap: 12, marginTop: 4, marginBottom: 24 },
-  footerBtn: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.background },
+  scroll: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  centerCol: { width: '100%', maxWidth: 680, alignSelf: 'center' },
+  hint: { color: colors.muted, marginBottom: spacing.lg, lineHeight: 20 },
+  card: {
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  cardHeadText: { flex: 1, minWidth: 0 },
+  subtitle: { color: colors.muted, marginTop: 1 },
+  divider: { marginVertical: spacing.md, backgroundColor: colors.border },
+  emptyList: { fontStyle: 'italic', color: colors.muted, marginBottom: spacing.md },
+  chips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  chip: { backgroundColor: colors.primarySoft },
+  addRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  addInput: { flex: 1, backgroundColor: colors.surface },
+  addBtn: { marginTop: spacing.xs, borderRadius: radius.md },
+  footer: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xl,
+  },
+  footerBtn: { flex: 1, borderRadius: radius.md },
 });

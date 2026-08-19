@@ -20,9 +20,9 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { subscribeEmployees, subscribeInvites } from '../../services/profile';
+import { subscribeEmployees } from '../../services/profile';
 import useSyncedDraft from '../../utils/useSyncedDraft';
-import { colors } from '../../theme';
+import { colors, radius, shadow, spacing } from '../../theme';
 
 function draftOf(emp, homeAddressOf) {
   return {
@@ -330,13 +330,6 @@ export default function EmployeeManagementScreen() {
     routeOptions,
   } = useApp();
   const [employees, setEmployees] = useState([]);
-  // People HR (or a roster upload) has invited who have never signed in. They
-  // have NO uid yet — a profile only exists from their first Microsoft sign-in —
-  // so they are not in `employees` and cannot be edited here. Listed anyway,
-  // because leaving them out is what made a roster upload look like it had
-  // silently dropped somebody: their invite was filed, and this screen showed no
-  // sign of it until they happened to sign in.
-  const [invites, setInvites] = useState([]);
   const [error, setError] = useState('');
   const [snack, setSnack] = useState('');
   const [addOpen, setAddOpen] = useState(false);
@@ -346,26 +339,6 @@ export default function EmployeeManagementScreen() {
 
   useEffect(() => {
     const unsub = subscribeEmployees(setEmployees, (e) => setError(e.message));
-    return unsub;
-  }, []);
-
-  useEffect(() => {
-    // EMPLOYEE INVITES ONLY. An invite carries the role it was filed under
-    // (adminCreateInvite writes it, and claimInvite copies it onto the profile),
-    // so this has to match on that role exactly. It was written as "anything that
-    // isn't a driver" back when coordinators were also created from this screen —
-    // which was wrong in both directions once they moved to their own page:
-    // drivers are never invited at all (adminCreateDriver makes the account
-    // outright, and adminInviteEmployees refuses the role), so it guarded against
-    // something that cannot exist while letting coordinators through onto a list
-    // of employees.
-    //
-    // Non-fatal on error: this screen then shows real employees only, which is
-    // what it did before. Not worth blocking the whole page over.
-    const unsub = subscribeInvites(
-      (list) => setInvites(list.filter((i) => (i.role || 'employee') === 'employee')),
-      () => setInvites([])
-    );
     return unsub;
   }, []);
 
@@ -392,21 +365,6 @@ export default function EmployeeManagementScreen() {
       return words.every((w) => haystack.includes(w));
     });
   }, [employees, search]);
-
-  // The same search narrows the pending list, so "where is Abhilasha" finds her
-  // whether or not she has signed in yet.
-  const shownInvites = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return invites;
-    const words = q.split(/\s+/);
-    return invites.filter((i) => {
-      const haystack = [i.name, i.email, i.empId, i.phone, i.route, i.address]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return words.every((w) => haystack.includes(w));
-    });
-  }, [invites, search]);
 
   async function handleSave(uid, fields) {
     setError('');
@@ -485,42 +443,6 @@ export default function EmployeeManagementScreen() {
             />
           )}
           contentContainerStyle={styles.list}
-          /* Invited, never signed in. Shown ABOVE the real employees rather than
-             mixed into them: nothing on these can be edited, because there is no
-             employees/<uid> document to write to yet. What they answer is "where
-             did the person I just uploaded go?" */
-          ListHeaderComponent={
-            shownInvites.length ? (
-              <View style={styles.pendingBox}>
-                <View style={styles.pendingHead}>
-                  <MaterialCommunityIcons
-                    name="account-clock-outline"
-                    size={17}
-                    color={colors.primary}
-                  />
-                  <Text variant="labelLarge" style={styles.pendingTitle}>
-                    {shownInvites.length} invited · waiting for their first sign-in
-                  </Text>
-                </View>
-                <Text variant="bodySmall" style={styles.pendingHint}>
-                  Their details are saved. They become full profiles — and their
-                  shifts import — the first time they open the app and choose
-                  “Sign in with Microsoft”. Nothing to do here.
-                </Text>
-                {shownInvites.map((i) => (
-                  <View key={i.email} style={styles.pendingRow}>
-                    <Text variant="bodySmall" style={styles.pendingName} numberOfLines={1}>
-                      {i.name || i.email}
-                      {i.empId ? ` · ${i.empId}` : ''}
-                    </Text>
-                    <Text variant="bodySmall" style={styles.pendingEmail} numberOfLines={1}>
-                      {i.email}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : null
-          }
           ListEmptyComponent={
             <View style={styles.empty}>
               <MaterialCommunityIcons
@@ -584,59 +506,60 @@ export default function EmployeeManagementScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  container: { flex: 1, backgroundColor: colors.background },
+  centerCol: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
-    padding: 12,
-    paddingBottom: 4,
+    gap: spacing.md,
+    padding: spacing.lg,
+    paddingBottom: spacing.xs,
     flexWrap: 'wrap',
   },
-  hint: { opacity: 0.7, flex: 1, minWidth: 200 },
+  hint: { color: colors.muted, flex: 1, minWidth: 200, lineHeight: 19 },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingTop: 8,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
   },
   searchInput: { flex: 1, backgroundColor: colors.surface },
   searchCount: { color: colors.muted },
-  list: { padding: 12 },
+  list: { padding: spacing.lg, paddingBottom: spacing.xxl },
 
-  // Invited-but-not-signed-in block, above the editable employee cards.
-  pendingBox: {
-    borderRadius: 12,
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: '#F2F6FF',
-    padding: 14,
-    marginBottom: 14,
+    ...shadow.sm,
   },
-  pendingHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  pendingTitle: { color: colors.text },
-  pendingHint: { color: colors.muted, lineHeight: 18, marginTop: 4, marginBottom: 6 },
-  pendingRow: { paddingVertical: 4 },
-  pendingName: { fontWeight: '600', color: colors.text },
-  pendingEmail: { color: colors.muted },
-
-  card: { marginBottom: 12 },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  cardHeadText: { flex: 1 },
-  email: { opacity: 0.6, marginTop: 2 },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  cardHeadText: { flex: 1, minWidth: 0 },
+  email: { color: colors.muted, marginTop: 2 },
   deleteBtn: { margin: 0 },
-  divider: { marginVertical: 10 },
-  input: { marginBottom: 10 },
-  fieldLabel: { opacity: 0.8, marginBottom: 6 },
-  pwHint: { marginTop: -8, marginBottom: 2 },
-  saveBtn: { marginTop: 2 },
-  error: { color: colors.danger, paddingHorizontal: 12 },
-  empty: { alignItems: 'center', marginTop: 50 },
-  emptyText: { color: colors.muted, marginTop: 8, textAlign: 'center' },
-  dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
-  dialogBody: { paddingVertical: 8 },
-  dialogHint: { opacity: 0.7, marginBottom: 12 },
+  divider: { marginVertical: spacing.md, backgroundColor: colors.border },
+  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
+  fieldLabel: { color: colors.textSecondary, marginBottom: spacing.sm },
+  pwHint: { marginTop: -spacing.sm, marginBottom: 2, color: colors.muted },
+  saveBtn: { marginTop: spacing.xs, borderRadius: radius.md },
+  error: { color: colors.danger, paddingHorizontal: spacing.lg },
+  empty: { alignItems: 'center', marginTop: 56 },
+  emptyText: {
+    color: colors.muted,
+    marginTop: spacing.sm,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  dialog: { width: '100%', maxWidth: 470, alignSelf: 'center' },
+  dialogBody: { paddingVertical: spacing.sm },
+  dialogHint: { color: colors.muted, marginBottom: spacing.md, lineHeight: 19 },
 });

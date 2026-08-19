@@ -22,7 +22,7 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COMPANY_NAME, companyLogo } from '../branding';
-import { colors } from '../theme';
+import { colors, font, radius, shadow, spacing } from '../theme';
 
 // Each menu item → which screen it opens.
 //
@@ -407,18 +407,23 @@ function DrawerBody({
       {/* Company brand: logo + name on a white strip at the very top */}
       <View style={styles.brandBar}>
         <Image source={companyLogo} style={styles.brandLogo} resizeMode="contain" />
-        <Text style={styles.brandName} numberOfLines={1}>
-          {COMPANY_NAME}
-        </Text>
+        <View style={styles.brandTextCol}>
+          <Text style={styles.brandName} numberOfLines={1}>
+            {COMPANY_NAME}
+          </Text>
+          <Text style={styles.brandTagline} numberOfLines={1}>
+            Cab Service
+          </Text>
+        </View>
         {!permanent ? (
-          <Pressable onPress={onClose} hitSlop={10}>
-            <MaterialCommunityIcons name="close" size={22} color={colors.primaryDark} />
+          <Pressable onPress={onClose} hitSlop={10} style={styles.brandClose}>
+            <MaterialCommunityIcons name="close" size={20} color={colors.primaryDark} />
           </Pressable>
         ) : null}
       </View>
 
       {/* Menu items (fills the space between brand and the user card) */}
-      <ScrollView style={styles.menu}>
+      <ScrollView style={styles.menu} contentContainerStyle={styles.menuContent}>
         {items.map((item) => {
           const active = item.screen === activeScreen;
           const waiting = counts[item.screen] || 0;
@@ -435,15 +440,17 @@ function DrawerBody({
               <MaterialCommunityIcons
                 name={item.icon}
                 size={20}
-                color="#FFFFFF"
+                color={active ? '#FFFFFF' : colors.onDarkMuted}
                 style={styles.itemIcon}
               />
               <Text style={[styles.itemText, active && styles.itemTextActive]}>
                 {item.label}
               </Text>
               {waiting ? (
-                <View style={styles.countPill}>
-                  <Text style={styles.countText}>{waiting > 99 ? '99+' : waiting}</Text>
+                <View style={[styles.countPill, active && styles.countPillActive]}>
+                  <Text style={[styles.countText, active && styles.countTextActive]}>
+                    {waiting > 99 ? '99+' : waiting}
+                  </Text>
                 </View>
               ) : null}
             </Pressable>
@@ -525,98 +532,160 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   panel: {
-    width: '78%',
-    maxWidth: 320,
+    width: '80%',
+    maxWidth: 300,
     height: '100%',
     backgroundColor: colors.primaryDark,
+    ...shadow.lg,
   },
   permanentPanel: {
-    width: 250,
+    width: 264,
     height: '100%',
     backgroundColor: colors.primaryDark,
+    // A single hairline rather than a shadow: the sidebar sits flush against a
+    // pale page, and a shadow on that edge muddies the join.
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(0,0,0,0.12)',
   },
   body: { flex: 1 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  // White brand band lifted toward the top; the nav starts lower (menu has its
-  // own top padding) so there's clear separation between brand and menu.
+  backdrop: { flex: 1, backgroundColor: 'rgba(16, 24, 40, 0.45)' },
+  // White brand band at the top. The logo sits in the same 20px gutter the nav
+  // icons use, so the brand name and every menu label share one left edge.
   brandBar: {
     backgroundColor: '#FFFFFF',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20, // matches the nav items below
-    paddingBottom: 8, // minimal white below the logo before the blue menu
-    paddingTop: 24, // enough to clear the status bar, but tighter to the top
+    paddingBottom: spacing.md,
+    paddingTop: spacing.xl,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  // Logo sized to its true aspect (≈106:119) and left-aligned so its left edge
-  // sits at 20px like the nav icons; the 3px margin makes the column total 30px
-  // so the brand name lands at 50px — exactly under the menu labels below.
-  brandLogo: { width: 27, height: 30, marginRight: 3 },
-  brandName: { color: colors.primaryDark, fontWeight: 'bold', fontSize: 16, flex: 1 },
-  menu: { flex: 1 }, // nav sits right below the brand band
+  // Sized to the logo's true aspect (≈106:119) and left-aligned; the 8px gap
+  // makes the column 35px so the brand text clears the icon gutter cleanly.
+  brandLogo: { width: 30, height: 34, marginRight: spacing.sm },
+  brandTextCol: { flex: 1, minWidth: 0 },
+  brandName: {
+    color: colors.primaryDark,
+    fontFamily: font.bold,
+    fontSize: 15,
+    lineHeight: 20,
+    letterSpacing: 0.1,
+  },
+  // The one word that says what this app IS, under the company that owns it.
+  brandTagline: {
+    color: colors.muted,
+    fontFamily: font.medium,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 1,
+  },
+  brandClose: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+  },
+  menu: { flex: 1 },
+  menuContent: { paddingVertical: spacing.md, paddingHorizontal: spacing.md },
+  // Rows are inset and rounded so the active one reads as a selected pill
+  // rather than a full-bleed band of a slightly different blue.
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    marginBottom: 2,
   },
-  itemActive: { backgroundColor: colors.primary }, // highlight current screen
+  itemActive: { backgroundColor: colors.primary, ...shadow.xs },
   itemIcon: { width: 30 },
-  itemText: { color: '#FFFFFF', fontSize: 16, flex: 1 },
-  itemTextActive: { fontWeight: 'bold' },
+  // Inactive labels sit a step back from white; the active one comes forward in
+  // both colour and weight, so the current screen is obvious at a glance.
+  itemText: {
+    color: colors.onDarkMuted,
+    fontFamily: font.medium,
+    fontSize: 14.5,
+    letterSpacing: 0.1,
+    flex: 1,
+  },
+  itemTextActive: { color: '#FFFFFF', fontFamily: font.semibold },
   countPill: {
     minWidth: 22,
     height: 22,
-    borderRadius: 11,
-    paddingHorizontal: 6,
-    backgroundColor: '#FFFFFF',
+    borderRadius: radius.pill,
+    paddingHorizontal: 7,
+    backgroundColor: 'rgba(255,255,255,0.16)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  countText: { color: colors.primaryDark, fontSize: 12, fontWeight: 'bold' },
-  // Account block. paddingHorizontal matches `item` above (20) so the icon
-  // column starts on the same edge as every nav row; paddingVertical is kept
-  // tight so the collapsed card is a slim strip rather than a deep footer.
+  countPillActive: { backgroundColor: '#FFFFFF' },
+  countText: { color: '#FFFFFF', fontSize: 11.5, lineHeight: 16, fontFamily: font.bold },
+  countTextActive: { color: colors.primary },
+  // Account block, pinned to the bottom. A shade lighter than the nav above it
+  // so it separates without a hard rule.
   userBox: {
-    backgroundColor: colors.primaryLight,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingVertical: spacing.md,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.2)',
+    borderTopColor: colors.onDarkFaint,
   },
   // The shared 30px icon gutter — same width as `itemIcon`, so meta text,
   // "Change password" and the profile name all begin at the same x as the nav
   // labels. Changing one of these without the other is what made the block
   // look bolted on.
   rowIcon: { width: 30 },
-  userTop: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
-  userNameCol: { flex: 1 },
-  userName: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 },
-  userRole: { color: '#E3F0FF', fontSize: 12, marginTop: 1 },
+  userTop: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.xs },
+  userNameCol: { flex: 1, minWidth: 0 },
+  userName: { color: '#FFFFFF', fontFamily: font.semibold, fontSize: 14.5, lineHeight: 20 },
+  userRole: {
+    color: colors.onDarkMuted,
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    lineHeight: 16,
+    marginTop: 1,
+  },
   // Hairline separating the details from the profile row, so the expanded card
   // reads as two grouped parts instead of one long list.
   userDetails: {
-    paddingBottom: 6,
-    marginBottom: 6,
+    paddingBottom: spacing.sm,
+    marginBottom: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.18)',
+    borderBottomColor: colors.onDarkFaint,
   },
-  metaRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
-  userMeta: { color: '#E3F0FF', fontSize: 13, flex: 1 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
+  userMeta: {
+    color: colors.onDarkMuted,
+    fontFamily: font.regular,
+    fontSize: 12.5,
+    lineHeight: 18,
+    flex: 1,
+  },
   // Separates the read-only meta rows from the tappable ones below.
   detailDivider: {
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    marginTop: 6,
-    marginBottom: 2,
+    backgroundColor: colors.onDarkFaint,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
   },
   // Shared by Change password and Logout — one shape for both, so the account
   // panel doesn't invent a second row style for its second action.
   accountAction: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 9,
   },
-  accountActionText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600', flex: 1 },
-  pwInput: { marginBottom: 10 },
-  pwDialog: { width: '100%', maxWidth: 400, alignSelf: 'center' },
+  accountActionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontFamily: font.medium,
+    flex: 1,
+  },
+  pwInput: { marginBottom: spacing.md },
+  pwDialog: { width: '100%', maxWidth: 420, alignSelf: 'center' },
 });

@@ -17,7 +17,7 @@ import { Text, Card, Button, Chip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { NOTIFY } from '../../services/notifications';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -125,28 +125,47 @@ export default function NotificationsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  col: { flex: 1, width: '100%', maxWidth: 640, alignSelf: 'center' },
+  container: { flex: 1, backgroundColor: colors.background },
+  col: { flex: 1, width: '100%', maxWidth: 680, alignSelf: 'center' },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingTop: 10,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    gap: spacing.md,
   },
-  countChip: { backgroundColor: '#EAF2FE' },
-  list: { padding: 12 },
-  card: { marginBottom: 10 },
-  cardUnread: { borderLeftWidth: 4, borderLeftColor: colors.primary },
-  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  body: { flex: 1 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  countChip: { backgroundColor: colors.primarySoft },
+  list: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  // An unread item carries a brand edge AND a faint brand wash, so the two
+  // states stay distinguishable at a glance down a long list.
+  cardUnread: {
+    borderLeftWidth: 4,
+    borderLeftColor: colors.primary,
+    backgroundColor: colors.primarySofter,
+  },
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+  body: { flex: 1, minWidth: 0 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   title: { flex: 1, color: colors.text },
-  titleUnread: { fontWeight: 'bold' },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
-  text: { color: colors.text, marginTop: 4, lineHeight: 18 },
-  when: { color: colors.muted, marginTop: 6 },
-  empty: { alignItems: 'center', marginTop: 60, gap: 8, paddingHorizontal: 28 },
-  emptyTitle: { marginTop: 6 },
-  emptyBody: { textAlign: 'center', color: colors.muted, lineHeight: 20 },
+  titleUnread: { fontFamily: font.semibold },
+  dot: { width: 8, height: 8, borderRadius: radius.pill, backgroundColor: colors.primary },
+  text: { color: colors.textSecondary, marginTop: spacing.xs, lineHeight: 20 },
+  when: { color: colors.muted, marginTop: spacing.sm },
+  empty: {
+    alignItems: 'center',
+    marginTop: 64,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xxl,
+  },
+  emptyTitle: { marginTop: spacing.sm, color: colors.text, fontFamily: font.semibold },
+  emptyBody: { textAlign: 'center', color: colors.muted, lineHeight: 21 },
 });

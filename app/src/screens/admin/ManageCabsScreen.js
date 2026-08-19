@@ -52,7 +52,7 @@ import { todayKey } from '../../utils/datetime';
 // driverLoginCode only — this screen computes the code the cab link implies purely
 // to compare it against the stored one, and never renders either.
 import { driverLoginCode } from '../../utils/driverLogin';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 // A ride in one of these states is over, whatever its date says.
 const FINISHED = [STATUS.CANCELLED, STATUS.COMPLETED, STATUS.NO_SHOW];
@@ -268,7 +268,7 @@ export default function ManageCabsScreen() {
             <Chip
               compact
               icon={linked ? 'access-point' : 'access-point-off'}
-              style={{ backgroundColor: linked ? '#E7F4E8' : '#FFF3E0' }}
+              style={{ backgroundColor: linked ? colors.successSoft : colors.warningSoft }}
               textStyle={{ color: linked ? colors.success : '#E65100', fontSize: 12 }}
             >
               {linked ? 'Tracking on' : 'No driver'}
@@ -504,44 +504,58 @@ export default function ManageCabsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  container: { flex: 1, backgroundColor: colors.background },
+  centerCol: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
-    padding: 12,
-    paddingBottom: 4,
+    gap: spacing.md,
+    padding: spacing.lg,
+    paddingBottom: spacing.xs,
     flexWrap: 'wrap',
   },
-  hint: { opacity: 0.7, flex: 1, minWidth: 200, lineHeight: 18 },
-  linkStatic: { color: colors.text, fontWeight: '600', flex: 1 },
-  strong: { fontWeight: 'bold' },
+  hint: { color: colors.muted, flex: 1, minWidth: 200, lineHeight: 19 },
+  linkStatic: { color: colors.text, fontFamily: font.medium, flex: 1 },
+  strong: { fontFamily: font.semibold },
   moveWarn: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
-    marginTop: 12,
-    backgroundColor: '#FFF6E5',
-    borderRadius: 8,
-    padding: 10,
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: '#F2E3C4',
+    borderRadius: radius.md,
+    padding: spacing.md,
   },
-  moveWarnText: { color: '#B26A00', flex: 1, lineHeight: 18 },
-  list: { padding: 12 },
-  card: { marginBottom: 12 },
-  rowBetween: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headText: { flex: 1 },
-  detail: { opacity: 0.75, marginTop: 2 },
-  divider: { marginVertical: 10 },
-  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  linkLabel: { opacity: 0.8 },
+  moveWarnText: { color: colors.warning, flex: 1, lineHeight: 19 },
+  list: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  rowBetween: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  headText: { flex: 1, minWidth: 0 },
+  detail: { color: colors.muted, marginTop: 2 },
+  divider: { marginVertical: spacing.md, backgroundColor: colors.border },
+  linkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  linkLabel: { color: colors.textSecondary },
   linkPicker: { flex: 1, maxWidth: 260 },
-  warn: { color: '#E65100', marginTop: 8 },
-  error: { color: colors.danger, paddingHorizontal: 14, paddingBottom: 8 },
-  empty: { alignItems: 'center', marginTop: 50, gap: 12, paddingHorizontal: 24 },
-  emptyText: { color: colors.muted },
-  dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
-  input: { marginBottom: 10 },
-  seatHint: { marginTop: -6 },
+  warn: { color: '#C2410C', marginTop: spacing.sm, lineHeight: 19 },
+  error: { color: colors.danger, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  empty: {
+    alignItems: 'center',
+    marginTop: 56,
+    gap: spacing.md,
+    paddingHorizontal: spacing.xl,
+  },
+  emptyText: { color: colors.muted, textAlign: 'center', lineHeight: 20 },
+  dialog: { width: '100%', maxWidth: 470, alignSelf: 'center' },
+  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
+  seatHint: { marginTop: -spacing.sm, color: colors.muted },
 });

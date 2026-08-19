@@ -17,7 +17,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-import { theme, colors } from './src/theme';
+import { theme, colors, font, radius, shadow, spacing } from './src/theme';
+import { useAppFonts } from './src/fonts';
 import { AppProvider, useApp } from './src/context/AppContext';
 import AppDrawer, {
   DRAWER_ITEMS, ADMIN_DRAWER_ITEMS, DRIVER_DRAWER_ITEMS, COORDINATOR_DRAWER_ITEMS,
@@ -821,7 +822,33 @@ function RootNavigator() {
   );
 }
 
+// A quiet, branded holding screen for the moment before the app can draw:
+// the Poppins faces are still loading, so anything with text on it would render
+// in the system font and then visibly reflow. Logo + spinner instead.
+function BootSplash() {
+  return (
+    <View style={styles.splash}>
+      <View style={styles.bootLogoChip}>
+        <Image source={companyLogo} style={styles.bootLogo} resizeMode="contain" />
+      </View>
+      <ActivityIndicator size="small" color={colors.primary} style={styles.bootSpinner} />
+    </View>
+  );
+}
+
 export default function App() {
+  // Held one frame longer than strictly necessary on purpose — see BootSplash.
+  // A failed download still resolves true, so this can never strand the app.
+  const fontsReady = useAppFonts();
+
+  if (!fontsReady) {
+    return (
+      <SafeAreaProvider>
+        <BootSplash />
+      </SafeAreaProvider>
+    );
+  }
+
   return (
     <SafeAreaProvider>
       <PaperProvider
@@ -853,73 +880,131 @@ const styles = StyleSheet.create({
   // ever does, the page clips instead of gaining a horizontal scrollbar that
   // hides the sidebar off the left edge.
   appRow: { flex: 1, flexDirection: 'row', overflow: 'hidden' },
-  appContent: { flex: 1, minWidth: 0 },
-  appbar: { backgroundColor: colors.primary },
+  appContent: { flex: 1, minWidth: 0, backgroundColor: colors.background },
+  // A hairline of the darker brand blue under the bar reads as a deliberate
+  // edge where a drop shadow over a coloured page just looks like a smudge.
+  appbar: {
+    backgroundColor: colors.primary,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.12)',
+    elevation: 0,
+  },
   headerLogoChip: {
-    width: 38,
-    height: 38,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: radius.sm,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 4,
-    marginRight: 4,
+    marginLeft: spacing.xs,
+    marginRight: spacing.xs,
+    ...shadow.xs,
   },
-  headerLogo: { width: 30, height: 30 },
+  headerLogo: { width: 26, height: 26 },
   // minWidth: 0 overrides the flex item's default "don't shrink below content
   // size" on web — without it, a long title plus the notification/message/
   // call/logout action icons refuse to shrink and push the header (and with
   // it the whole page) wider than the viewport, forcing a horizontal scroll
   // that hides the sidebar and title behind the edge of the screen.
   appbarContent: { alignItems: 'center', minWidth: 0 },
-  appbarTitle: { fontWeight: 'bold', letterSpacing: 0.3, textAlign: 'center' },
+  appbarTitle: {
+    fontFamily: font.semibold,
+    fontSize: 20,
+    letterSpacing: 0.2,
+    textAlign: 'center',
+  },
   // On a phone the title shares the bar with the ☰ button, the logo chip and —
-  // for an employee — three action icons. At the default size it truncates; 18
+  // for an employee — three action icons. At the default size it truncates; 17
   // keeps the whole screen name readable in the space that's left.
-  appbarTitleSmall: { fontSize: 18 },
-  msgDialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
+  appbarTitleSmall: { fontSize: 17 },
+  msgDialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
   splash: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.background,
-    padding: 24,
+    padding: spacing.xl,
   },
+  bootLogoChip: {
+    width: 84,
+    height: 84,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow.md,
+  },
+  bootLogo: { width: 52, height: 52 },
+  bootSpinner: { marginTop: spacing.xl },
+  // The one card on an otherwise empty page, so it carries the full lift.
   lockedCard: {
     alignItems: 'center',
-    maxWidth: 420,
+    maxWidth: 440,
+    width: '100%',
     backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 28,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.xxxl,
+    ...shadow.lg,
   },
-  lockedTitle: { fontWeight: 'bold', marginTop: 12, color: colors.text, textAlign: 'center' },
-  lockedBody: { marginTop: 10, textAlign: 'center', color: colors.muted, lineHeight: 20 },
-  lockedHelp: { marginTop: 12, color: colors.muted },
-  lockedBtn: { marginTop: 20 },
-  confirmInput: { marginTop: 18, alignSelf: 'stretch' },
+  lockedTitle: {
+    fontFamily: font.bold,
+    fontSize: 22,
+    lineHeight: 30,
+    marginTop: spacing.lg,
+    color: colors.text,
+    textAlign: 'center',
+  },
+  lockedBody: {
+    marginTop: spacing.md,
+    textAlign: 'center',
+    color: colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  lockedHelp: {
+    marginTop: spacing.lg,
+    color: colors.muted,
+    textAlign: 'center',
+    fontFamily: font.medium,
+  },
+  lockedBtn: { marginTop: spacing.xl, alignSelf: 'stretch', borderRadius: radius.md },
+  confirmInput: { marginTop: spacing.xl, alignSelf: 'stretch' },
   confirmError: { alignSelf: 'stretch' },
+  // Reads as a warning strip rather than a bare row: tinted panel, matching
+  // left rule, and the icon and text on the same amber.
   dataError: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFF6E5',
-    paddingLeft: 12,
-    paddingRight: 4,
-    paddingVertical: 4,
+    gap: spacing.sm,
+    backgroundColor: colors.warningSoft,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.warning,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2E3C4',
+    paddingLeft: spacing.md,
+    paddingRight: spacing.xs,
+    paddingVertical: spacing.xs,
   },
-  dataErrorText: { color: '#B26A00', flex: 1 },
+  dataErrorText: { color: colors.warning, flex: 1, fontFamily: font.medium },
   bellWrap: { position: 'relative' },
+  // A white ring separates the badge from the blue bar behind it, so a small
+  // red dot on a strong blue still reads as a count and not a rendering artefact.
   badge: {
     position: 'absolute',
-    top: 4,
-    right: 2,
-    minWidth: 17,
-    height: 17,
-    borderRadius: 9,
+    top: 3,
+    right: 0,
+    minWidth: 19,
+    height: 19,
+    borderRadius: radius.pill,
     paddingHorizontal: 4,
     backgroundColor: colors.danger,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  badgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: 'bold' },
+  badgeText: { color: '#FFFFFF', fontSize: 10, lineHeight: 14, fontFamily: font.bold },
 });

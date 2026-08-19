@@ -39,7 +39,7 @@ import {
   // the cab link (or the lack of one) implies, purely to detect drift.
   driverLoginCode, unassignedLoginCode,
 } from '../../utils/driverLogin';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const EMPTY = { name: '', phone: '' };
 
@@ -169,7 +169,7 @@ export default function ManageDriversScreen({ navigation }) {
             <Chip
               compact
               icon={cab ? 'car' : 'car-off'}
-              style={{ backgroundColor: cab ? '#E7F4E8' : '#FFF3E0' }}
+              style={{ backgroundColor: cab ? colors.successSoft : colors.warningSoft }}
               textStyle={{ color: cab ? colors.success : '#E65100', fontSize: 12 }}
             >
               {cab ? 'Linked' : 'No cab'}
@@ -379,69 +379,90 @@ export default function ManageDriversScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  container: { flex: 1, backgroundColor: colors.background },
+  centerCol: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
-    padding: 12,
-    paddingBottom: 4,
+    gap: spacing.md,
+    padding: spacing.lg,
+    paddingBottom: spacing.xs,
     flexWrap: 'wrap',
   },
-  hint: { opacity: 0.7, flex: 1, minWidth: 200, lineHeight: 18 },
-  dialog: { width: '100%', maxWidth: 420, alignSelf: 'center' },
-  input: { marginBottom: 10, backgroundColor: colors.surface },
-  nameCol: { flex: 1 },
-  noteBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12 },
-  noteText: { color: colors.muted, flex: 1, lineHeight: 18 },
+  hint: { color: colors.muted, flex: 1, minWidth: 200, lineHeight: 19 },
+  dialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
+  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
+  nameCol: { flex: 1, minWidth: 0 },
+  noteBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  noteText: { color: colors.muted, flex: 1, lineHeight: 19 },
   blockedBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
-    marginTop: 12,
-    backgroundColor: '#FEF3F3',
-    borderRadius: 8,
-    padding: 10,
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: '#F3C2BD',
+    borderRadius: radius.md,
+    padding: spacing.md,
   },
-  blockedText: { color: colors.danger, flex: 1, lineHeight: 18 },
-  list: { padding: 12 },
-  card: { marginBottom: 12 },
+  blockedText: { color: colors.danger, flex: 1, lineHeight: 19 },
+  list: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
   rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
+    gap: spacing.sm,
   },
-  detail: { opacity: 0.7, marginTop: 4 },
+  detail: { color: colors.muted, marginTop: spacing.xs },
   cabBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#EAF2FE',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginTop: 10,
+    gap: spacing.sm,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.md,
   },
-  cabText: { color: colors.primaryDark, fontWeight: '600' },
+  cabText: { color: colors.primaryDark, fontFamily: font.semibold },
   codeBoxWarn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFF3E0',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginTop: 8,
+    gap: spacing.sm,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: '#F2E3C4',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
   },
-  codeCol: { flex: 1 },
+  codeCol: { flex: 1, minWidth: 0 },
   codeLabel: { color: colors.muted },
-  codeWarnText: { color: '#E65100', lineHeight: 18 },
-  pending: { color: '#E65100', marginTop: 8, lineHeight: 18 },
-  error: { color: colors.danger, padding: 12 },
-  empty: { alignItems: 'center', marginTop: 50, gap: 8, paddingHorizontal: 24 },
-  emptyText: { color: colors.muted },
-  emptyHint: { color: colors.muted, textAlign: 'center', lineHeight: 18 },
+  codeWarnText: { color: '#C2410C', lineHeight: 19 },
+  pending: { color: '#C2410C', marginTop: spacing.sm, lineHeight: 19 },
+  error: { color: colors.danger, padding: spacing.lg },
+  empty: {
+    alignItems: 'center',
+    marginTop: 56,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xl,
+  },
+  emptyText: { color: colors.text, fontFamily: font.semibold },
+  emptyHint: { color: colors.muted, textAlign: 'center', lineHeight: 20 },
 });

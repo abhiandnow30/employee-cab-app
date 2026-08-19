@@ -31,7 +31,7 @@ import {
   SHIFT_COLORS, legsForShift, isWorkingCode, shiftSummary,
 } from '../../data/shifts';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -142,7 +142,7 @@ export default function MyScheduleScreen({ navigation }) {
               {Object.keys(tally)
                 .sort()
                 .map((code) => {
-                  const c = SHIFT_COLORS[code] || { bg: '#EEE', fg: colors.text };
+                  const c = SHIFT_COLORS[code] || { bg: colors.surfaceAlt, fg: colors.text };
                   return (
                     <Chip
                       key={code}
@@ -330,66 +330,92 @@ function Leg({ icon, title, time, note }) {
 }
 
 const styles = StyleSheet.create({
-  scroll: { padding: 12, alignItems: 'center' },
-  col: { width: '100%', maxWidth: 620 },
-  card: { marginBottom: 12 },
+  scroll: { padding: spacing.lg, paddingBottom: spacing.xxl, alignItems: 'center' },
+  col: { width: '100%', maxWidth: 660 },
+  card: {
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
 
   monthBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: spacing.md,
   },
   monthPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#EAF2FE',
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    gap: spacing.sm,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
-  monthText: { fontWeight: '600', color: colors.primaryDark, fontSize: 15 },
+  monthText: { fontFamily: font.semibold, color: colors.primaryDark, fontSize: 15 },
 
-  tally: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  tally: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
 
-  dowRow: { flexDirection: 'row', marginBottom: 6 },
+  dowRow: { flexDirection: 'row', marginBottom: spacing.sm },
   dowText: {
     flex: 1,
     textAlign: 'center',
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: font.semibold,
     color: colors.muted,
-    letterSpacing: 0.4,
+    letterSpacing: 0.5,
   },
   week: { flexDirection: 'row' },
   cell: { flex: 1, aspectRatio: 1, margin: 2 },
   dayCell: {
-    borderRadius: 8,
+    borderRadius: radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F7F8FA',
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   hoverCell: { opacity: 0.85 },
+  // Today gets the brand ring; a picked day gets the darker one. Both keep the
+  // 1px base border underneath so the grid never shifts as the ring changes.
   todayCell: { borderWidth: 2, borderColor: colors.primary },
   selectedCell: { borderWidth: 2, borderColor: colors.primaryDark },
-  dayNum: { fontSize: 12, color: colors.text, fontWeight: '600' },
+  dayNum: { fontSize: 12, color: colors.text, fontFamily: font.semibold },
   todayNum: { color: colors.primary },
-  dayCode: { fontSize: 11, fontWeight: '700', color: colors.muted, marginTop: 1 },
+  dayCode: { fontSize: 10.5, fontFamily: font.semibold, color: colors.muted, marginTop: 1 },
 
-  detailShift: { color: colors.muted, marginTop: 4 },
-  divider: { marginVertical: 12 },
-  oneWayNote: { color: colors.muted, lineHeight: 18, marginTop: 10 },
-  leg: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
-  legText: { flex: 1 },
-  legTitle: { fontWeight: '600' },
+  detailShift: { color: colors.muted, marginTop: spacing.xs },
+  divider: { marginVertical: spacing.lg, backgroundColor: colors.border },
+  oneWayNote: { color: colors.muted, lineHeight: 19, marginTop: spacing.md },
+  leg: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  legText: { flex: 1, minWidth: 0 },
+  legTitle: { fontFamily: font.semibold, color: colors.text },
   legNote: { color: colors.muted, marginTop: 1 },
-  legTime: { color: colors.primary, fontWeight: 'bold' },
-  detailHint: { color: colors.muted, marginTop: 10, lineHeight: 18 },
-  detailActions: { flexDirection: 'row', gap: 10, marginTop: 14, flexWrap: 'wrap' },
-  tapHint: { color: colors.muted, textAlign: 'center', marginTop: 4 },
+  legTime: { color: colors.primary, fontFamily: font.bold },
+  detailHint: { color: colors.muted, marginTop: spacing.md, lineHeight: 19 },
+  detailActions: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginTop: spacing.lg,
+    flexWrap: 'wrap',
+  },
+  tapHint: { color: colors.muted, textAlign: 'center', marginTop: spacing.xs },
 
-  emptyCard: { alignItems: 'center', paddingVertical: 24, gap: 6 },
-  emptyTitle: { marginTop: 6 },
-  emptyBody: { textAlign: 'center', color: colors.muted, lineHeight: 20 },
+  emptyCard: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.sm },
+  emptyTitle: { marginTop: spacing.sm, color: colors.text, fontFamily: font.semibold },
+  emptyBody: { textAlign: 'center', color: colors.muted, lineHeight: 21 },
 });

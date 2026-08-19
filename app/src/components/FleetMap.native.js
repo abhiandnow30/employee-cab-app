@@ -20,7 +20,7 @@ import { Text } from 'react-native-paper';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { DEFAULT_CENTER } from './leaflet';
-import { colors } from '../theme';
+import { colors, radius } from '../theme';
 
 // Wide enough to hold a city's worth of cabs before any fitting happens.
 const SPAN = 0.08;
@@ -97,16 +97,18 @@ export default function FleetMap({ cabs = [] }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, overflow: 'hidden', borderRadius: 8, backgroundColor: colors.background },
+  wrap: { flex: 1, overflow: 'hidden', borderRadius: radius.md, backgroundColor: colors.background },
   map: { ...StyleSheet.absoluteFillObject },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: 'rgba(238,242,248,0.92)',
+    // Matches the page background at 92%, so "nothing to draw yet" reads as part
+    // of the page rather than as a grey sheet thrown over a broken map.
+    backgroundColor: 'rgba(244,247,252,0.92)',
     padding: 16,
   },
   overlayText: { color: colors.text },
-  overlayHint: { color: colors.muted, textAlign: 'center', maxWidth: 280 },
+  overlayHint: { color: colors.muted, textAlign: 'center', maxWidth: 280, lineHeight: 20 },
 });

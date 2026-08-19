@@ -9,6 +9,7 @@ import { Text, TextInput, Button, HelperText } from 'react-native-paper';
 import Dropdown from '../../components/Dropdown';
 import ScreenContainer from '../../components/ScreenContainer';
 import { useApp } from '../../context/AppContext';
+import { colors, font, radius, spacing } from '../../theme';
 
 const CATEGORIES = ['Driver', 'Cab condition', 'Timing / delay', 'App issue', 'Other'];
 
@@ -85,6 +86,7 @@ export default function FeedbackScreen({ navigation }) {
           mode="outlined"
           onPress={() => navigation.goBack()}
           style={styles.btn}
+          contentStyle={styles.btnContent}
           disabled={busy}
         >
           Back
@@ -93,6 +95,7 @@ export default function FeedbackScreen({ navigation }) {
           mode="contained"
           onPress={handleSubmit}
           style={styles.btn}
+          contentStyle={styles.btnContent}
           loading={busy}
           disabled={busy}
         >
@@ -104,17 +107,24 @@ export default function FeedbackScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  content: { paddingBottom: 16 },
+  content: { paddingBottom: spacing.lg },
   titleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    gap: spacing.md,
+    marginBottom: spacing.xs,
   },
-  pageTitle: { fontWeight: 'bold' },
-  cancel: { color: '#D32F2F', fontWeight: 'bold' },
-  label: { marginTop: 16, marginBottom: 6 },
-  message: { marginTop: 2 },
-  buttonRow: { flexDirection: 'row', gap: 12, marginTop: 24 },
-  btn: { flex: 1, paddingVertical: 4 },
+  pageTitle: { fontFamily: font.bold, color: colors.text },
+  cancel: { color: colors.danger, fontFamily: font.semibold },
+  label: {
+    marginTop: spacing.xl,
+    marginBottom: spacing.sm,
+    color: colors.text,
+    fontFamily: font.semibold,
+  },
+  message: { marginTop: spacing.xs, backgroundColor: colors.surface },
+  buttonRow: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.xxl },
+  btn: { flex: 1, borderRadius: radius.md },
+  btnContent: { paddingVertical: 6 },
 });

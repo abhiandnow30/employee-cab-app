@@ -40,7 +40,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { RIDE_OTP_LENGTH, STATUS } from '../../data/mockData';
-import { statusColors, colors } from '../../theme';
+import { statusColors, colors, font, radius, shadow, spacing } from '../../theme';
 import { SUPPORT_HELPLINE } from '../../branding';
 import { tripPickupPoint, tripPlaceLabels } from '../../services/directions';
 import {
@@ -384,7 +384,7 @@ export default function DriverHomeScreen({ navigation }) {
           <View style={styles.statusRow}>
             <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
             <Text variant="bodyMedium" style={styles.statusText}>
-              Status: <Text style={{ color: statusColor, fontWeight: 'bold' }}>{item.status}</Text>
+              Status: <Text style={{ color: statusColor, fontFamily: font.bold }}>{item.status}</Text>
             </Text>
           </View>
 
@@ -762,97 +762,179 @@ export default function DriverHomeScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
-  header: { marginBottom: 12 },
-  name: { fontWeight: 'bold' },
+  container: {
+    flex: 1,
+    padding: spacing.lg,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+  },
+  header: { marginBottom: spacing.lg },
   sub: { color: colors.muted, marginTop: 2 },
-  setupCard: { marginBottom: 12, borderColor: colors.primary },
-  setupRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  setupText: { flex: 1 },
-  setupBody: { color: colors.muted, marginTop: 2, lineHeight: 18 },
+  setupCard: {
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.primarySoft,
+    backgroundColor: colors.primarySofter,
+  },
+  setupRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+  setupText: { flex: 1, minWidth: 0 },
+  setupBody: { color: colors.textSecondary, marginTop: 2, lineHeight: 19 },
 
   // Location sharing as one quiet line: dot, words, one control.
   shareRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 16,
-    paddingLeft: 2,
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  shareDot: { width: 11, height: 11, borderRadius: 6 },
+  shareDot: { width: 11, height: 11, borderRadius: radius.pill },
   // Filled when on, a hollow ring when off — readable without the colour, which
   // matters in sunlight on a phone at arm's length.
   shareDotOn: { backgroundColor: colors.success },
   shareDotOff: { borderWidth: 2, borderColor: colors.muted },
   // The tappable half: dot, words, chevron. flex: 1 here instead of on the text, so
   // the whole label group takes the free space and the switch stays hard right.
-  shareLabel: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, paddingVertical: 6 },
+  shareLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flex: 1,
+    paddingVertical: spacing.sm,
+  },
   shareText: { color: colors.muted },
-  shareTextOn: { color: colors.success, fontWeight: '700' },
+  shareTextOn: { color: colors.success, fontFamily: font.semibold },
   shareDotWarn: { backgroundColor: colors.warning, borderWidth: 0 },
-  shareTextWarn: { color: colors.warning, fontWeight: '700' },
+  shareTextWarn: { color: colors.warning, fontFamily: font.semibold },
   shareErrRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 6,
-    marginTop: -8,
-    marginBottom: 14,
-    paddingRight: 8,
+    gap: spacing.sm,
+    marginTop: -spacing.md,
+    marginBottom: spacing.lg,
+    paddingRight: spacing.sm,
   },
-  shareErrText: { color: colors.warning, flex: 1, lineHeight: 17 },
+  shareErrText: { color: colors.warning, flex: 1, lineHeight: 18 },
 
-  sectionTitle: { marginBottom: 10 },
-  listContent: { paddingBottom: 24 },
-  card: { marginBottom: 14 },
+  sectionTitle: { marginBottom: spacing.md, color: colors.text },
+  listContent: { paddingBottom: spacing.xl },
+  card: {
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
 
   // "STOP 1 OF 2" — small, spaced, and above the name, so a carpool reads as a
   // sequence. It replaced a numbered circle plus a repeat of the same words.
   stopLabel: {
     color: colors.primary,
-    fontWeight: '800',
+    fontFamily: font.bold,
     fontSize: 11,
-    letterSpacing: 1,
-    marginBottom: 4,
+    letterSpacing: 1.1,
+    marginBottom: spacing.xs,
   },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  name: { fontWeight: 'bold', color: colors.text, flex: 1, minWidth: 0 },
-  legBadge: { borderRadius: 6, paddingHorizontal: 9, paddingVertical: 3, flexShrink: 0 },
-  legBadgeText: { color: '#FFFFFF', fontWeight: '800', fontSize: 12, letterSpacing: 0.5 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  // One definition for both the header name and the card name — they were two
+  // keys with the same name in this object, so the second silently won anyway.
+  name: { fontFamily: font.bold, color: colors.text, flex: 1, minWidth: 0 },
+  legBadge: {
+    borderRadius: radius.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 3,
+    flexShrink: 0,
+  },
+  legBadgeText: {
+    color: '#FFFFFF',
+    fontFamily: font.bold,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.7,
+  },
   when: { color: colors.muted, marginTop: 2 },
 
-  place: { marginTop: 12 },
-  placeLabel: { color: colors.muted, letterSpacing: 0.8 },
-  placeValue: { color: colors.text, marginTop: 1, lineHeight: 22 },
+  // The address block: label above value, in its own tinted tray. A driver
+  // reading this at a kerb needs the street to jump out of the card.
+  place: {
+    marginTop: spacing.lg,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  placeLabel: {
+    color: colors.muted,
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+  },
+  placeValue: { color: colors.text, marginTop: 2, lineHeight: 23, fontFamily: font.medium },
 
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 14 },
-  statusDot: { width: 9, height: 9, borderRadius: 5 },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  statusDot: { width: 9, height: 9, borderRadius: radius.pill },
   statusText: { color: colors.muted },
 
   // THE ONE BIG BUTTON. Tall and full width — pressed one-handed, often in the
   // dark, sometimes through gloves.
-  mainBtn: { marginTop: 12, borderRadius: 10 },
-  mainBtnContent: { paddingVertical: 8 },
-  mainBtnLabel: { fontSize: 16, fontWeight: 'bold' },
-  gateRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
+  mainBtn: { marginTop: spacing.lg, borderRadius: radius.md, ...shadow.brand },
+  mainBtnContent: { paddingVertical: 10 },
+  mainBtnLabel: { fontSize: 16, fontFamily: font.semibold, letterSpacing: 0.2 },
+  gateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
   gateText: { color: colors.warning, flex: 1 },
-  noShowBtn: { marginTop: 10, borderColor: colors.danger, borderRadius: 10 },
-  noShowBtnContent: { paddingVertical: 4 },
+  noShowBtn: { marginTop: spacing.md, borderColor: colors.danger, borderRadius: radius.md },
+  noShowBtnContent: { paddingVertical: 6 },
   // Navigate and Help, below the actions and plainly smaller than them.
-  secondaryRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
-  navBtn: { borderColor: colors.border, borderRadius: 8 },
+  secondaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  navBtn: { borderColor: colors.borderStrong, borderRadius: radius.md },
 
-  dialog: { width: '100%', maxWidth: 420, alignSelf: 'center' },
-  dialogNote: { color: colors.muted, marginTop: 10, lineHeight: 18 },
-  helpBtn: { borderRadius: 10 },
-  helpNumber: { textAlign: 'center', marginTop: 12, color: colors.text, fontWeight: 'bold' },
-  otpIntro: { marginBottom: 14 },
+  dialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
+  dialogNote: { color: colors.muted, marginTop: spacing.md, lineHeight: 19 },
+  helpBtn: { borderRadius: radius.md },
+  helpNumber: {
+    textAlign: 'center',
+    marginTop: spacing.md,
+    color: colors.text,
+    fontFamily: font.bold,
+  },
+  otpIntro: { marginBottom: spacing.lg, color: colors.textSecondary },
   otpInput: { backgroundColor: colors.surface },
   // Wide-spaced and large: this is read aloud across a car window and typed in
   // the dark, often by someone still holding the wheel.
   otpInputText: { fontSize: 26, letterSpacing: 8, textAlign: 'center' },
-  otpError: { color: colors.danger, marginTop: 8 },
-  otpHint: { color: colors.muted, marginTop: 8 },
-  empty: { alignItems: 'center', marginTop: 40 },
-  emptyText: { color: colors.muted, marginTop: 8 },
-  emptyHint: { color: colors.muted, marginTop: 4, textAlign: 'center', maxWidth: 280 },
+  otpError: { color: colors.danger, marginTop: spacing.sm },
+  otpHint: { color: colors.muted, marginTop: spacing.sm },
+  empty: { alignItems: 'center', marginTop: 48 },
+  emptyText: { color: colors.text, marginTop: spacing.sm, fontFamily: font.semibold },
+  emptyHint: {
+    color: colors.muted,
+    marginTop: spacing.xs,
+    textAlign: 'center',
+    maxWidth: 300,
+    lineHeight: 20,
+  },
 });

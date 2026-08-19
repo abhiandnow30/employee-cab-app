@@ -28,7 +28,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRideOtp } from '../utils/useRideOtp';
 import { getRideOtp } from '../services/rideOtp';
 import { STATUS } from '../data/mockData';
-import { colors } from '../theme';
+import { colors, font, radius, shadow, spacing } from '../theme';
 
 // The statuses where a code still has a job to do. Mirrors the gate inside
 // useRideOtp, for the on-demand path which doesn't go through it.
@@ -113,30 +113,57 @@ export default function RideStartCode({ booking, variant = 'panel' }) {
 }
 
 const styles = StyleSheet.create({
+  // The rider's code is the single most important thing on the screen while a
+  // cab is on its way, so it gets a tinted brand panel rather than another
+  // white card lost among the rest.
   panel: {
-    marginTop: 12,
-    padding: 12,
-    borderRadius: 10,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: colors.primary,
-    backgroundColor: colors.surface,
+    borderColor: colors.primarySoft,
+    backgroundColor: colors.primarySofter,
+    ...shadow.xs,
   },
-  panelHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  panelTitle: { color: colors.primary },
+  panelHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  panelTitle: {
+    color: colors.primary,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
   code: {
-    fontSize: 34,
-    fontWeight: 'bold',
+    fontSize: 38,
+    lineHeight: 50,
+    fontFamily: font.bold,
     letterSpacing: 10,
     textAlign: 'center',
-    color: colors.text,
-    marginVertical: 6,
+    color: colors.primaryDark,
+    marginVertical: spacing.sm,
     // The letter spacing above pads every glyph on both sides, including the
     // last one, which drags the centred string visibly left. This puts it back.
     paddingLeft: 10,
   },
-  help: { color: colors.muted, textAlign: 'center' },
-  inlineRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
+  help: { color: colors.textSecondary, textAlign: 'center', lineHeight: 18 },
+  inlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radius.xs,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   inlineLabel: { color: colors.muted },
-  inlineCode: { fontWeight: 'bold', letterSpacing: 2, color: colors.text },
-  inlineAction: { color: colors.primary },
+  inlineCode: { fontFamily: font.bold, letterSpacing: 2, color: colors.text },
+  inlineAction: { color: colors.primary, fontFamily: font.medium },
 });

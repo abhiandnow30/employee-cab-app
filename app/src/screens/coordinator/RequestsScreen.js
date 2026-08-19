@@ -16,6 +16,7 @@ import { StyleSheet, View } from 'react-native';
 import { SegmentedButtons } from 'react-native-paper';
 import ChangeRequestQueueScreen from './ChangeRequestQueueScreen';
 import CancelledRidesScreen from '../admin/CancelledRidesScreen';
+import { colors, spacing } from '../../theme';
 
 export default function RequestsScreen() {
   const [tab, setTab] = useState('change');
@@ -40,7 +41,7 @@ export default function RequestsScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  tabsRow: { padding: 16, paddingBottom: 8 },
+  root: { flex: 1, backgroundColor: colors.background },
+  tabsRow: { padding: spacing.lg, paddingBottom: spacing.md },
   content: { flex: 1 },
 });

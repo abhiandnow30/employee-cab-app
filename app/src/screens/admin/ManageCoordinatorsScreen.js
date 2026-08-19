@@ -30,7 +30,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeCoordinators, subscribeInvites, adminRevokeInvite } from '../../services/profile';
 import { formatPasscode } from '../../utils/coordinatorLogin';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const EMPTY = { name: '', phone: '' };
 
@@ -403,69 +403,95 @@ export default function ManageCoordinatorsScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  col: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  col: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 16,
+    gap: spacing.lg,
     flexWrap: 'wrap',
-    paddingHorizontal: 12,
-    paddingTop: 12,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
   },
-  hint: { color: colors.muted, flex: 1, minWidth: 260, lineHeight: 18 },
-  error: { color: colors.danger, paddingHorizontal: 12, paddingTop: 8 },
-  list: { padding: 12 },
-  card: { marginBottom: 12 },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  cardText: { flex: 1 },
+  hint: { color: colors.muted, flex: 1, minWidth: 260, lineHeight: 19 },
+  error: { color: colors.danger, paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+  list: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  cardText: { flex: 1, minWidth: 0 },
   name: { color: colors.text },
   meta: { color: colors.muted, marginTop: 1 },
 
   // Leftover-invite cleanup. Amber rather than the usual blue: this is something
   // to action once and be rid of, not standing information.
   staleBox: {
-    borderRadius: 12,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: '#F0D9A8',
-    backgroundColor: '#FFF6E5',
-    padding: 14,
-    marginBottom: 14,
+    borderColor: '#F2E3C4',
+    backgroundColor: colors.warningSoft,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
-  staleHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  staleTitle: { color: '#B26A00' },
-  staleHint: { color: '#8A5A12', lineHeight: 18, marginTop: 4, marginBottom: 8 },
-  staleRow: { color: '#8A5A12', fontWeight: '600', paddingVertical: 2 },
-  staleBtn: { marginTop: 12, alignSelf: 'flex-start', borderRadius: 10 },
+  staleHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  staleTitle: { color: colors.warning, fontFamily: font.semibold },
+  staleHint: {
+    color: '#8A5A12',
+    lineHeight: 19,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  staleRow: { color: '#8A5A12', fontFamily: font.medium, paddingVertical: 2 },
+  staleBtn: { marginTop: spacing.md, alignSelf: 'flex-start', borderRadius: radius.md },
 
   codeBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginTop: 6,
-    borderRadius: 10,
-    backgroundColor: '#F2F6FF',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    gap: spacing.md,
+    marginTop: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
     flexWrap: 'wrap',
   },
   codeText: { flex: 1, minWidth: 160 },
   codeLabel: { color: colors.muted },
-  code: { color: colors.text, fontWeight: '700', letterSpacing: 0.5 },
+  code: { color: colors.primaryDark, fontFamily: font.bold, letterSpacing: 0.8 },
 
-  issuedIntro: { marginBottom: 12, lineHeight: 20 },
+  issuedIntro: { marginBottom: spacing.md, lineHeight: 21, color: colors.textSecondary },
+  // The passcode is the one thing on this dialog that has to be read aloud
+  // accurately, so it gets a panel to itself.
   issuedBox: {
-    borderRadius: 12,
-    backgroundColor: '#F2F6FF',
-    padding: 14,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primarySofter,
+    borderWidth: 1,
+    borderColor: colors.primarySoft,
+    padding: spacing.lg,
   },
-  issuedValue: { color: colors.primary, fontWeight: '700', letterSpacing: 1 },
-  issuedSpacer: { marginTop: 10 },
+  issuedValue: { color: colors.primary, fontFamily: font.bold, letterSpacing: 1.5 },
+  issuedSpacer: { marginTop: spacing.md },
 
-  empty: { alignItems: 'center', marginTop: 50, gap: 10, paddingHorizontal: 24 },
-  emptyText: { color: colors.muted, textAlign: 'center', lineHeight: 20 },
+  empty: {
+    alignItems: 'center',
+    marginTop: 56,
+    gap: spacing.md,
+    paddingHorizontal: spacing.xl,
+  },
+  emptyText: { color: colors.muted, textAlign: 'center', lineHeight: 21 },
 
-  dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
-  dialogHint: { color: colors.muted, marginBottom: 12, lineHeight: 18 },
-  input: { marginBottom: 10 },
+  dialog: { width: '100%', maxWidth: 470, alignSelf: 'center' },
+  dialogHint: { color: colors.muted, marginBottom: spacing.md, lineHeight: 19 },
+  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
 });

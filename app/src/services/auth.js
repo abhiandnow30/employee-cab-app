@@ -63,16 +63,100 @@ function microsoftProvider() {
   return provider;
 }
 
+// ---------------------------------------------------------------------------
+// MAKING THE MICROSOFT WINDOW FILL THE SCREEN
+//
+// Firebase opens its sign-in popup at a hardcoded 500×600, centred. Those are
+// private constants inside @firebase/auth (`DEFAULT_WIDTH`/`DEFAULT_HEIGHT` in
+// its popup helper) — signInWithPopup takes no size argument and the resolver
+// that would carry one is not part of the public API, so there is no supported
+// setting to change. What the SDK does expose, unavoidably, is that it reaches
+// `window.open(url, target, features)` to do it.
+//
+// So the features string is rewritten on its way through: width, height, top
+// and left are replaced with the full available screen, and every other flag
+// Firebase set (resizable, scrollbars, the Firefox special-casing) is passed
+// along untouched.
+//
+// WHY THE PATCH IS SO NARROW. Replacing a global is only safe if it is put back,
+// and put back quickly. `_openPopup` awaits the redirect URL before it opens
+// anything, so the window.open does NOT happen synchronously inside the call —
+// restoring straight after signInWithPopup returns would restore too early and
+// change nothing. Instead the wrapper restores itself the instant it fires:
+// that one call IS the auth popup, and from then on window.open is the browser's
+// own again, even though the user has not finished signing in. The `finally` is
+// a backstop for the case where it never fires at all — a blocked popup, or the
+// flow failing before it gets that far.
+// ---------------------------------------------------------------------------
+
+// The four Firebase computes and this overrides. Everything else it sets is kept.
+const SIZE_FEATURES = new Set(['width', 'height', 'top', 'left']);
+
+function maximisedFeatures(features) {
+  const screen = (typeof window !== 'undefined' && window.screen) || {};
+  // availWidth/Height exclude the OS taskbar, so this fills the usable desktop
+  // rather than hiding behind it. The fallbacks matter for embedded webviews,
+  // which sometimes report no screen at all.
+  const width = Math.max(Number(screen.availWidth) || window.outerWidth || 1024, 360);
+  const height = Math.max(Number(screen.availHeight) || window.outerHeight || 768, 480);
+  // availTop/availLeft are non-standard (Firefox has them, Chrome does not), so
+  // they are read defensively — on a multi-monitor setup they put the window on
+  // the right screen, and 0 is correct everywhere else.
+  const overrides = {
+    width,
+    height,
+    top: Number(screen.availTop) || 0,
+    left: Number(screen.availLeft) || 0,
+  };
+  const kept = String(features || '')
+    .split(',')
+    .map((pair) => pair.trim())
+    .filter(Boolean)
+    .filter((pair) => !SIZE_FEATURES.has(pair.split('=')[0].trim().toLowerCase()));
+  const sized = Object.entries(overrides).map(([k, v]) => `${k}=${v}`);
+  return [...kept, ...sized].join(',');
+}
+
+function withMaximisedPopup(run) {
+  // Native has no window.open and never takes this path anyway (the phone flow
+  // is useMicrosoftAuthRequest + the *Credential functions below).
+  if (typeof window === 'undefined' || typeof window.open !== 'function') return run();
+
+  const nativeOpen = window.open;
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    window.open = nativeOpen;
+  };
+
+  window.open = function patchedOpen(url, target, features, ...rest) {
+    restore(); // see the header comment — one call, then hands the global back
+    return nativeOpen.call(window, url, target, maximisedFeatures(features), ...rest);
+  };
+
+  // Called synchronously, NOT behind a .then: an extra tick before the SDK gets
+  // going is exactly the kind of thing popup blockers punish.
+  let running;
+  try {
+    running = run();
+  } catch (e) {
+    restore();
+    throw e;
+  }
+  return Promise.resolve(running).finally(restore);
+}
+
 // WEB ONLY — a plain popup Firebase drives entirely itself. Phones have no
 // popup; see the *Credential variants below, used with useMicrosoftAuthRequest.
 export function signInWithMicrosoftPopup() {
-  return signInWithPopup(auth, microsoftProvider());
+  return withMaximisedPopup(() => signInWithPopup(auth, microsoftProvider()));
 }
 
 export function linkMicrosoftPopup() {
   const user = auth?.currentUser;
   if (!user) throw new Error('You are not signed in.');
-  return linkWithPopup(user, microsoftProvider());
+  return withMaximisedPopup(() => linkWithPopup(user, microsoftProvider()));
 }
 
 // NATIVE — built from the id_token (and the raw nonce that hashed into the

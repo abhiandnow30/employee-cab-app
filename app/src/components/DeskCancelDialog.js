@@ -40,7 +40,7 @@ import { StyleSheet, View } from 'react-native';
 import { Text, Button, Portal, Dialog } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { prettyDateKey, relativeDayLabel } from '../utils/datetime';
-import { colors } from '../theme';
+import { colors, font, radius, spacing } from '../theme';
 
 export default function DeskCancelDialog({
   visible,
@@ -110,7 +110,7 @@ export default function DeskCancelDialog({
           </View>
         </Dialog.Content>
         <Dialog.Actions>
-          <Button onPress={onDismiss} disabled={busy}>
+          <Button onPress={onDismiss} disabled={busy} style={styles.footBtn}>
             Keep Ride
           </Button>
           <Button
@@ -120,6 +120,8 @@ export default function DeskCancelDialog({
             onPress={onConfirm}
             loading={busy}
             disabled={busy}
+            style={styles.footBtn}
+            labelStyle={styles.footLabel}
           >
             Cancel Ride
           </Button>
@@ -130,18 +132,36 @@ export default function DeskCancelDialog({
 }
 
 const styles = StyleSheet.create({
-  dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
+  dialog: { width: '100%', maxWidth: 470, alignSelf: 'center' },
+  // A bordered tray, not just a tinted one: the summary is the subject of the
+  // question, so it needs an edge to sit inside rather than a wash of colour.
   summary: {
-    backgroundColor: colors.background,
-    borderRadius: 8,
-    padding: 10,
-    marginTop: 14,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    marginTop: spacing.lg,
   },
-  summaryHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  summaryName: { fontWeight: 'bold', color: colors.text, flex: 1, minWidth: 0 },
-  legBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, flexShrink: 0 },
-  legBadgeText: { color: '#FFFFFF', fontWeight: '800', fontSize: 11, letterSpacing: 0.5 },
-  summaryLine: { color: colors.muted, marginTop: 2 },
-  cabRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
-  cabText: { color: colors.success, flex: 1 },
+  summaryHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  summaryName: { fontFamily: font.semibold, color: colors.text, flex: 1, minWidth: 0 },
+  legBadge: {
+    borderRadius: radius.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    flexShrink: 0,
+  },
+  legBadgeText: {
+    color: '#FFFFFF',
+    fontFamily: font.bold,
+    fontSize: 10.5,
+    lineHeight: 14,
+    letterSpacing: 0.7,
+  },
+  summaryLine: { color: colors.textSecondary, marginTop: 3 },
+  cabRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm },
+  cabText: { color: colors.success, flex: 1, fontFamily: font.medium },
+  footBtn: { borderRadius: radius.md, minWidth: 110 },
+  footLabel: { fontFamily: font.semibold },
 });

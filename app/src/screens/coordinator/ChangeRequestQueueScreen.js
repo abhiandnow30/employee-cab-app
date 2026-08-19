@@ -27,7 +27,7 @@ import { useApp } from '../../context/AppContext';
 import {
   STATUS_STYLE, REQUEST_STATUS, REQUEST_TYPES, requestMeta,
 } from '../../data/changeRequests';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -292,33 +292,61 @@ export default function ChangeRequestQueueScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  col: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
-  hint: { opacity: 0.75, padding: 12, paddingBottom: 8, lineHeight: 18 },
-  tabs: { marginHorizontal: 12, marginBottom: 6 },
-  list: { padding: 12 },
-  card: { marginBottom: 12 },
+  container: { flex: 1, backgroundColor: colors.background },
+  col: { flex: 1, width: '100%', maxWidth: 800, alignSelf: 'center' },
+  hint: {
+    color: colors.muted,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+    lineHeight: 19,
+  },
+  tabs: { marginHorizontal: spacing.lg, marginBottom: spacing.md },
+  list: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
   rowBetween: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 8,
+    gap: spacing.sm,
   },
-  head: { flex: 1 },
+  head: { flex: 1, minWidth: 0 },
   meta: { color: colors.muted, marginTop: 2 },
-  detailBox: { marginTop: 10 },
+  // What was actually asked for, in a tray of its own — it is the thing being
+  // decided on, so it should not read as more of the header above it.
+  detailBox: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
   detail: { color: colors.text, marginTop: 2 },
-  comments: { color: colors.text, marginTop: 4, fontStyle: 'italic' },
-  raised: { color: colors.muted, marginTop: 6 },
-  resolution: { color: colors.text, marginTop: 8, fontStyle: 'italic' },
-  divider: { marginVertical: 12 },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
-  primaryAction: { borderRadius: 8, flexGrow: 1 },
-  rejectBtn: { borderRadius: 8, borderColor: colors.danger },
-  empty: { alignItems: 'center', marginTop: 50, gap: 8 },
+  comments: { color: colors.textSecondary, marginTop: spacing.xs, fontStyle: 'italic' },
+  raised: { color: colors.muted, marginTop: spacing.sm },
+  resolution: { color: colors.textSecondary, marginTop: spacing.md, fontStyle: 'italic' },
+  divider: { marginVertical: spacing.lg, backgroundColor: colors.border },
+  actions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    alignItems: 'center',
+  },
+  primaryAction: { borderRadius: radius.md, flexGrow: 1 },
+  rejectBtn: { borderRadius: radius.md, borderColor: colors.danger },
+  empty: { alignItems: 'center', marginTop: 56, gap: spacing.sm },
   emptyText: { color: colors.muted },
-  dialog: { width: '100%', maxWidth: 480, alignSelf: 'center' },
-  dialogText: { lineHeight: 20, marginBottom: 12 },
-  noteInput: { marginTop: 4 },
-  dialogError: { color: colors.danger, marginTop: 8 },
+  dialog: { width: '100%', maxWidth: 500, alignSelf: 'center' },
+  dialogText: { lineHeight: 21, marginBottom: spacing.md, color: colors.textSecondary },
+  noteInput: { marginTop: spacing.xs, backgroundColor: colors.surface },
+  dialogError: { color: colors.danger, marginTop: spacing.sm },
 });

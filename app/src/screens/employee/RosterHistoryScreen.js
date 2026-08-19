@@ -8,7 +8,7 @@ import React from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import { Text, Card, Chip } from 'react-native-paper';
 import { useApp } from '../../context/AppContext';
-import { statusColors, colors } from '../../theme';
+import { statusColors, colors, font, radius, shadow, spacing } from '../../theme';
 import { SOURCE } from '../../data/mockData';
 
 function sourceLabel(source) {
@@ -35,7 +35,7 @@ export default function RosterHistoryScreen() {
                 </Chip>
                 <Chip
                   compact
-                  style={{ backgroundColor: statusColors[item.status] || '#9E9E9E' }}
+                  style={{ backgroundColor: statusColors[item.status] || colors.disabled }}
                   textStyle={styles.statusChipText}
                 >
                   {item.status}
@@ -61,19 +61,33 @@ export default function RosterHistoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  listContent: { padding: 12, width: '100%', maxWidth: 720, alignSelf: 'center' },
-  card: { marginBottom: 12 },
+  container: { flex: 1, backgroundColor: colors.background },
+  listContent: {
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+  },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
   rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
-  sourceChip: { backgroundColor: '#E3F2FD' },
-  sourceChipText: { color: colors.primary, fontSize: 12 },
-  statusChipText: { color: 'white', fontSize: 12 },
-  direction: { marginBottom: 2 },
-  detail: { opacity: 0.8, marginTop: 2 },
-  empty: { textAlign: 'center', marginTop: 40, opacity: 0.6 },
+  sourceChip: { backgroundColor: colors.primarySoft },
+  sourceChipText: { color: colors.primary, fontSize: 11.5, fontFamily: font.semibold },
+  statusChipText: { color: '#FFFFFF', fontSize: 11.5, fontFamily: font.semibold },
+  direction: { marginBottom: 2, color: colors.text, fontFamily: font.medium },
+  detail: { color: colors.textSecondary, marginTop: 3 },
+  empty: { textAlign: 'center', marginTop: 48, color: colors.muted },
 });

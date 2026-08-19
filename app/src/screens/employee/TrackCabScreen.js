@@ -36,7 +36,7 @@ import {
 import { STATUS } from '../../data/mockData';
 import TrackMap from '../../components/TrackMap';
 import RideStartCode from '../../components/RideStartCode';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 import { callNumber } from '../../utils/externalLinks';
 
 // A route is only ever true of the ONE point it was computed to. Every route is
@@ -244,8 +244,8 @@ export default function TrackCabScreen({ navigation }) {
             <Chip
               compact
               icon={live ? 'circle' : 'circle-outline'}
-              style={{ backgroundColor: live ? '#E8F5E9' : '#FFF3E0' }}
-              textStyle={{ color: live ? '#2E7D32' : '#E65100', fontSize: 12 }}
+              style={{ backgroundColor: live ? colors.successSoft : colors.warningSoft }}
+              textStyle={{ color: live ? colors.success : '#E65100', fontSize: 12 }}
             >
               {live ? 'LIVE' : location ? `Last seen ${lastSeen}` : 'Waiting…'}
             </Chip>
@@ -351,30 +351,72 @@ export default function TrackCabScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 12, width: '100%', maxWidth: 720, alignSelf: 'center' },
-  infoCard: { marginBottom: 12 },
+  container: {
+    flex: 1,
+    padding: spacing.lg,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+  },
+  infoCard: {
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
   rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
   },
-  trip: { marginTop: 2 },
-  detail: { opacity: 0.8, marginTop: 2 },
-  driver: { marginTop: 8 },
+  trip: { marginTop: 2, color: colors.text, fontFamily: font.medium },
+  detail: { color: colors.textSecondary, marginTop: 3 },
+  driver: { marginTop: spacing.md, color: colors.text },
   // Sits directly under the driver's name as part of the same block.
   callBtn: { alignSelf: 'flex-start', marginLeft: -8, marginTop: 2 },
-  callBtnContent: { paddingHorizontal: 4 },
-  etaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
-  eta: { color: colors.primary },
-  coords: { opacity: 0.7, marginTop: 4 },
-  stale: { color: '#E65100', marginTop: 6 },
+  callBtnContent: { paddingHorizontal: spacing.xs },
+  // The ETA is the one number on this screen someone is actually waiting for,
+  // so it gets its own tinted pill rather than another line of body text.
+  etaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  eta: { color: colors.primaryDark, fontFamily: font.semibold },
+  coords: { color: colors.muted, marginTop: spacing.xs },
+  stale: { color: colors.warning, marginTop: spacing.sm },
   // Amber, not muted grey: no destination on file is a gap somebody has to fix,
   // not a routine "still loading" note to be skimmed past.
-  unavailable: { color: colors.warning, marginTop: 6 },
-  mapWrap: { flex: 1 },
-  homeBtn: { marginTop: 12, paddingVertical: 4 },
-  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
-  emptyTitle: { marginTop: 6 },
-  emptyBody: { textAlign: 'center', opacity: 0.7, marginBottom: 12 },
+  unavailable: { color: colors.warning, marginTop: spacing.sm },
+  // The map itself carries the rounding and the border, so it reads as a panel
+  // on the page rather than a rectangle bolted to the bottom of it.
+  mapWrap: {
+    flex: 1,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    ...shadow.sm,
+  },
+  homeBtn: { marginTop: spacing.lg, borderRadius: radius.md },
+  emptyWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xxl,
+    gap: spacing.md,
+  },
+  emptyTitle: { marginTop: spacing.sm, color: colors.text, fontFamily: font.semibold },
+  emptyBody: { textAlign: 'center', color: colors.muted, marginBottom: spacing.md, lineHeight: 21 },
 });

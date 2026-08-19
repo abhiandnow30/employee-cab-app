@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <meta name="theme-color" content="#0129AC" />
+    <title>Cab Service</title>
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+    <style id="app-shell">
+      /* PAINTED BEFORE THE BUNDLE RUNS. Without this the browser shows its own
+         white page until React mounts, which on a slow connection is a visible
+         white flash between the brand-blue browser chrome and the app's soft
+         blue-grey background. Same value as `colors.background` in src/theme.js —
+         keep the two in step. */
+      html,
+      body {
+        background-color: #f4f7fc;
+        margin: 0;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      /* Poppins is loaded by expo-font once the bundle runs; until then anything
+         the browser paints should at least be a matching geometric sans rather
+         than Times. */
+      body {
+        font-family: Poppins_400Regular, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: #101828;
+      }
+      /* Slim, neutral scrollbars — the default chunky grey ones are the loudest
+         thing on an otherwise quiet page. */
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: #d2dbe9 transparent;
+      }
+      *::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+      *::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      *::-webkit-scrollbar-thumb {
+        background-color: #d2dbe9;
+        border-radius: 999px;
+        border: 3px solid transparent;
+        background-clip: content-box;
+      }
+      *::-webkit-scrollbar-thumb:hover {
+        background-color: #b6c2d6;
+      }
+      /* The focus ring the app relies on for keyboard users, in the brand blue
+         rather than the browser's default. */
+      :focus-visible {
+        outline: 2px solid #3b5fe0;
+        outline-offset: 2px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
+    <noscript>
+      You need to enable JavaScript to run this app.
+    </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+  </body>
+</html>

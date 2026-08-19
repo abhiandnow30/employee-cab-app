@@ -5,11 +5,11 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState, useRef } from 'react';
-import { StyleSheet, View, Image, KeyboardAvoidingView, Platform } from 'react-native';
-import { Text, TextInput, Button, HelperText, Card, Divider } from 'react-native-paper';
+import { StyleSheet, View, Platform } from 'react-native';
+import { Text, TextInput, Button, HelperText, Divider } from 'react-native-paper';
 import { useApp } from '../context/AppContext';
-import { COMPANY_NAME, companyLogo } from '../branding';
-import { colors } from '../theme';
+import AuthLayout from '../components/AuthLayout';
+import { colors, font, radius, shadow, spacing } from '../theme';
 import useMicrosoftAuthRequest from '../utils/useMicrosoftAuthRequest';
 
 export default function LoginScreen({ navigation }) {
@@ -98,200 +98,186 @@ export default function LoginScreen({ navigation }) {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <AuthLayout
+      title="Welcome back"
+      subtitle="Sign in to see your rides, track your cab and reach the transport desk."
     >
-      <View style={styles.inner}>
-        <Card style={styles.card} mode="elevated">
-          <Card.Content style={styles.cardContent}>
-            <Image
-              source={companyLogo}
-              style={styles.brandLogo}
-              resizeMode="contain"
-            />
-            <Text variant="titleMedium" style={styles.brandName}>
-              {COMPANY_NAME}
-            </Text>
-            <View style={styles.brandDivider} />
-            <Text variant="titleLarge" style={styles.title}>
-              Cab Service
-            </Text>
-            <Text variant="bodySmall" style={styles.subtitle}>
-              Book your company cab
-            </Text>
+      <TextInput
+        label="Email"
+        value={email}
+        onChangeText={setEmail}
+        mode="outlined"
+        dense
+        autoCapitalize="none"
+        keyboardType="email-address"
+        left={<TextInput.Icon icon="email" />}
+        style={styles.input}
+        returnKeyType="next"
+        onSubmitEditing={() => passwordRef.current?.focus()}
+        blurOnSubmit={false}
+      />
 
-            <TextInput
-              label="Email"
-              value={email}
-              onChangeText={setEmail}
-              mode="outlined"
-              dense
-              autoCapitalize="none"
-              keyboardType="email-address"
-              left={<TextInput.Icon icon="email" />}
-              style={styles.input}
-              returnKeyType="next"
-              onSubmitEditing={() => passwordRef.current?.focus()}
-              blurOnSubmit={false}
-            />
+      <TextInput
+        ref={passwordRef}
+        label="Password"
+        value={password}
+        onChangeText={setPassword}
+        mode="outlined"
+        dense
+        secureTextEntry={!showPassword}
+        left={<TextInput.Icon icon="lock" />}
+        right={
+          <TextInput.Icon
+            icon={showPassword ? 'eye-off' : 'eye'}
+            onPress={() => setShowPassword((s) => !s)}
+          />
+        }
+        style={styles.input}
+        returnKeyType="go"
+        onSubmitEditing={handleLogin}
+      />
 
-            <TextInput
-              ref={passwordRef}
-              label="Password"
-              value={password}
-              onChangeText={setPassword}
-              mode="outlined"
-              dense
-              secureTextEntry={!showPassword}
-              left={<TextInput.Icon icon="lock" />}
-              right={
-                <TextInput.Icon
-                  icon={showPassword ? 'eye-off' : 'eye'}
-                  onPress={() => setShowPassword((s) => !s)}
-                />
-              }
-              style={styles.input}
-              returnKeyType="go"
-              onSubmitEditing={handleLogin}
-            />
+      {error ? (
+        <HelperText type="error" visible={true} style={styles.error}>
+          {error}
+        </HelperText>
+      ) : null}
+      {info ? (
+        <HelperText type="info" visible={true} style={styles.error}>
+          {info}
+        </HelperText>
+      ) : null}
 
-            {error ? (
-              <HelperText type="error" visible={true} style={styles.error}>
-                {error}
-              </HelperText>
-            ) : null}
-            {info ? (
-              <HelperText type="info" visible={true} style={styles.error}>
-                {info}
-              </HelperText>
-            ) : null}
+      <Button
+        mode="contained"
+        onPress={handleLogin}
+        style={[styles.button, styles.primaryButton]}
+        contentStyle={styles.buttonContent}
+        labelStyle={styles.buttonLabel}
+        loading={loading}
+        disabled={loading}
+      >
+        Sign In
+      </Button>
 
-            <Button
-              mode="contained"
-              onPress={handleLogin}
-              style={styles.button}
-              loading={loading}
-              disabled={loading}
-            >
-              Sign In
-            </Button>
+      <Button
+        mode="text"
+        onPress={handleForgot}
+        style={styles.link}
+        labelStyle={styles.signupLink}
+        compact
+        disabled={loading}
+      >
+        Forgot password?
+      </Button>
 
-            <Button
-              mode="text"
-              onPress={handleForgot}
-              style={styles.link}
-              compact
-              disabled={loading}
-            >
-              Forgot password?
-            </Button>
-
-            <View style={styles.dividerRow}>
-              <Divider style={styles.dividerLine} />
-              <Text variant="bodySmall" style={styles.dividerText}>or</Text>
-              <Divider style={styles.dividerLine} />
-            </View>
-
-            {/* Works directly for anyone the admin already created in Employee
-                Management — no prior trip to Profile required. The first time,
-                if this Microsoft account doesn't match anyone yet by uid,
-                loginWithMicrosoftPopup/loginWithMicrosoftCredential
-                (AppContext.js) delete the throwaway account and prompt for a
-                one-time password confirmation instead (App.js,
-                MicrosoftConfirmScreen) — entirely client-side, no server code
-                involved. Every sign-in after that is instant. The manual
-                link-from-Profile flow (ProfileScreen.js) still exists too, as
-                an alternative for anyone who'd rather set it up proactively. */}
-            <Button
-              mode="outlined"
-              icon="microsoft"
-              onPress={handleMicrosoftLogin}
-              style={styles.button}
-              loading={microsoftBusy}
-              disabled={microsoftBusy || loading || (Platform.OS !== 'web' && !microsoftReady)}
-            >
-              Sign in with Microsoft
-            </Button>
-
-            {/* Neither drivers nor coordinators sign in here: they have no email
-                and no password of their own, just a number the desk issues them
-                (a cab-derived code, or a short numeric passcode — see
-                DriverLoginScreen and CoordinatorLoginScreen). These links are the
-                only way to those screens on a phone, so they can't be dropped. */}
-            <View style={styles.signupRow}>
-              <Text variant="bodySmall" style={styles.signupHint}>
-                Are you a driver?
-              </Text>
-              <Button
-                mode="text"
-                compact
-                onPress={() => navigation.navigate('DriverLogin')}
-                disabled={loading}
-              >
-                Driver sign in
-              </Button>
-            </View>
-            <View style={styles.signupRow}>
-              <Text variant="bodySmall" style={styles.signupHint}>
-                Are you a coordinator?
-              </Text>
-              <Button
-                mode="text"
-                compact
-                onPress={() => navigation.navigate('CoordinatorLogin')}
-                disabled={loading}
-              >
-                Coordinator sign in
-              </Button>
-            </View>
-          </Card.Content>
-        </Card>
+      <View style={styles.dividerRow}>
+        <Divider style={styles.dividerLine} />
+        <Text variant="bodySmall" style={styles.dividerText}>or</Text>
+        <Divider style={styles.dividerLine} />
       </View>
-    </KeyboardAvoidingView>
+
+      {/* Works directly for anyone the admin already created in Employee
+          Management — no prior trip to Profile required. The first time,
+          if this Microsoft account doesn't match anyone yet by uid,
+          loginWithMicrosoftPopup/loginWithMicrosoftCredential
+          (AppContext.js) delete the throwaway account and prompt for a
+          one-time password confirmation instead (App.js,
+          MicrosoftConfirmScreen) — entirely client-side, no server code
+          involved. Every sign-in after that is instant. The manual
+          link-from-Profile flow (ProfileScreen.js) still exists too, as
+          an alternative for anyone who'd rather set it up proactively. */}
+      <Button
+        mode="outlined"
+        icon="microsoft"
+        onPress={handleMicrosoftLogin}
+        style={[styles.button, styles.microsoftButton]}
+        contentStyle={styles.buttonContent}
+        labelStyle={styles.buttonLabel}
+        loading={microsoftBusy}
+        disabled={microsoftBusy || loading || (Platform.OS !== 'web' && !microsoftReady)}
+      >
+        Sign in with Microsoft
+      </Button>
+
+      {/* Neither drivers nor coordinators sign in here: they have no email
+          and no password of their own, just a number the desk issues them
+          (a cab-derived code, or a short numeric passcode — see
+          DriverLoginScreen and CoordinatorLoginScreen). These links are the
+          only way to those screens on a phone, so they can't be dropped. */}
+      <View style={styles.altTray}>
+        <View style={styles.signupRow}>
+          <Text variant="bodySmall" style={styles.signupHint}>
+            Are you a driver?
+          </Text>
+          <Button
+            mode="text"
+            compact
+            labelStyle={styles.signupLink}
+            onPress={() => navigation.navigate('DriverLogin')}
+            disabled={loading}
+          >
+            Driver sign in
+          </Button>
+        </View>
+        <View style={styles.signupRow}>
+          <Text variant="bodySmall" style={styles.signupHint}>
+            Are you a coordinator?
+          </Text>
+          <Button
+            mode="text"
+            compact
+            labelStyle={styles.signupLink}
+            onPress={() => navigation.navigate('CoordinatorLogin')}
+            disabled={loading}
+          >
+            Coordinator sign in
+          </Button>
+        </View>
+      </View>
+    </AuthLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  inner: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-  card: { width: '100%', maxWidth: 380, borderRadius: 12 },
-  cardContent: { paddingVertical: 24 },
-  brandLogo: { width: 96, height: 64, alignSelf: 'center' },
-  brandName: {
-    textAlign: 'center',
-    fontWeight: 'bold',
-    color: colors.text,
-    marginTop: 4,
+  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
+  error: { marginTop: -spacing.xs, marginBottom: 2 },
+  // Squarer and taller than Paper's default pill — that shape is what makes the
+  // primary action read as the one thing on the form to press.
+  button: { marginTop: spacing.sm, borderRadius: radius.md },
+  buttonContent: { paddingVertical: 8 },
+  buttonLabel: { fontFamily: font.semibold, fontSize: 15, letterSpacing: 0.2 },
+  primaryButton: { ...shadow.brand },
+  microsoftButton: { borderColor: colors.borderStrong, borderWidth: 1.5 },
+  link: { marginTop: spacing.xs, alignSelf: 'center' },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    gap: spacing.md,
   },
-  brandDivider: {
-    height: 1,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    width: '60%',
-    marginVertical: 14,
+  dividerLine: { flex: 1, backgroundColor: colors.border },
+  dividerText: {
+    color: colors.muted,
+    fontFamily: font.medium,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
-  title: { textAlign: 'center', fontWeight: 'bold', color: colors.primary },
-  subtitle: { textAlign: 'center', marginBottom: 20, opacity: 0.6 },
-  input: { marginBottom: 10 },
-  error: { marginTop: -2, marginBottom: 2 },
-  button: { marginTop: 6, paddingVertical: 2, borderRadius: 8 },
-  link: { marginTop: 4 },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10, marginBottom: 4, gap: 8 },
-  dividerLine: { flex: 1 },
-  dividerText: { color: colors.muted },
+  // The two "are you a driver / coordinator" rows sit in their own tray at the
+  // foot of the form, so they don't compete with the sign-in button above.
+  altTray: {
+    marginTop: spacing.xl,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
   signupRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 2,
+    flexWrap: 'wrap',
   },
   signupHint: { color: colors.muted },
-  hint: {
-    maxWidth: 380,
-    textAlign: 'center',
-    marginTop: 16,
-    opacity: 0.5,
-    color: colors.muted,
-  },
+  signupLink: { fontFamily: font.semibold },
 });

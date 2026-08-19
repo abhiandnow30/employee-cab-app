@@ -21,7 +21,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import RideStartCode from '../../components/RideStartCode';
-import { statusColors, colors } from '../../theme';
+import { statusColors, colors, font, radius, shadow, spacing } from '../../theme';
 import { callNumber } from '../../utils/externalLinks';
 import {
   formatDeadline, prettyDateKey, relativeDayLabel, isPastDateKey, timeToMinutes,
@@ -465,29 +465,42 @@ export default function MyRidesScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
-  homeBtn: { marginTop: 8, marginLeft: 4, alignSelf: 'flex-start' },
-  listContent: { padding: 12, paddingBottom: 90 },
+  container: { flex: 1, backgroundColor: colors.background },
+  centerCol: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
+  homeBtn: { marginTop: spacing.md, marginLeft: spacing.md, alignSelf: 'flex-start' },
+  listContent: { padding: spacing.lg, paddingBottom: 96 },
 
   // "Upcoming" / "Past rides". A quiet label with its count, not a filled banner —
   // it separates two groups, it isn't an action.
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 6,
-    marginBottom: 8,
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
     paddingHorizontal: 2,
   },
-  sectionTitle: { color: colors.primaryDark, textTransform: 'uppercase', letterSpacing: 0.5 },
-  sectionCount: { color: colors.muted },
+  sectionTitle: {
+    color: colors.muted,
+    fontFamily: font.semibold,
+    textTransform: 'uppercase',
+    letterSpacing: 0.9,
+  },
+  sectionCount: { color: colors.disabled },
 
   // overflow: hidden is what makes the accent stripe follow the card's rounded
   // corners instead of squaring them off.
-  card: { marginBottom: 12, overflow: 'hidden' },
-  cardMobile: { marginBottom: 10 },
-  bodyMobile: { paddingHorizontal: 12 },
+  card: {
+    marginBottom: spacing.md,
+    overflow: 'hidden',
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  cardMobile: { marginBottom: spacing.md },
+  bodyMobile: { paddingHorizontal: spacing.lg },
   // The status colour down the left edge. Absolute so it spans the full height
   // whatever the card ends up containing — a card with a start code panel is much
   // taller than a cancelled one.
@@ -497,72 +510,91 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
   },
   whenWrap: { flex: 1, minWidth: 0 },
-  when: { fontWeight: 'bold', color: colors.text },
-  chipText: { color: 'white', fontSize: 12 },
+  when: { fontFamily: font.semibold, color: colors.text },
+  chipText: { color: '#FFFFFF', fontSize: 11.5, fontFamily: font.semibold },
 
-  metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 3 },
-  meta: { color: colors.muted, flex: 1 },
+  metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: 3 },
+  meta: { color: colors.textSecondary, flex: 1 },
 
-  divider: { marginVertical: 10 },
+  divider: { marginVertical: spacing.md, backgroundColor: colors.border },
 
   // Cab, driver and the call button on one line. Tinted so the block reads as
   // "your ride is this vehicle" rather than as more body text.
   cabRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    backgroundColor: colors.background,
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    gap: spacing.md,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
   },
   // A phone can't fit cab number, driver and a button across one line without the
   // number ellipsising — and the cab number is what the rider matches against the
   // vehicle in front of them.
-  cabRowMobile: { flexWrap: 'wrap', rowGap: 8 },
+  cabRowMobile: { flexWrap: 'wrap', rowGap: spacing.sm },
   cabText: { flex: 1, minWidth: 0 },
-  cabNumber: { fontWeight: 'bold', color: colors.text },
+  cabNumber: { fontFamily: font.semibold, color: colors.text },
   cabDriver: { color: colors.muted },
-  callBtn: { flexShrink: 0 },
+  callBtn: { flexShrink: 0, borderRadius: radius.md },
 
-  cancelBtn: { alignSelf: 'flex-start' },
-  deadlineHint: { marginTop: 6, color: colors.muted },
-  closedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
+  cancelBtn: { alignSelf: 'flex-start', borderRadius: radius.md },
+  deadlineHint: { marginTop: spacing.sm, color: colors.muted },
+  closedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
   closedText: { color: colors.warning, flex: 1 },
-  cancelledNote: { marginTop: 6, fontStyle: 'italic', color: colors.danger },
+  cancelledNote: { marginTop: spacing.sm, fontStyle: 'italic', color: colors.danger },
   deskCancelledBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 6,
-    marginTop: 8,
-    backgroundColor: '#FDECEA',
-    borderRadius: 8,
-    padding: 8,
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: '#F3C2BD',
+    borderRadius: radius.md,
+    padding: spacing.md,
   },
-  deskCancelledText: { color: colors.danger, flex: 1, lineHeight: 17 },
-  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 8 },
-  emptyTitle: { color: colors.text },
-  emptyText: { textAlign: 'center', color: colors.muted, maxWidth: 320 },
-  dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
+  deskCancelledText: { color: colors.danger, flex: 1, lineHeight: 18 },
+  empty: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+    gap: spacing.sm,
+  },
+  emptyTitle: { color: colors.text, fontFamily: font.semibold },
+  emptyText: { textAlign: 'center', color: colors.muted, maxWidth: 340, lineHeight: 20 },
+  dialog: { width: '100%', maxWidth: 470, alignSelf: 'center' },
   summary: {
-    backgroundColor: colors.background,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 12,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
   },
-  summaryLine: { fontWeight: 'bold' },
-  summaryMeta: { opacity: 0.75, marginTop: 2 },
-  reasonInput: { marginTop: 2 },
+  summaryLine: { fontFamily: font.semibold, color: colors.text },
+  summaryMeta: { color: colors.muted, marginTop: 2 },
+  reasonInput: { marginTop: 2, backgroundColor: colors.surface },
   closedBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFF6E5',
-    borderRadius: 8,
-    padding: 10,
+    gap: spacing.sm,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: '#F2E3C4',
+    borderRadius: radius.md,
+    padding: spacing.md,
   },
 });

@@ -12,6 +12,7 @@ import { StyleSheet, View } from 'react-native';
 import { SegmentedButtons } from 'react-native-paper';
 import ManageCabsScreen from './ManageCabsScreen';
 import ManageDriversScreen from './ManageDriversScreen';
+import { colors, spacing } from '../../theme';
 
 export default function ManageFleetScreen() {
   const [tab, setTab] = useState('fleet');
@@ -36,7 +37,7 @@ export default function ManageFleetScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  tabsRow: { padding: 16, paddingBottom: 8 },
+  root: { flex: 1, backgroundColor: colors.background },
+  tabsRow: { padding: spacing.lg, paddingBottom: spacing.md },
   content: { flex: 1 },
 });
