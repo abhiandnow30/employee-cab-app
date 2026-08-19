@@ -26,7 +26,7 @@
 // ---------------------------------------------------------------------------
 
 import {
-  collection, addDoc, doc, updateDoc, onSnapshot, query, where,
+  collection, addDoc, doc, getDoc, updateDoc, onSnapshot, query, where,
   serverTimestamp, writeBatch,
 } from 'firebase/firestore';
 import { firestore } from './firebase';
@@ -134,6 +134,30 @@ export async function approveCabServiceRequest(request, adminName, edits = {}) {
   if (!name) throw new Error('A name is required.');
   if (!address) throw new Error('A home address is required — the cab has nowhere to go without it.');
   if (!route) throw new Error('Pick a pickup route, or they will land under "No route set" every day.');
+
+  // THE PROFILE HAS TO STILL BE THERE. `update()` — and therefore the whole
+  // batch — fails outright on a document that does not exist, and Firestore's
+  // own words for that are "No document to update: projects/…/employees/<uid>",
+  // which is what the desk was being shown: a database path where an
+  // explanation should be.
+  //
+  // It is an ordinary state, not a freak one. A request outlives the profile it
+  // points at whenever somebody is removed from Employee Management after
+  // raising one, and nothing clears the queue when that happens — so the row
+  // sits there Pending and unapprovable with no clue as to why.
+  //
+  // Checked rather than repaired: writing the profile back with set(merge)
+  // would recreate an account the desk deliberately deleted, which is not a
+  // decision an approval button should be making on its own.
+  const profile = await getDoc(doc(firestore, 'employees', request.employeeId));
+  if (!profile.exists()) {
+    throw new Error(
+      `${name || 'This person'} no longer has an employee profile — it was removed after this ` +
+        'request was raised, so there is nothing to write the details onto. They get a profile ' +
+        'again the next time they sign in; approve this once they have. Until then only Reject ' +
+        'will go through.'
+    );
+  }
 
   const batch = writeBatch(firestore);
   batch.update(doc(firestore, 'employees', request.employeeId), {
