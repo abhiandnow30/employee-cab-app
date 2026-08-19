@@ -65,6 +65,18 @@ export const DRIVER_DRAWER_ITEMS = [
 // coordinator's job and deliberately absent here.
 export const ADMIN_DRAWER_ITEMS = [
   { label: 'Upload Roster', icon: 'file-upload-outline', screen: 'RosterUpload' },
+  // WHERE "ALL BOOKINGS" USED TO BE. HR gets the day board here instead — the same
+  // screen the coordinator runs on, and the one place "Add a rider" exists, which is
+  // what HR actually needs: the monthly sheet always misses somebody (a mid-month
+  // joiner, someone who turns out to need a cab) and HR is usually who hears about
+  // it. Adding them writes the roster day, so the rider appears on the coordinator's
+  // board with no re-upload. HR needn't assign the cab — the rider shows as Waiting.
+  //
+  // The Bookings screen is NOT deleted: it is still registered for both desk roles
+  // in App.js and still in the coordinator's menu. Two things live only there, so if
+  // HR ever needs them again this is the line to restore: approving/rejecting a
+  // rider's cancellation REQUEST, and the by-cab view of the last 180 days.
+  { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
   // The transport desk itself. Its own screen rather than a role toggle inside
   // Add Employee: a coordinator is an account but not a rider, so none of the
@@ -79,19 +91,7 @@ export const ADMIN_DRAWER_ITEMS = [
   // People who signed in with their company account but were never entered by
   // HR, so they have no address or route and no cab can be sent for them. HR
   // approves; the coordinator sets the route (same screen, see its header).
-  { label: 'Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
-  // WHERE "ALL BOOKINGS" USED TO BE. HR gets the day board here instead — the same
-  // screen the coordinator runs on, and the one place "Add a rider" exists, which is
-  // what HR actually needs: the monthly sheet always misses somebody (a mid-month
-  // joiner, someone who turns out to need a cab) and HR is usually who hears about
-  // it. Adding them writes the roster day, so the rider appears on the coordinator's
-  // board with no re-upload. HR needn't assign the cab — the rider shows as Waiting.
-  //
-  // The Bookings screen is NOT deleted: it is still registered for both desk roles
-  // in App.js and still in the coordinator's menu. Two things live only there, so if
-  // HR ever needs them again this is the line to restore: approving/rejecting a
-  // rider's cancellation REQUEST, and the by-cab view of the last 180 days.
-  { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
+  { label: 'New Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
   // HR needs to SEE who is driving what — which cab a ride was given to, and which
   // driver account is behind it — without owning the fleet. These two screens
   // render read-only for the admin role; the coordinator keeps the controls.
@@ -122,7 +122,7 @@ export const COORDINATOR_DRAWER_ITEMS = [
   { label: 'Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
   // The coordinator is who knows which route an address is on, so they triage
   // these even though HR does the approving.
-  { label: 'Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
+  { label: 'New Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
   { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
   { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
   { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },

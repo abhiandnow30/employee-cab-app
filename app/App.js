@@ -780,7 +780,7 @@ function RootNavigator() {
             <Stack.Screen
               name="CabRequests"
               component={CabRequestsScreen}
-              options={{ title: 'Cab Requests' }}
+              options={{ title: 'New Cab Requests' }}
             />
             <Stack.Screen
               name="Bookings"
