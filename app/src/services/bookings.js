@@ -271,6 +271,42 @@ export async function setBookingStatus(bookingId, status) {
   return updateDoc(doc(firestore, COL, bookingId), { status });
 }
 
+// ONE STATUS ONTO A WHOLE CAB, in a single commit. The driver's screen acts on a
+// RUN now — a cab, a departure, everyone in it — rather than a rider at a time:
+// "At the office" puts an outbound cab at the kerb, "Trip complete" closes an
+// inbound one, and turning location sharing on sets the whole cab going.
+//
+// A BATCH IS SAFE HERE because firestore.rules judges every document on its own
+// (driverAdvancingTrip is evaluated per booking, with no cross-document
+// condition), so N documents in one commit is exactly as permitted as N separate
+// writes — and the driver sees one result instead of a list flickering into
+// place a row at a time.
+//
+// WHAT A BATCH IS NOT IS FORGIVING: it is all-or-nothing, so a single ineligible
+// id fails the entire commit rather than being skipped. Callers must therefore
+// pass ids they have already narrowed by current status — that is what the
+// selectors in services/driverRun.js are for. This function deliberately does no
+// filtering of its own: it cannot see the statuses, and quietly dropping a
+// document here would look like a successful write to the caller.
+//
+// Only `status` is touched, which is what keeps it inside the
+// touchedKeys().hasOnly(['status','noShowAt']) gate the rules put on drivers.
+export async function setBookingStatuses(bookingIds, status) {
+  if (!firestore) throw new Error('Backend not configured.');
+  const ids = [...new Set((bookingIds || []).filter(Boolean))];
+  if (!ids.length) return 0;
+  // A cab seats a handful, so this never chunks in practice — it is here so the
+  // function is not a trap if it is ever reused for something roster-sized.
+  const CHUNK = 400; // Firestore's own limit is 500 writes per batch
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = writeBatch(firestore);
+    ids.slice(i, i + CHUNK).forEach((id) => batch.update(doc(firestore, COL, id), { status }));
+    // eslint-disable-next-line no-await-in-loop
+    await batch.commit();
+  }
+  return ids.length;
+}
+
 // The driver typed in the rider's code. The attempt is written onto the booking
 // because firestore.rules can only inspect `request.resource.data` — it cannot
 // see a value that isn't part of the write. If the code is wrong the whole update

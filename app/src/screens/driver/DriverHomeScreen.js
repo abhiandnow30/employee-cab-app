@@ -1,85 +1,56 @@
 // ---------------------------------------------------------------------------
-// DRIVER HOME  (My Trips) — Step 9
-// The trips the coordinator assigned to THIS driver's cab, in PICKUP SEQUENCE:
-// sorted by date then pickup time, and numbered within each run so a carpool
-// reads as "Stop 2 of 4" rather than an unordered list. The driver advances
-// each trip's status: Cab assigned → On the way → Arrived → On board → Completed,
-// where the step into "On board" needs the rider's own 6-digit code.
-// A one-line "Location sharing ON / OFF" row broadcasts the driver's GPS for the
-// cab (the control panel for it is DriverShareLocation).
+// DRIVER HOME  (My Trips)
 //
-// LOCATION SHARING IS REQUIRED BEFORE A RIDE STARTS. Tapping "Enter OTP" with
-// sharing off opens a prompt that turns it on and then goes straight to the code,
-// so the driver never has to go and find the switch. It is a client-side gate —
-// firestore.rules cannot see the Realtime Database, so nothing server-side knows
-// whether GPS is streaming; the OTP is still what protects boarding, and this is
-// what stops a trip running dark.
+// THE SCREEN IS BUILT AROUND A RUN, NOT A RIDER. A run is one cab, one
+// departure — everyone travelling together. That is the unit the driver
+// actually works in, and splitting it out is the whole point of this screen:
 //
-// THE CARD ANSWERS THREE QUESTIONS IN ORDER — who am I collecting, where do I go,
-// what do I press now — and carries nothing else. The current step is the only
-// filled button on it; Navigate and Help are deliberately smaller, and the
-// helpline moved off the card into Help rather than being printed on every one.
+//   PER RIDER   the decision only that person can settle — are they in the cab
+//               (which needs their own code), or are they not coming?
+//   PER CAB     the decisions that belong to the vehicle — we are at the office,
+//               we are leaving, we are done.
 //
-// RIDERS ARE IDENTIFIED BY NAME HERE. (Reversed Aug 2026, at explicit request —
-// this screen used to show only `empId`, on the reasoning that a name adds nothing
-// operationally and is more of the rider's identity than the job requires. The
-// counter-argument won: a driver calling out "Employee 1415?" at a gate is not how
-// anyone finds the person they are collecting.)
+// It used to be one flat list with a four-step ladder repeated on every card
+// (Start Trip → Arrived → Enter OTP → Complete Trip), so a carpool of four was
+// sixteen taps and every one of them was a question about which button belonged
+// to whom. Now there is one card per open decision, and exactly one cab-level
+// button per run.
 //
-// The name comes from `employeeName` on the BOOKING, denormalised there when the
-// ride was created — the security rules deliberately don't let a driver read
-// employee profiles, so there is nothing to look up. The ID stays as the fallback
-// for older bookings written before the name was carried across.
+// EXACTLY ONE HALF OF ANY JOURNEY IS SPREAD ACROSS STOPS, and that half gets the
+// cards; the other half happens in one place and gets one button:
+//
+//   PICKUP (Home → Office)   board at each kerb  ·  drop everyone at the office
+//   DROP   (Office → Home)   board at the office ·  drop at each home
+//
+// SHARING IS THE IGNITION. Turning location sharing on is what moves the run's
+// riders to "On the way" — see the effect in AppContext. No button here sets
+// that status, because a driver who taps "start" while broadcasting nothing
+// leaves the rider watching a map with no cab on it.
+//
+// WHAT THIS SCREEN CANNOT DO, BY DESIGN: reach "On board" without the rider's
+// six-digit code. That check lives in firestore.rules against a document this
+// app cannot read, so there is nothing here to work around — and "Completed" is
+// only reachable from "On board", which is what stops a trip being marked
+// finished for someone who never got in.
+//
+// RIDERS ARE IDENTIFIED BY NAME (see DriverRiderCard) — a driver calling out
+// "Employee 1415?" at a gate is not how anyone finds the person they are
+// collecting.
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList, Pressable } from 'react-native';
-import {
-  Text, Card, Button, Snackbar, Portal, Dialog, TextInput, Switch,
-} from 'react-native-paper';
+import { Text, Card, Button, Snackbar, Portal, Dialog, Switch } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { RIDE_OTP_LENGTH, STATUS } from '../../data/mockData';
-import { statusColors, colors, font, radius, shadow, spacing } from '../../theme';
+import { STATUS } from '../../data/mockData';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 import { SUPPORT_HELPLINE } from '../../branding';
-import { tripPickupPoint, tripPlaceLabels } from '../../services/directions';
-import {
-  timeToMinutes, prettyDateKey, relativeDayLabel, todayKey, shiftDateKey,
-} from '../../utils/datetime';
-import { openDirections, callNumber } from '../../utils/externalLinks';
-
-// Open maps directions to where the driver collects this employee. Platform
-// details (Google/Apple Maps app vs. web tab) live in utils/externalLinks.
-function navigateToPickup(booking) {
-  openDirections(tripPickupPoint(booking));
-}
-
-// How a rider appears on the driver's screen: their name, falling back to their
-// employee ID and then to a plain label. Both fallbacks matter — a card with no
-// heading at all reads as a rendering fault, and the driver still has to collect
-// whoever this is.
-function riderLabel(booking) {
-  const name = String(booking?.employeeName || '').trim();
-  if (name) return name;
-  const id = String(booking?.empId || '').trim();
-  return id ? `Employee ID ${id}` : 'Employee (name not on record)';
-}
-
-// What the driver can do next, per current status. The statuses and the order are
-// unchanged — only the wording is shorter, because this is the one thing on the
-// card the driver reads while a car is idling behind them.
-//
-// "Arrived" is the one step that is not simply a tap: the rider reads out the
-// six digits on their own screen and the driver types them in. That check happens
-// in firestore.rules against a document this app cannot read, so there is nothing
-// here to work around — the button opens the dialog, and the write is what's
-// judged. See services/rideOtp.js.
-const NEXT_ACTION = {
-  'Cab assigned': { next: 'On the way', label: 'Start Trip', icon: 'play' },
-  'On the way': { next: 'Arrived', label: 'Arrived', icon: 'map-marker-check' },
-  Arrived: { otp: true, label: 'Enter OTP', icon: 'shield-key' },
-  'On board': { next: 'Completed', label: 'Complete Trip', icon: 'flag-checkered' },
-};
+import { timeToMinutes, todayKey, shiftDateKey } from '../../utils/datetime';
+import { callNumber } from '../../utils/externalLinks';
+import { groupRuns } from '../../services/driverRun';
+import DriverRunSection from '../../components/DriverRunSection';
+import { riderLabel } from '../../components/DriverRiderCard';
 
 export default function DriverHomeScreen({ navigation }) {
   const {
@@ -87,6 +58,7 @@ export default function DriverHomeScreen({ navigation }) {
     bookings,
     myCab,
     updateBookingStatus,
+    updateBookingStatuses,
     startRideWithOtp,
     markNoShow,
     getCabById,
@@ -100,23 +72,27 @@ export default function DriverHomeScreen({ navigation }) {
 
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null); // the trip whose write is in flight
+  const [runBusyKey, setRunBusyKey] = useState(null); // the run whose batch is in flight
   const [noShowFor, setNoShowFor] = useState(null); // trip pending no-show confirmation
-  const [otpFor, setOtpFor] = useState(null); // trip whose rider code is being entered
-  const [otpEntry, setOtpEntry] = useState('');
-  const [otpError, setOtpError] = useState('');
-  // The helpline, moved off the cards and behind one small button. Shared by every
-  // card because it dials the same desk whichever trip you were looking at.
+  // Riders whose code has been sent but NOT yet acknowledged by the server. See
+  // the note in DriverRiderCard: Firestore shows the write locally straight away
+  // and only the server can judge the code, so a run must not advance on the
+  // strength of a boarding that might still be refused.
+  const [confirmingIds, setConfirmingIds] = useState(() => new Set());
+  // Runs the driver has said have pulled away. Deliberately screen state and not
+  // a document: a driver may only write a booking's status, and there is no
+  // status for "the cab left" that isn't a claim about one of the riders. Losing
+  // it — an app restart — costs one harmless tap and records nothing wrong.
+  const [departedKeys, setDepartedKeys] = useState(() => new Set());
+  // The helpline, behind one small button. Shared by every card because it dials
+  // the same desk whichever trip you were looking at.
   const [helpOpen, setHelpOpen] = useState(false);
   // Turning sharing on asks the OS for location permission, which is a round trip —
   // the switch is held disabled meanwhile so it can't be flipped twice.
   const [sharingBusy, setSharingBusy] = useState(false);
-  // The trip whose OTP was tapped while location sharing was off. Holding it here
-  // is what lets the prompt turn sharing on and then carry straight on to the code
-  // entry, instead of dropping the driver back on the card to tap again.
-  const [locationGateFor, setLocationGateFor] = useState(null);
 
-  // Both driver actions used to be fire-and-forget: if the write was rejected
-  // the button just did nothing. Now they wait, and say so when they fail.
+  // Every driver write waits and reports. They used to be fire-and-forget: a
+  // rejected write simply did nothing and the button sat there.
   async function advance(booking, nextStatus) {
     setError('');
     setBusyId(booking.id);
@@ -125,60 +101,41 @@ export default function DriverHomeScreen({ navigation }) {
     if (!res?.ok) setError(res?.message || 'Could not update the trip. Please try again.');
   }
 
-  // Open the code prompt for a trip. State is reset here rather than on close, so
-  // a mistyped code from the previous rider can't be sitting in the box when the
-  // next dialog opens.
-  function openOtpDialog(booking) {
+  // A cab-level action: the same status onto every rider the run's selectors say
+  // it is legal for. `ids` arrives already filtered (services/driverRun.js) —
+  // the batch is atomic, so one ineligible rider would refuse the lot.
+  async function runAction(runKey, ids, status) {
     setError('');
-    setOtpError('');
-    setOtpEntry('');
-    setOtpFor(booking);
+    if (!ids.length) return;
+    setRunBusyKey(runKey);
+    const res = await updateBookingStatuses(ids, status);
+    setRunBusyKey(null);
+    if (!res?.ok) setError(res?.message || 'Could not update the trips. Please try again.');
   }
 
-  // THE GATE. The rider is about to get in, which is the moment their people start
-  // watching the cab move — so sharing has to be on before the ride can start, the
-  // way it works on the apps drivers already use.
+  // The rider's code. A wrong one is refused by the rules, not by this screen.
   //
-  // A CLIENT-SIDE GATE, and worth being clear about: firestore.rules cannot see the
-  // Realtime Database, so nothing server-side knows whether GPS is streaming. The
-  // OTP is still what actually protects boarding; this is what stops a trip running
-  // dark, and the desk can always move a ride on by hand if a phone's GPS refuses.
-  function askForOtp(booking) {
-    if (!sharingLocation) {
-      setError('');
-      setLocationGateFor(booking);
-      return;
-    }
-    // SHARING ON IS NOT PROOF GPS IS FLOWING. The switch can be on with a revoked
-    // permission, a dead GPS chip or no network, and the rider's people would see a
-    // frozen cab. So a stale feed is called out — but it does NOT block boarding:
-    // refusing to start a ride because a phone can't see satellites would strand a
-    // real employee at the kerb, which is the worse failure. Warn, and let them on.
-    if (trackingFresh === false) {
-      setError(
-        'Location is on but no signal is reaching the server. Check GPS and network — ' +
-          'employees may not see this cab move.'
-      );
-    }
-    openOtpDialog(booking);
+  // The id is held in `confirmingIds` for the WHOLE round trip, not just while a
+  // spinner turns: that set is what stops the run's cab button appearing on an
+  // unconfirmed boarding, which is the difference between a driver waiting two
+  // seconds and a driver pulling away from someone who never actually boarded.
+  async function board(booking, code) {
+    setError('');
+    setConfirmingIds((prev) => new Set(prev).add(booking.id));
+    const res = await startRideWithOtp(booking.id, code);
+    setConfirmingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(booking.id);
+      return next;
+    });
+    return res;
   }
 
-  // The rider's code, typed in. A wrong one is refused by the rules, not by this
-  // screen — the failure is shown inside the dialog so the driver can simply try
-  // again with the trip still in front of them.
-  async function submitOtp() {
-    const booking = otpFor;
-    if (!booking) return;
-    setOtpError('');
-    setBusyId(booking.id);
-    const res = await startRideWithOtp(booking.id, otpEntry);
-    setBusyId(null);
-    if (res?.ok) {
-      setOtpFor(null);
-      setOtpEntry('');
-      return;
-    }
-    setOtpError(res?.message || 'Could not start the ride. Please try again.');
+  // Putting a mis-tapped no-show back. 'Arrived' is reachable from any status in
+  // firestore.rules, so this is an ordinary write — and it is the only way a
+  // driver can correct a claim that otherwise reaches the desk as fact.
+  async function undoNoShow(booking) {
+    await advance(booking, STATUS.ARRIVED);
   }
 
   // ONE SWITCH, BOTH DIRECTIONS. It was a button that navigated to another screen
@@ -211,23 +168,6 @@ export default function DriverHomeScreen({ navigation }) {
     if (!res?.ok) reportSharingFailure(res);
   }
 
-  // LOCATION BEFORE BOARDING. Tapping "Enter OTP" with sharing off opens this
-  // instead of the code pad; turning it on from here carries straight on to the
-  // code, so the driver taps twice and never goes looking for the switch.
-  async function turnOnLocationThenOtp() {
-    const booking = locationGateFor;
-    if (!booking) return;
-    setSharingBusy(true);
-    const res = await startSharingLocation();
-    setSharingBusy(false);
-    if (!res?.ok) {
-      reportSharingFailure(res);
-      return;
-    }
-    setLocationGateFor(null);
-    openOtpDialog(booking);
-  }
-
   // Flagging a no-show ends the trip and is visible to the transport desk, so it
   // asks first — one mis-tap used to be enough.
   async function confirmNoShow() {
@@ -252,18 +192,12 @@ export default function DriverHomeScreen({ navigation }) {
   // by assignedCabId explicitly too so a driver can never see another cab's
   // trips even if that ever changes.
   //
-  // Step 9 — PICKUP SEQUENCE. A carpool is several riders at the same time going
-  // the same way, and the driver needs them in the order they'll be collected,
-  // not in whatever order the desk happened to assign them. Trips are sorted by
-  // date, then pickup time, then rider name, and each gets a stop number within
-  // its run so "Stop 2 of 4" is meaningful.
-  //
   // THIS DAY'S RUN, NOT THE CAB'S HISTORY. The subscription used to be unbounded
   // and this list had no date filter either, so a driver opening My Trips saw last
   // week's completed and no-show trips above tonight's, each still offering its
-  // action buttons — "Enter OTP" on a six-day-old trip was one tap away.
+  // action buttons.
   //
-  // subscribeCabBookings now fetches only today and yesterday (DRIVER_WINDOW_DAYS),
+  // subscribeCabBookings fetches only today and yesterday (DRIVER_WINDOW_DAYS),
   // and this is the second, narrower gate on top of it:
   //
   //   • TODAY — everything, finished or not. A driver should be able to see the
@@ -273,10 +207,13 @@ export default function DriverHomeScreen({ navigation }) {
   //     "today only" rule would empty the screen mid-run. Yesterday's Completed and
   //     No-show rows are history, so they go.
   //
-  // Cancelled is excluded at every date — a stood-down ride is not a stop.
+  // Cancelled is excluded at every date — a stood-down ride is not a stop. It is
+  // also what makes a mid-run cancellation resolve itself: the rider drops out of
+  // the run entirely, so if they were the last one unresolved the run recomputes
+  // straight to ready with no stuck phase and nothing for the driver to clear.
   const today = todayKey();
   const yesterday = shiftDateKey(today, -1);
-  const trips = useMemo(() => {
+  const runs = useMemo(() => {
     const mine = bookings.filter((b) => {
       if (b.status === STATUS.CANCELLED) return false;
       if (b.assignedCabId !== currentUser?.cabId) return false;
@@ -285,186 +222,19 @@ export default function DriverHomeScreen({ navigation }) {
       if (date !== yesterday) return false;
       return b.status !== STATUS.COMPLETED && b.status !== STATUS.NO_SHOW;
     });
+    // Riders within a run are ordered by the SAME label the cards show, so the
+    // sequence on screen is one the driver can scan. It is NOT a route order and
+    // is no longer presented as one — the old "STOP 2 OF 4" implied a sequence
+    // the app has never modelled.
     const sorted = [...mine].sort((a, b) => {
       const byDate = String(a.date || '').localeCompare(String(b.date || ''));
       if (byDate) return byDate;
       const byTime = (timeToMinutes(a.shift) ?? 0) - (timeToMinutes(b.shift) ?? 0);
       if (byTime) return byTime;
-      // Same date and time (a carpool) — order by the SAME label the cards show, so
-      // the sequence on screen is one the driver can scan. Sorting by empId while
-      // displaying names put the list in an order nothing visible explained.
       return riderLabel(a).localeCompare(riderLabel(b));
     });
-    // Number the stops within each run (same date + time + direction).
-    // How many stops each run has, so a card can say "of 4".
-    const runs = {};
-    sorted.forEach((b) => {
-      const run = `${b.date}|${b.shift}|${b.direction}`;
-      runs[run] = (runs[run] || 0) + 1;
-    });
-    const seen = {};
-    return sorted.map((b) => {
-      const run = `${b.date}|${b.shift}|${b.direction}`;
-      seen[run] = (seen[run] || 0) + 1;
-      return { ...b, stopNumber: seen[run], stopCount: runs[run], runKey: run };
-    });
-  }, [bookings, currentUser?.cabId, today, yesterday]);
-
-  // ONE CARD ANSWERS THREE QUESTIONS, TOP TO BOTTOM: who am I collecting, where do
-  // I go, what do I press now. Everything that isn't one of those three is either
-  // gone from the card or shrunk to a secondary button.
-  //
-  // What was removed, and why none of it is a loss:
-  //   • "Helpline: 040-…" printed on every card — the number is now behind Help,
-  //     which dials it. A number you can't tap is worse than a button that calls.
-  //   • The direction spelled out as "Office → Home" — replaced by the IN/OUT badge
-  //     beside the name, which says the same thing in one glance-sized word.
-  //   • The status chip in the corner AND a separate status idea — one plain
-  //     "Status: …" line with a coloured dot does both jobs.
-  function renderTrip({ item }) {
-    const action = NEXT_ACTION[item.status];
-    const places = tripPlaceLabels(item); // real pickup/drop addresses
-    const busy = busyId === item.id;
-    const isIn = item.direction === 'Home → Office';
-    const statusColor = statusColors[item.status] || colors.muted;
-    // "Today · after 10:00 PM". Kept — and kept SHORT — because a driver can hold
-    // more than one day's trips at once, and two cards with the same rider and no
-    // date are indistinguishable. The raw ISO key ("2026-08-19") was the unreadable
-    // half; the shift bound is the useful half.
-    const day = relativeDayLabel(item.date) || prettyDateKey(item.date);
-
-    return (
-      <Card style={styles.card} mode="elevated">
-        <Card.Content>
-          {/* Only when the cab is actually sharing a run — "STOP 1 OF 1" is noise. */}
-          {item.stopCount > 1 ? (
-            <Text style={styles.stopLabel}>
-              STOP {item.stopNumber} OF {item.stopCount}
-            </Text>
-          ) : null}
-
-          {/* WHO. The largest text on the card: it is what the driver calls out at
-              a gate, so it outranks everything else here. */}
-          <View style={styles.nameRow}>
-            <Text variant="headlineSmall" style={styles.name} numberOfLines={2}>
-              {riderLabel(item)}
-            </Text>
-            {/* IN or OUT in one word. Two colours as well as two words, so the run's
-                direction registers before anything is read. */}
-            <View style={[styles.legBadge, { backgroundColor: isIn ? colors.primary : '#00695C' }]}>
-              <Text style={styles.legBadgeText}>{isIn ? 'IN' : 'OUT'}</Text>
-            </View>
-          </View>
-          <Text variant="bodySmall" style={styles.when}>
-            {/* The shift's own start/end — a deadline (pickup) or earliest-bound
-                (drop). Exact departure timing is the driver's call. */}
-            {day} · {item.shift}
-          </Text>
-
-          {/* WHERE. Label above value, not "Pickup: <address>" on one wrapping line —
-              a long address then reads as its own block instead of trailing off the
-              end of a sentence. */}
-          <View style={styles.place}>
-            <Text variant="labelSmall" style={styles.placeLabel}>
-              PICKUP
-            </Text>
-            <Text variant="bodyLarge" style={styles.placeValue}>
-              {places.pickup}
-            </Text>
-          </View>
-          <View style={styles.place}>
-            <Text variant="labelSmall" style={styles.placeLabel}>
-              DROP
-            </Text>
-            <Text variant="bodyLarge" style={styles.placeValue}>
-              {places.drop}
-            </Text>
-          </View>
-
-          <View style={styles.statusRow}>
-            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-            <Text variant="bodyMedium" style={styles.statusText}>
-              Status: <Text style={{ color: statusColor, fontFamily: font.bold }}>{item.status}</Text>
-            </Text>
-          </View>
-
-          {/* WHAT NOW. Full width, tall, and the only filled button on the card, so
-              there is never a question about which control is the next step. */}
-          {action ? (
-            <Button
-              mode="contained"
-              icon={action.icon}
-              style={styles.mainBtn}
-              contentStyle={styles.mainBtnContent}
-              labelStyle={styles.mainBtnLabel}
-              onPress={() => (action.otp ? askForOtp(item) : advance(item, action.next))}
-              loading={busy && !action.otp}
-              disabled={busy}
-            >
-              {action.label}
-            </Button>
-          ) : null}
-
-          {/* Said before the tap, not only after it. A driver at the kerb should know
-              location is off while they are reading the card, rather than finding out
-              when the code pad doesn't open. Only on the boarding step — this is the
-              one action it blocks. */}
-          {action?.otp && !sharingLocation ? (
-            <View style={styles.gateRow}>
-              <MaterialCommunityIcons
-                name="map-marker-off-outline"
-                size={15}
-                color={colors.warning}
-              />
-              <Text variant="bodySmall" style={styles.gateText}>
-                Turn on location sharing to start the ride.
-              </Text>
-            </View>
-          ) : null}
-
-          {/* At the pickup but the employee isn't here. Outlined and red — clearly a
-              real action, clearly not the normal one. */}
-          {item.status === 'Arrived' ? (
-            <Button
-              mode="outlined"
-              icon="account-alert"
-              textColor={colors.danger}
-              style={styles.noShowBtn}
-              contentStyle={styles.noShowBtnContent}
-              onPress={() => setNoShowFor(item)}
-              disabled={busy}
-            >
-              Employee Not Here
-            </Button>
-          ) : null}
-
-          {/* Both kept, both demoted. Navigate is the one a driver reaches for often
-              enough to stay visible as a button; Help holds the helpline, which is
-              needed rarely and used to take half a row on every card. */}
-          <View style={styles.secondaryRow}>
-            <Button
-              mode="outlined"
-              icon="navigation-variant"
-              compact
-              style={styles.navBtn}
-              onPress={() => navigateToPickup(item)}
-            >
-              Navigate
-            </Button>
-            <Button
-              mode="text"
-              icon="help-circle-outline"
-              compact
-              textColor={colors.muted}
-              onPress={() => setHelpOpen(true)}
-            >
-              Help
-            </Button>
-          </View>
-        </Card.Content>
-      </Card>
-    );
-  }
+    return groupRuns(sorted, departedKeys);
+  }, [bookings, currentUser?.cabId, today, yesterday, departedKeys]);
 
   return (
     <View style={styles.container}>
@@ -590,10 +360,33 @@ export default function DriverHomeScreen({ navigation }) {
         My Trips
       </Text>
 
+      {/* ONE ITEM PER RUN, riders mapped inside it rather than a nested list —
+          a FlatList inside a FlatList warns in React Native and buys nothing at
+          the four-to-seven rows a cab actually holds. */}
       <FlatList
-        data={trips}
-        keyExtractor={(item) => item.id}
-        renderItem={renderTrip}
+        data={runs}
+        keyExtractor={(run) => run.key}
+        renderItem={({ item: run }) => (
+          <DriverRunSection
+            run={run}
+            departed={run.departed}
+            onDepart={() => setDepartedKeys((prev) => new Set(prev).add(run.key))}
+            sharingLocation={sharingLocation}
+            trackingFresh={trackingFresh}
+            onTurnOnLocation={() => toggleSharing(true)}
+            sharingBusy={sharingBusy}
+            confirmingIds={confirmingIds}
+            busyId={busyId}
+            runBusy={runBusyKey === run.key}
+            onArrived={(b) => advance(b, STATUS.ARRIVED)}
+            onBoard={board}
+            onNoShow={setNoShowFor}
+            onUndoNoShow={undoNoShow}
+            onDropped={(b) => advance(b, STATUS.COMPLETED)}
+            onRunAction={(ids, status) => runAction(run.key, ids, status)}
+            onHelp={() => setHelpOpen(true)}
+          />
+        )}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -609,56 +402,6 @@ export default function DriverHomeScreen({ navigation }) {
       />
 
       <Portal>
-        {/* The rider's code. Asked for at the kerb, so: one big numeric field,
-            no keyboard hunting, and Enter submits. */}
-        <Dialog visible={!!otpFor} onDismiss={() => setOtpFor(null)} style={styles.dialog}>
-          <Dialog.Title>Start the ride</Dialog.Title>
-          <Dialog.Content>
-            <Text variant="bodyMedium" style={styles.otpIntro}>
-              Ask {otpFor ? riderLabel(otpFor) : 'the employee'} for the {RIDE_OTP_LENGTH}-digit
-              code shown in their app, and type it in below.
-            </Text>
-            <TextInput
-              mode="outlined"
-              label={`${RIDE_OTP_LENGTH}-digit code`}
-              value={otpEntry}
-              onChangeText={(t) =>
-                setOtpEntry(t.replace(/[^0-9]/g, '').slice(0, RIDE_OTP_LENGTH))
-              }
-              keyboardType="number-pad"
-              autoFocus
-              maxLength={RIDE_OTP_LENGTH}
-              style={styles.otpInput}
-              contentStyle={styles.otpInputText}
-              onSubmitEditing={submitOtp}
-              error={!!otpError}
-              disabled={!!busyId}
-            />
-            {otpError ? (
-              <Text variant="bodySmall" style={styles.otpError}>
-                {otpError}
-              </Text>
-            ) : (
-              <Text variant="bodySmall" style={styles.otpHint}>
-                If the employee isn't here, close this and flag a no-show instead.
-              </Text>
-            )}
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setOtpFor(null)} disabled={!!busyId}>
-              Cancel
-            </Button>
-            <Button
-              mode="contained"
-              onPress={submitOtp}
-              loading={!!busyId}
-              disabled={!!busyId || otpEntry.length !== RIDE_OTP_LENGTH}
-            >
-              Start ride
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-
         {/* Plain words. It was "Flag a no-show?" over two clauses about what the
             desk would see — the driver is standing at a gate deciding whether
             somebody is there. The rider's NAME stays in the question, because a
@@ -686,39 +429,6 @@ export default function DriverHomeScreen({ navigation }) {
               disabled={!!busyId}
             >
               Confirm No-show
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-
-        {/* THE LOCATION PROMPT. One obvious button, and it continues to the code on
-            its own — "Not now" exists because a driver whose GPS is failing still has
-            to be able to reach the desk rather than being stuck on this dialog. */}
-        <Dialog
-          visible={!!locationGateFor}
-          onDismiss={() => setLocationGateFor(null)}
-          style={styles.dialog}
-        >
-          <Dialog.Title>Turn on location?</Dialog.Title>
-          <Dialog.Content>
-            <Text variant="bodyLarge">
-              Location sharing must be on before the ride starts.
-            </Text>
-            <Text variant="bodySmall" style={styles.dialogNote}>
-              The employee and the transport desk can then see the cab moving.
-            </Text>
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setLocationGateFor(null)} disabled={sharingBusy}>
-              Not now
-            </Button>
-            <Button
-              mode="contained"
-              icon="crosshairs-gps"
-              onPress={turnOnLocationThenOtp}
-              loading={sharingBusy}
-              disabled={sharingBusy}
-            >
-              Turn On Location
             </Button>
           </Dialog.Actions>
         </Dialog>
@@ -825,92 +535,14 @@ const styles = StyleSheet.create({
 
   sectionTitle: { marginBottom: spacing.md, color: colors.text },
   listContent: { paddingBottom: spacing.xl },
-  card: {
-    marginBottom: spacing.lg,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadow.sm,
-  },
 
-  // "STOP 1 OF 2" — small, spaced, and above the name, so a carpool reads as a
-  // sequence. It replaced a numbered circle plus a repeat of the same words.
-  stopLabel: {
-    color: colors.primary,
-    fontFamily: font.bold,
-    fontSize: 11,
-    letterSpacing: 1.1,
-    marginBottom: spacing.xs,
-  },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   // One definition for both the header name and the card name — they were two
   // keys with the same name in this object, so the second silently won anyway.
   name: { fontFamily: font.bold, color: colors.text, flex: 1, minWidth: 0 },
-  legBadge: {
-    borderRadius: radius.xs,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 3,
-    flexShrink: 0,
-  },
-  legBadgeText: {
-    color: '#FFFFFF',
-    fontFamily: font.bold,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.7,
-  },
-  when: { color: colors.muted, marginTop: 2 },
 
-  // The address block: label above value, in its own tinted tray. A driver
-  // reading this at a kerb needs the street to jump out of the card.
-  place: {
-    marginTop: spacing.lg,
-    backgroundColor: colors.surfaceAlt,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  placeLabel: {
-    color: colors.muted,
-    letterSpacing: 0.9,
-    textTransform: 'uppercase',
-  },
-  placeValue: { color: colors.text, marginTop: 2, lineHeight: 23, fontFamily: font.medium },
 
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.lg,
-  },
-  statusDot: { width: 9, height: 9, borderRadius: radius.pill },
-  statusText: { color: colors.muted },
 
-  // THE ONE BIG BUTTON. Tall and full width — pressed one-handed, often in the
-  // dark, sometimes through gloves.
-  mainBtn: { marginTop: spacing.lg, borderRadius: radius.md, ...shadow.brand },
   mainBtnContent: { paddingVertical: 10 },
-  mainBtnLabel: { fontSize: 16, fontFamily: font.semibold, letterSpacing: 0.2 },
-  gateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  gateText: { color: colors.warning, flex: 1 },
-  noShowBtn: { marginTop: spacing.md, borderColor: colors.danger, borderRadius: radius.md },
-  noShowBtnContent: { paddingVertical: 6 },
-  // Navigate and Help, below the actions and plainly smaller than them.
-  secondaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.lg,
-  },
-  navBtn: { borderColor: colors.borderStrong, borderRadius: radius.md },
 
   dialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
   dialogNote: { color: colors.muted, marginTop: spacing.md, lineHeight: 19 },
@@ -921,13 +553,6 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: font.bold,
   },
-  otpIntro: { marginBottom: spacing.lg, color: colors.textSecondary },
-  otpInput: { backgroundColor: colors.surface },
-  // Wide-spaced and large: this is read aloud across a car window and typed in
-  // the dark, often by someone still holding the wheel.
-  otpInputText: { fontSize: 26, letterSpacing: 8, textAlign: 'center' },
-  otpError: { color: colors.danger, marginTop: spacing.sm },
-  otpHint: { color: colors.muted, marginTop: spacing.sm },
   empty: { alignItems: 'center', marginTop: 48 },
   emptyText: { color: colors.text, marginTop: spacing.sm, fontFamily: font.semibold },
   emptyHint: {

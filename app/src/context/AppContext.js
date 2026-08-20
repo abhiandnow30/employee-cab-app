@@ -53,6 +53,7 @@ import {
   assignCabToBooking,
   assignCabToBookings,
   setBookingStatus,
+  setBookingStatuses,
   startRideWithOtp as startRideWithOtpSvc,
   markBookingNoShow,
   requestCancelBooking,
@@ -91,6 +92,7 @@ import {
   addRiderForDay, canonicalRoute, routeKey,
 } from '../services/roster';
 import { ridesForDate, bookingFromRide, excuseResolvedRequests } from '../services/rides';
+import { groupRuns, activeRun, idsToMarkOnTheWay } from '../services/driverRun';
 import {
   createChangeRequest, subscribeMyChangeRequests, subscribeAllChangeRequests,
   resolveCancelDay, resolveCancelRide, resolveRecode, resolveNoop,
@@ -99,12 +101,14 @@ import {
 import {
   notify, notifyMany, subscribeMyNotifications, markRead, markAllRead,
   NOTIFY, cabAssignedMessage, rideCancelledMessage, requestResolvedMessage,
+  noShowMessage,
 } from '../services/notifications';
 import { queueCabAssignedEmails } from '../services/mail';
 import {
   REQUEST_STATUS, EFFECT, requestMeta,
 } from '../data/changeRequests';
 import { firestore } from '../services/firebase';
+import { SUPPORT_HELPLINE } from '../branding';
 import {
   toDateTime, canRequestCancel, todayKey, shiftDateKey,
   cancelDeadline,
@@ -934,6 +938,11 @@ export function AppProvider({ children }) {
     setSharingCoords(null);
     setSharingSince(null);
     setLastFixAt(null);
+    // Riders are NOT reverted — a cab that stopped broadcasting has not turned
+    // around, and "On the way → Cab assigned" isn't a transition the rules even
+    // allow a driver to make. Clearing the claim set only means a later restart
+    // is free to re-attempt anything the first flip failed to write.
+    markedOnTheWay.current.clear();
   }
 
   // Start streaming this device's location for the driver's cab. Returns
@@ -1049,6 +1058,63 @@ export function AppProvider({ children }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.uid, currentUser?.role, currentUser?.cabId]);
+
+  // SHARING IS THE IGNITION.
+  //
+  // Turning the switch on is what puts a cab's riders at "On the way" — no
+  // driver tap sets that status any more. Before this the two were unrelated, so
+  // a driver could tap "Start Trip" while broadcasting nothing and the rider sat
+  // watching a map with no cab on it. They are one fact now, and it is the fact
+  // the driver was going to perform anyway.
+  //
+  // AN EFFECT, NOT A LINE INSIDE startSharingLocation(), for three reasons that
+  // are each a bug on their own:
+  //   • the resume-after-restart path starts sharing before `bookings` has come
+  //     back from Firestore, so an inline write would mark nobody at all;
+  //   • nothing here may sit in the path of the GPS starting — if this write is
+  //     refused, sharing must be unaffected and the trip still runs;
+  //   • a rider the desk adds to the cab mid-run would never be marked, because
+  //     the switch was flipped before they existed. Reacting to `bookings` picks
+  //     them up.
+  //
+  // SCOPED TO TODAY'S ACTIVE RUN, NOT THE CAB. A driver holds their pickup and
+  // their drop at the same time — both are in `bookings` all day. Marking the
+  // whole cab at 8 PM would tell the 10 PM riders their cab was on its way, and
+  // would quietly close their cancellation window, because rideCancelState()
+  // treats "On the way" as the point of no return. The day filter also stops a
+  // run left half-finished yesterday being mistaken for tonight's work.
+  const markedOnTheWay = useRef(new Set());
+
+  useEffect(() => {
+    if (!sharingLocation) return;
+    if (currentUser?.role !== 'driver' || !currentUser?.cabId) return;
+
+    const today = todayKey();
+    const mine = bookings.filter(
+      (b) => b.assignedCabId === currentUser.cabId && b.status !== STATUS.CANCELLED
+    );
+    const run = activeRun(groupRuns(mine), today);
+    if (!run) return;
+
+    // Only riders still at "Cab assigned" — see the note on idsToMarkOnTheWay.
+    // firestore.rules would accept "On the way" written over "On board", so this
+    // filter is what stops a re-flip of the switch walking a run backwards.
+    const ids = idsToMarkOnTheWay(run.riders).filter((id) => !markedOnTheWay.current.has(id));
+    if (!ids.length) return;
+
+    // Claimed BEFORE the write, because this write itself changes `bookings` and
+    // re-runs this effect — without the claim a second identical batch would go
+    // out while the first was still in flight.
+    ids.forEach((id) => markedOnTheWay.current.add(id));
+    setBookingStatuses(ids, STATUS.ON_THE_WAY).catch((e) => {
+      console.warn('[trip] could not mark the run on its way:', e?.message);
+      // Released after a pause rather than retried in a loop: the next snapshot
+      // or the next flip of the switch will try again, while a write that is
+      // being refused outright cannot hammer Firestore.
+      setTimeout(() => ids.forEach((id) => markedOnTheWay.current.delete(id)), 15000);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharingLocation, bookings, currentUser?.uid, currentUser?.role, currentUser?.cabId]);
 
   // RESUME AFTER A RESTART.
   //
@@ -1590,6 +1656,41 @@ export function AppProvider({ children }) {
     }
   }
 
+  // The run-level version: one status onto a whole cab, in one commit. Used by
+  // the driver's cab-level buttons — "At the office", "Trip complete" — and by
+  // the location-sharing hook below.
+  //
+  // Callers pass ids ALREADY narrowed by current status (the selectors in
+  // services/driverRun.js do that). This is not belt-and-braces: a batch is
+  // atomic, so one rider the rules would refuse takes the whole cab down with
+  // them.
+  //
+  // WHICH IS WHY THERE IS A FALLBACK. If the batch is refused anyway — a rider
+  // moved to another cab a second ago, a status that changed between render and
+  // tap — retrying each booking on its own means one stale trip cannot strand a
+  // driver at the office with a button that will never work. It reports what
+  // actually landed rather than claiming success.
+  async function updateBookingStatuses(bookingIds, status) {
+    const ids = [...new Set((bookingIds || []).filter(Boolean))];
+    if (!ids.length) return { ok: true, count: 0 };
+    try {
+      await setBookingStatuses(ids, status);
+      return { ok: true, count: ids.length };
+    } catch (e) {
+      const settled = await Promise.allSettled(ids.map((id) => setBookingStatus(id, status)));
+      const count = settled.filter((r) => r.status === 'fulfilled').length;
+      if (count === ids.length) return { ok: true, count };
+      console.warn('[trip] batch status write fell back;', count, 'of', ids.length, 'landed');
+      return {
+        ok: false,
+        count,
+        message: count
+          ? `Updated ${count} of ${ids.length} trips. Refresh and try the rest.`
+          : failure(e, 'Could not update the trips.').message,
+      };
+    }
+  }
+
   // The driver types in the six digits the rider reads off their own screen, and
   // the trip becomes "On board". This is the ONLY way into that status: the check
   // is in firestore.rules against a document the driver cannot read, so a wrong
@@ -1612,10 +1713,43 @@ export function AppProvider({ children }) {
   }
 
   // Driver flags a no-show: reached the pickup but the employee wasn't there.
-  // Shows up flagged on the admin's Bookings screen.
+  //
+  // WHO FINDS OUT, AND HOW. A no-show is a claim about a person made by someone
+  // else, and until this it was silent — it appeared on the desk's No-Shows
+  // screen and nowhere else, so the rider only learned of it if somebody
+  // happened to mention it. Now:
+  //
+  //   • THE RIDER gets an in-app notification, because they are the only one who
+  //     can say the claim is wrong and they can only do that if they are told
+  //     while they still remember the evening.
+  //   • THE DESK (admin and coordinator) get a live count on their No-Shows menu
+  //     row — the same badge mechanism Address Requests and New Cab Requests
+  //     already use. They have no notification inbox of their own, and the
+  //     driver's app cannot address one to them anyway: the rules deliberately
+  //     stop a driver reading employee profiles, so it cannot discover who the
+  //     admins are. See `menuCounts`.
+  //
+  // BEST-EFFORT, AND DELIBERATELY AFTER THE FACT. The flag is already saved by
+  // the time this runs; a failed notification must never read as a failed
+  // no-show, or a driver stands at a kerb tapping a button that has in fact
+  // already worked.
   async function markNoShow(bookingId) {
     try {
       await markBookingNoShow(bookingId);
+      const booking = bookings.find((b) => b.id === bookingId);
+      if (booking?.employeeId) {
+        const msg = noShowMessage(booking, SUPPORT_HELPLINE);
+        notify({
+          employeeId: booking.employeeId,
+          type: NOTIFY.NO_SHOW,
+          title: msg.title,
+          body: msg.body,
+          // The rule that lets a driver write this reads the booking back to
+          // check the rider is really on their cab, so the id is not optional
+          // decoration — without it the write is refused.
+          payload: { bookingId },
+        }).catch((e) => console.warn('[notify] no-show notice failed:', e?.message));
+      }
       return { ok: true };
     } catch (e) {
       return failure(e, 'Could not flag the no-show.');
@@ -2560,6 +2694,25 @@ export function AppProvider({ children }) {
         CabRequests: cabServiceRequests.filter(
           (r) => r.status === CAB_REQUEST_STATUS.PENDING
         ).length,
+        // HOW THE DESK IS TOLD ABOUT A NO-SHOW. A driver marking someone absent
+        // used to be silent to everyone; this is the desk's half of fixing that
+        // (the rider's half is a notification — see markNoShow).
+        //
+        // A BADGE RATHER THAN A NOTIFICATION, for a reason that is not laziness:
+        // neither desk role has a notification inbox, and the driver's app could
+        // not address one to them if they did — the rules deliberately stop a
+        // driver reading employee profiles, so it cannot find out who the admins
+        // are. The desk already reads every booking, so the count is derivable
+        // on their own device with no write and no rules change at all.
+        //
+        // TODAY ONLY, and that is what makes it usable. The other counts here
+        // clear when the item is actioned; a no-show is never "actioned", so an
+        // all-time count would be a number that only ever grows and stops being
+        // read. Scoped to today it means "tonight's runs have lost this many
+        // people", and it empties itself at midnight.
+        NoShows: bookings.filter(
+          (b) => b.status === STATUS.NO_SHOW && String(b.date || '') === todayKey()
+        ).length,
       }
     : {};
 
@@ -2683,6 +2836,7 @@ export function AppProvider({ children }) {
     rejectCancel,
     pendingCancelRequests,
     updateBookingStatus,
+    updateBookingStatuses,
     startRideWithOtp,
     markNoShow,
     // The driver's own cab (read-only)

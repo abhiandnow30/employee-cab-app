@@ -43,6 +43,10 @@ const ICON = {
   // Same icon as the "Cab Service" drawer item (AppDrawer.js), so the notice
   // and the screen it's about read as the same thing.
   [NOTIFY.CAB_SERVICE_RESOLVED]: { icon: 'car-clock', color: colors.primary },
+  // The one notice raised by a driver rather than the desk, and the one most
+  // likely to be disputed — so it reads as an alert, in the same red the
+  // No-show chip uses everywhere else, rather than as routine news.
+  [NOTIFY.NO_SHOW]: { icon: 'account-alert', color: colors.danger },
 };
 
 export default function NotificationsScreen({ navigation }) {
@@ -52,7 +56,8 @@ export default function NotificationsScreen({ navigation }) {
     const style = ICON[item.type] || { icon: 'bell-outline', color: colors.muted };
     const unread = !item.readAt;
     // A cab-assignment notice is worth acting on, so tapping it opens the ride.
-    const target = item.type === NOTIFY.CAB_ASSIGNED ? 'MyRides' : null;
+    const target =
+      item.type === NOTIFY.CAB_ASSIGNED || item.type === NOTIFY.NO_SHOW ? 'MyRides' : null;
 
     return (
       <Pressable

@@ -34,6 +34,12 @@ export const NOTIFY = {
   ADDRESS_RESOLVED: 'address_resolved',
   ROSTER_PUBLISHED: 'roster_published',
   CAB_SERVICE_RESOLVED: 'cab_service_resolved',
+  // THE ONLY TYPE A DRIVER CAN SEND. Every other notification in this list is
+  // raised by the desk; this one is raised from the kerb, by the person who
+  // decided the rider wasn't there. firestore.rules is written around that
+  // asymmetry — see the `notifications` create rule, which lets a driver file
+  // this type and nothing else, for a rider on their own cab and nobody else.
+  NO_SHOW: 'no_show',
 };
 
 // Create one notification. `payload` carries whatever the screen needs to deep
@@ -144,6 +150,26 @@ export function rideCancelledMessage(ride, note) {
     body:
       `Your ${ride.direction} ride on ${ride.date} has been cancelled.` +
       (note ? `\n${note}` : ''),
+  };
+}
+
+// The driver reached the pickup and marked the rider absent.
+//
+// WORDED AS A CLAIM, NOT A VERDICT — "the driver marked", not "you did not turn
+// up". This is one person's account of what happened at a kerb, and it is the
+// only notification in this file that is not the desk reporting its own
+// decision. If it is wrong, the rider is the one who knows, and they can only
+// say so if they are told at the time rather than discovering it in a report
+// weeks later. Hence the helpline: this message has to be actionable, because
+// the rider cannot change the status themselves.
+export function noShowMessage(ride, helpline) {
+  return {
+    title: `Marked as no-show — ${ride?.date || 'today'}`,
+    body:
+      `The driver marked you as not present for your ${
+        ride?.direction || 'cab'
+      } ride${ride?.shift ? ` at ${ride.shift}` : ''}.` +
+      (helpline ? `\nIf that isn't right, call the transport desk on ${helpline}.` : ''),
   };
 }
 

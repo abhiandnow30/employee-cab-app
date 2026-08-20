@@ -97,6 +97,28 @@ export function tripPickupPoint(booking) {
   };
 }
 
+// Where the DRIVER delivers the employee — the exact mirror of tripPickupPoint:
+//   • Home → Office  → the fixed office
+//   • Office → Home  → the employee's home
+//
+// This exists because the driver's Navigate button called tripPickupPoint no
+// matter what the trip was doing, so on a drop run — where the pickup IS the
+// office — it routed a cab full of people back to the car park they had just
+// pulled out of. Which place the driver needs next changes the moment someone
+// gets in, so there have to be two functions and the caller has to choose.
+//
+// Same contract as tripPickupPoint: `coords` may be null when only an address
+// string is known, and openDirections() then falls back to a text search.
+export function tripDropPoint(booking) {
+  if (booking?.direction === 'Office → Home') {
+    return {
+      coords: homePin(booking?.employeeHome),
+      label: homeLabel(booking) || 'Employee home',
+    };
+  }
+  return { coords: OFFICE, label: booking?.officeLocation || OFFICE.label };
+}
+
 // Human-readable PICKUP and DROP labels for a booking. Resolves the generic
 // word "Home" to the employee's real address so the driver knows where to go:
 //   • Home → Office → pickup = employee's home,   drop = office
