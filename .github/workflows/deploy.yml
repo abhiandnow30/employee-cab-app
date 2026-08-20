@@ -1,0 +1,80 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAR: release.tar.gz
+  DEPLOY_DIR: /opt/employee-cab-app
+  IMAGE_NAME: employee-cab-app-app
+  CONTAINER_NAME: employee-cab-app
+  # 8090 is bound to 127.0.0.1 only on the server, so the health check
+  # has to run over the SSH session (see remote_deploy.sh), not from the runner.
+  HEALTHCHECK_URL: http://127.0.0.1:8090
+
+jobs:
+  verify:
+    name: Syntax / sanity check (fails fast, touches nothing on the server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+
+      # This repo has no eslint/jest config yet (app/package.json has no lint/test
+      # script). expo-doctor + npm ci is the fastest available fail-fast check that
+      # doesn't touch the server. Add a real lint/test script to strengthen this stage.
+      - name: Expo project sanity check
+        working-directory: app
+        run: npx expo-doctor
+
+  deploy:
+    name: Build, deploy, health-check, auto-rollback
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # git archive works with no outbound internet and no git installed on the
+      # server, and only ever contains tracked files -- .env and other untracked
+      # files on the server are never touched by what we send.
+      - name: Package release from git
+        run: git archive --format=tar.gz -o ${{ env.RELEASE_TAR }} HEAD
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Copy release tarball to server
+        run: |
+          scp -i ~/.ssh/deploy_key -P "${{ secrets.SSH_PORT }}" -o StrictHostKeyChecking=yes \
+            "${{ env.RELEASE_TAR }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ env.DEPLOY_DIR }}/${{ env.RELEASE_TAR }}"
+
+      # All of: overlay new files -> build -> tag previous -> swap -> health-check
+      # -> rollback-on-failure happens in ONE ssh session on the server, driven by
+      # deploy/remote_deploy.sh. See that script for the rollback logic itself.
+      - name: Deploy with automatic rollback on failure
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SSH_PORT }}" -o StrictHostKeyChecking=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            bash -s -- "${{ env.DEPLOY_DIR }}" "${{ env.RELEASE_TAR }}" "${{ env.IMAGE_NAME }}" \
+                       "${{ env.CONTAINER_NAME }}" "${{ env.HEALTHCHECK_URL }}" \
+            < deploy/remote_deploy.sh
