@@ -20,9 +20,9 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { subscribeEmployees } from '../../services/profile';
+import { subscribeEmployees, subscribeInvites } from '../../services/profile';
 import useSyncedDraft from '../../utils/useSyncedDraft';
-import { colors, radius, shadow, spacing } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 function draftOf(emp, homeAddressOf) {
   return {
@@ -330,6 +330,13 @@ export default function EmployeeManagementScreen() {
     routeOptions,
   } = useApp();
   const [employees, setEmployees] = useState([]);
+  // People HR (or a roster upload) has invited who have never signed in. They
+  // have NO uid yet — a profile only exists from their first Microsoft sign-in —
+  // so they are not in `employees` and cannot be edited here. Listed anyway,
+  // because leaving them out is what made a roster upload look like it had
+  // silently dropped somebody: their invite was filed, and this screen showed no
+  // sign of it until they happened to sign in.
+  const [invites, setInvites] = useState([]);
   const [error, setError] = useState('');
   const [snack, setSnack] = useState('');
   const [addOpen, setAddOpen] = useState(false);
@@ -339,6 +346,23 @@ export default function EmployeeManagementScreen() {
 
   useEffect(() => {
     const unsub = subscribeEmployees(setEmployees, (e) => setError(e.message));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    // EMPLOYEE INVITES ONLY. An invite carries the role it was filed under
+    // (adminCreateInvite writes it, and claimInvite copies it onto the profile),
+    // so this has to match on that role exactly — drivers are never invited at
+    // all, and coordinators are created on their own page, so anything else on
+    // this list would be someone who does not belong on an employee screen.
+    //
+    // Non-fatal on error: the screen then shows real employees only, which is
+    // what it does anyway once everyone has signed in. Not worth blocking the
+    // whole page over.
+    const unsub = subscribeInvites(
+      (list) => setInvites(list.filter((i) => (i.role || 'employee') === 'employee')),
+      () => setInvites([])
+    );
     return unsub;
   }, []);
 
@@ -365,6 +389,21 @@ export default function EmployeeManagementScreen() {
       return words.every((w) => haystack.includes(w));
     });
   }, [employees, search]);
+
+  // The same search narrows the pending list, so "where is Abhilasha" finds her
+  // whether or not she has signed in yet.
+  const shownInvites = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return invites;
+    const words = q.split(/\s+/);
+    return invites.filter((i) => {
+      const haystack = [i.name, i.email, i.empId, i.phone, i.route, i.address]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return words.every((w) => haystack.includes(w));
+    });
+  }, [invites, search]);
 
   async function handleSave(uid, fields) {
     setError('');
@@ -443,6 +482,43 @@ export default function EmployeeManagementScreen() {
             />
           )}
           contentContainerStyle={styles.list}
+          /* Invited, never signed in. Shown ABOVE the real employees rather than
+             mixed into them: nothing on these can be edited, because there is no
+             employees/<uid> document to write to yet. What they answer is "where
+             did the person I just uploaded go?" — and they take themselves off
+             the list the moment that person signs in for the first time. */
+          ListHeaderComponent={
+            shownInvites.length ? (
+              <View style={styles.pendingBox}>
+                <View style={styles.pendingHead}>
+                  <MaterialCommunityIcons
+                    name="account-clock-outline"
+                    size={17}
+                    color={colors.primary}
+                  />
+                  <Text variant="labelLarge" style={styles.pendingTitle}>
+                    {shownInvites.length} invited · waiting for their first sign-in
+                  </Text>
+                </View>
+                <Text variant="bodySmall" style={styles.pendingHint}>
+                  Their details are saved. They become full profiles — and their
+                  shifts import — the first time they open the app and choose
+                  &ldquo;Sign in with Microsoft&rdquo;. Nothing to do here.
+                </Text>
+                {shownInvites.map((i) => (
+                  <View key={i.email} style={styles.pendingRow}>
+                    <Text variant="bodySmall" style={styles.pendingName} numberOfLines={1}>
+                      {i.name || i.email}
+                      {i.empId ? ` · ${i.empId}` : ''}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.pendingEmail} numberOfLines={1}>
+                      {i.email}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.empty}>
               <MaterialCommunityIcons
@@ -528,6 +604,30 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, backgroundColor: colors.surface },
   searchCount: { color: colors.muted },
   list: { padding: spacing.lg, paddingBottom: spacing.xxl },
+
+  // Invited-but-not-signed-in block, above the editable employee cards. A brand
+  // tint rather than a warning colour: nobody has done anything wrong and there
+  // is nothing to action — it is answering "where did the person I just uploaded
+  // go?", and it removes itself as each of them signs in.
+  pendingBox: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.primarySoft,
+    backgroundColor: colors.primarySofter,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  pendingHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  pendingTitle: { color: colors.primaryDark, fontFamily: font.semibold },
+  pendingHint: {
+    color: colors.textSecondary,
+    lineHeight: 19,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  pendingRow: { paddingVertical: spacing.xs },
+  pendingName: { fontFamily: font.semibold, color: colors.text },
+  pendingEmail: { color: colors.muted },
 
   card: {
     marginBottom: spacing.md,

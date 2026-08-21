@@ -753,9 +753,13 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             buttons={[
               {
                 value: 'in',
-                label: 'IN',
+                // SHIFT VOCABULARY, NOT DIRECTIONAL. "IN" and "OUT" describe the
+                // cab's direction; "Login" and "Logout" describe the employee's
+                // shift, which is how the desk and the roster already talk about
+                // these two rides. Same filter either way.
+                label: 'Login',
                 icon: 'home-export-outline',
-                accessibilityLabel: 'IN — Home to Office pickups only',
+                accessibilityLabel: 'Login — the ride to work, Home to Office',
                 // Colours the ICON as well as the text; the weight comes from
                 // labelStyle below.
                 checkedColor: '#FFFFFF',
@@ -768,9 +772,9 @@ export default function CoordinatorDashboardScreen({ navigation }) {
               },
               {
                 value: 'out',
-                label: 'OUT',
+                label: 'Logout',
                 icon: 'home-import-outline',
-                accessibilityLabel: 'OUT — Office to Home drops only',
+                accessibilityLabel: 'Logout — the ride home, Office to Home',
                 checkedColor: '#FFFFFF',
                 uncheckedColor: colors.muted,
                 style: legFilter === 'out' ? styles.legSegOn : styles.legSegOff,
@@ -861,8 +865,8 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                    press and how many rides are waiting behind it. */
                 <Text variant="bodySmall" style={styles.emptyHint}>
                   {legFilter === 'in'
-                    ? `${dayStats.outbound} drop${dayStats.outbound === 1 ? '' : 's'} today — press OUT to see ${dayStats.outbound === 1 ? 'it' : 'them'}.`
-                    : `${dayStats.inbound} pickup${dayStats.inbound === 1 ? '' : 's'} today — press IN to see ${dayStats.inbound === 1 ? 'it' : 'them'}.`}
+                    ? `${dayStats.outbound} drop${dayStats.outbound === 1 ? '' : 's'} today — press Logout to see ${dayStats.outbound === 1 ? 'it' : 'them'}.`
+                    : `${dayStats.inbound} pickup${dayStats.inbound === 1 ? '' : 's'} today — press Login to see ${dayStats.inbound === 1 ? 'it' : 'them'}.`}
                 </Text>
               ) : null}
             </View>
@@ -1266,15 +1270,19 @@ const styles = StyleSheet.create({
   // Tighter gutters so IN/OUT and "Add a rider" still share one row on a 360px
   // screen. flexWrap above is the safety net for anything narrower.
   controlsMobile: { gap: spacing.sm, paddingHorizontal: spacing.sm },
-  // Two short segments. It no longer shares the row with a grouping control, so it
-  // takes only the width it needs and the filter/Add-a-rider buttons keep the rest.
-  // 200, not 170: at 170 each half was ~85px and a bold "OUT" beside its icon
-  // ellipsised to "O…", which is the one word on the control that has to be legible.
-  segmentedLeg: { flexGrow: 0, flexShrink: 0, minWidth: 200 },
-  // 176 is the floor that still fits a bold "OUT" beside its icon — the reason
-  // the desktop minimum is 200 in the first place. Any narrower and the label
-  // ellipsises, so below this the row wraps rather than the words breaking.
-  segmentedLegMobile: { minWidth: 176 },
+  // Two segments, sized to their WORDS. The labels used to be "IN" and "OUT" and
+  // 200px was already the floor — at 170 a bold "OUT" beside its icon ellipsised
+  // to "O…". "Login"/"Logout" are far wider, so the minimum moved with them.
+  //
+  // Measured in the shipped font rather than guessed (Poppins SemiBold 14):
+  // IN 15px, OUT 29px, Login 38px, Logout 49px. At 290 each segment has ~95px
+  // for its label and at 250 about ~75px, so the longest sits with room to
+  // spare. Do not tighten these without re-measuring — that is the exact bug
+  // the paragraph above records, and now with a longer word to lose.
+  segmentedLeg: { flexGrow: 0, flexShrink: 0, minWidth: 290 },
+  // The phone floor. Below this the row wraps — which it is already set up to do
+  // (`controls` has flexWrap) — rather than the labels breaking.
+  segmentedLegMobile: { minWidth: 250 },
   // Pushed to the far right of the row, away from IN/OUT. Those two decide which
   // list is on screen; this one opens a dialog and changes the day's roster — sat
   // directly beside them it read as a third segment of the same control. The gap

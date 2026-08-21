@@ -110,6 +110,11 @@ export const ADMIN_DRAWER_ITEMS = [
   // whereas everything above it is opened daily or weekly. It sat second, directly
   // under Upload Roster, which put the rarest screen in the menu at the top of it.
   // Second-from-last keeps it a click away without it being in the way.
+  // What actually ran, over a week or a month. HR had no way to answer "how many
+  // rides did we do last month" — the day board shows one day and All Bookings
+  // shows rows, not counts. Sits with the other look-back screens rather than
+  // with the daily work.
+  { label: 'Reports', icon: 'chart-box-outline', screen: 'Reports' },
   { label: 'Shift Timings', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
 ];

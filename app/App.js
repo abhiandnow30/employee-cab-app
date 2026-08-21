@@ -52,6 +52,7 @@ import DriverShareLocationScreen from './src/screens/driver/DriverShareLocationS
 import MyScheduleScreen from './src/screens/employee/MyScheduleScreen';
 import RosterUploadScreen from './src/screens/admin/RosterUploadScreen';
 import ShiftPolicyScreen from './src/screens/admin/ShiftPolicyScreen';
+import ReportsScreen from './src/screens/admin/ReportsScreen';
 import CoordinatorDashboardScreen from './src/screens/coordinator/CoordinatorDashboardScreen';
 import RequestsScreen from './src/screens/coordinator/RequestsScreen';
 import ChangeRequestScreen from './src/screens/employee/ChangeRequestScreen';
@@ -94,6 +95,7 @@ const linking = {
       // HR / Admin
       RosterUpload: 'roster-upload',
       ShiftPolicy: 'shift-policy',
+      Reports: 'reports',
       Bookings: 'bookings',
       ManageFleet: 'fleet',
       ManageCoordinators: 'coordinators',
@@ -729,6 +731,11 @@ function RootNavigator() {
                   name="ShiftPolicy"
                   component={ShiftPolicyScreen}
                   options={{ title: 'Shift Timings' }}
+                />
+                <Stack.Screen
+                  name="Reports"
+                  component={ReportsScreen}
+                  options={{ title: 'Reports' }}
                 />
                 <Stack.Screen
                   name="EmployeeManagement"

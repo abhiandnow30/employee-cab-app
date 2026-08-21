@@ -277,7 +277,17 @@ happens, a straggler stays queued and unsent — visible in Firestore, not lost.
 - **Native maps are placeholders.** `TrackMap.native` / `FleetMap.native` print coordinates; no map library is installed. Live tracking is web-only.
 - **No notifications for anything except cab assignment.** A cab-assigned email is sent by the `mailer/` worker; every other event (trip cancelled, no-show, etc.) still only surfaces as an in-app notification — the app has to be reopened to see it. Adding a second email type = a builder in `mailer/src/worker.js`, the type in `MAIL_TYPES` **and** in the `mailQueue` rules pin, and a `queue…Emails()` call in `AppContext`.
 - **Email sends are started by the desk's client, not by a trigger** (no Blaze → no Cloud Functions). `mailQueue` makes the intent durable and self-healing on the next assignment, but a job queued when no further assignment follows can sit `pending`. Closing that needs a scheduled sweep — see the end of `mailer/README.md`.
-- **No reporting/export** (monthly trip or billing report, no-show history per employee).
+- **Reporting is on-device and bounded by the 180-day window.** HR's Reports
+  screen (`screens/admin/ReportsScreen.js`, arithmetic in `services/reports.js`)
+  counts rides over a period and exports to .xlsx, but every figure comes from
+  the `bookings` array already in the session — `subscribeAllBookings` fetches
+  `ADMIN_HISTORY_DAYS` (180). **Ask for anything older and the totals are
+  silently short**, so the screen says so rather than hiding it. A real
+  longer-range report needs an aggregate written server-side, which needs
+  Blaze. Also note `ran` excludes `Cancelled` (nobody travelled) but includes
+  `No show` (the cab drove there) — that distinction is what the numbers mean.
+- **Export is web-only**, same as the roster template: `XLSX.writeFile` hands the
+  browser a file to save and a phone has nowhere to put it.
 - **No test suite.** No jest/RNTL installed; nothing is covered.
 - **RTDB reads are open to any signed-in user.** A driver's live position can be read by any authenticated account. Narrowing it to "today's riders on that cab" needs a Cloud Function or moving the feed into Firestore.
 - **No email-domain restriction** on accounts — worth adding once you settle on the domain.
