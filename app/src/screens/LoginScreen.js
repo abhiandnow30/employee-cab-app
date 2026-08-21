@@ -29,6 +29,7 @@ import { useApp } from '../context/AppContext';
 import AuthLayout, { Reveal } from '../components/AuthLayout';
 import { colors, font, radius, shadow, spacing } from '../theme';
 import useMicrosoftAuthRequest from '../utils/useMicrosoftAuthRequest';
+import { HJ_SUPPRESS } from '../analytics/hotjar';
 
 const NATIVE = Platform.OS !== 'web';
 
@@ -349,7 +350,11 @@ export default function LoginScreen({ navigation }) {
             blurOnSubmit={false}
           />
 
+          {/* Hotjar masks type="password" on its own, but the eye toggle turns
+              this into a plain text input mid-typing — so suppress it explicitly
+              rather than relying on a vendor default that the toggle defeats. */}
           <TextInput
+            {...HJ_SUPPRESS}
             ref={passwordRef}
             label="Password"
             value={password}

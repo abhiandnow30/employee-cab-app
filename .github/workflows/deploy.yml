@@ -72,6 +72,12 @@ jobs:
             "${{ env.RELEASE_TAR }}" \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ env.DEPLOY_DIR }}/${{ env.RELEASE_TAR }}"
 
+      # HOTJAR_SITE_ID is a repository VARIABLE, not a secret, and deliberately so:
+      # it is inlined into the web bundle and appears in a script URL any visitor
+      # can read, so hiding it buys nothing and would only stop it being reviewed.
+      # Unset is a supported value -- the script leaves Hotjar off. See
+      # deploy/remote_deploy.sh and app/public/runtime-config.js.
+      #
       # All of: overlay new files -> build -> tag previous -> swap -> health-check
       # -> rollback-on-failure happens in ONE ssh session on the server, driven by
       # deploy/remote_deploy.sh. See that script for the rollback logic itself.
@@ -81,4 +87,5 @@ jobs:
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             bash -s -- "${{ env.DEPLOY_DIR }}" "${{ env.RELEASE_TAR }}" "${{ env.IMAGE_NAME }}" \
                        "${{ env.CONTAINER_NAME }}" "${{ env.HEALTHCHECK_URL }}" \
+                       "${{ vars.HOTJAR_SITE_ID }}" \
             < deploy/remote_deploy.sh

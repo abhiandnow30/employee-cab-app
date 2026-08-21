@@ -29,6 +29,7 @@ import AuthLayout from '../components/AuthLayout';
 import { SUPPORT_HELPLINE } from '../branding';
 import { colors, font, radius, shadow, spacing } from '../theme';
 import { COORDINATOR_PHONE_LENGTH, PASSCODE_LENGTH } from '../utils/coordinatorLogin';
+import { HJ_SUPPRESS } from '../analytics/hotjar';
 
 // No `navigation` prop: signing in swaps the whole stack by role (see App.js), so
 // this screen never navigated anywhere itself — the only call was the removed
@@ -71,6 +72,7 @@ export default function CoordinatorLoginScreen() {
           mistyped entry is caught here rather than coming back as a generic
           Firebase error. Filling the phone box hands focus to the passcode. */}
       <TextInput
+        {...HJ_SUPPRESS}
         label="Your phone number"
         value={phone}
         onChangeText={(t) => {
@@ -95,6 +97,7 @@ export default function CoordinatorLoginScreen() {
       </HelperText>
 
       <TextInput
+        {...HJ_SUPPRESS}
         ref={codeRef}
         label={`Passcode — ${PASSCODE_LENGTH} digits`}
         value={passcode}

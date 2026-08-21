@@ -29,6 +29,7 @@ import AuthLayout from '../components/AuthLayout';
 import { SUPPORT_HELPLINE } from '../branding';
 import { colors, font, radius, shadow, spacing } from '../theme';
 import { CAB_CODE_LENGTH, DRIVER_PHONE_LENGTH } from '../utils/driverLogin';
+import { HJ_SUPPRESS } from '../analytics/hotjar';
 
 // No `navigation` prop: signing in swaps the whole stack by role (see App.js), so
 // this screen never navigated anywhere itself — the only call was the removed
@@ -72,6 +73,7 @@ export default function DriverLoginScreen() {
           error. Filling the cab box hands focus to the phone box — four
           digits then a jump, so neither has to be tapped. */}
       <TextInput
+        {...HJ_SUPPRESS}
         label={`Cab number — last ${CAB_CODE_LENGTH} digits`}
         value={cabDigits}
         onChangeText={(t) => {
@@ -96,6 +98,7 @@ export default function DriverLoginScreen() {
       </HelperText>
 
       <TextInput
+        {...HJ_SUPPRESS}
         ref={phoneRef}
         label="Your phone number"
         value={phone}

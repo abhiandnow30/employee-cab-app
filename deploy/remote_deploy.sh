@@ -9,6 +9,8 @@ RELEASE_TAR="$2"
 IMAGE_NAME="$3"
 CONTAINER_NAME="$4"
 HEALTHCHECK_URL="$5"
+# Optional 6th arg. Empty is a normal, supported value -- it means "Hotjar off".
+HOTJAR_SITE_ID="${6:-}"
 
 cd "$DEPLOY_DIR"
 
@@ -18,6 +20,36 @@ rm -f "$RELEASE_TAR"
 # NOTE: a file that was deleted in git will NOT be removed here -- overlay-only
 # deploys never delete. If a commit removes a file that matters at runtime,
 # that removal needs a manual follow-up on the server.
+
+# The Hotjar Site ID reaches the bundle through app/public/runtime-config.js,
+# which Expo copies verbatim into dist/. Written HERE, after the tar overlay and
+# before the build, because:
+#   - the tar always restores the blank committed version, so this is idempotent
+#     and a removed repo variable really does switch recording back off;
+#   - there is no Dockerfile in git (the image is built from a compose file that
+#     lives on the server), so there is no ARG/ENV of ours to plumb it through;
+#   - it is not a secret -- it ships inside client-side JavaScript either way --
+#     which is why it comes from a GitHub *variable*, not a secret.
+# A non-numeric value is refused here rather than being written: the app would
+# only warn and disable itself, and failing loudly at deploy time is more useful.
+RUNTIME_CONFIG="app/public/runtime-config.js"
+if [ -z "$HOTJAR_SITE_ID" ]; then
+  echo "== HOTJAR_SITE_ID is not set -- leaving Hotjar off (no script, no recording) =="
+elif ! printf '%s' "$HOTJAR_SITE_ID" | grep -Eq '^[0-9]+$'; then
+  echo "== ERROR: HOTJAR_SITE_ID='$HOTJAR_SITE_ID' is not digits only. Fix the repository variable. =="
+  exit 1
+elif [ ! -f "$RUNTIME_CONFIG" ]; then
+  echo "== ERROR: $RUNTIME_CONFIG is missing -- cannot apply HOTJAR_SITE_ID. =="
+  exit 1
+else
+  echo "== Writing Hotjar Site ID $HOTJAR_SITE_ID into $RUNTIME_CONFIG =="
+  # Only the hotjarSiteId line is touched, whatever else the file grows later.
+  sed -i "s/hotjarSiteId: \"[^\"]*\"/hotjarSiteId: \"${HOTJAR_SITE_ID}\"/" "$RUNTIME_CONFIG"
+  grep -q "hotjarSiteId: \"${HOTJAR_SITE_ID}\"" "$RUNTIME_CONFIG" || {
+    echo "== ERROR: the substitution did not take. Has the hotjarSiteId line changed shape? =="
+    exit 1
+  }
+fi
 
 echo "== Capturing currently-running image (rollback target) =="
 OLD_IMAGE_ID=$(docker inspect "$CONTAINER_NAME" --format '{{.Image}}' 2>/dev/null || echo "")
