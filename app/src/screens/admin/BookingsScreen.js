@@ -1,30 +1,36 @@
 // ---------------------------------------------------------------------------
 // BOOKINGS SCREEN  (admin home)
-// The transport desk sees ALL employee bookings, GROUPED BY ROUTE (the cab
-// location from each employee's shift roster) so people who ride together are
-// listed together. To arrange a carpool, tick several employees on the same
-// route — or "Select all" for a route — and assign them ONE shared cab.
-// Each card shows the employee's route + pickup address so the desk can see
-// where everyone is before grouping. Cancelled bookings can't be selected.
+// Two different jobs live on this one screen:
+//
+//   1. UNASSIGNED bookings have no cab yet, so they're grouped by ROUTE (the
+//      cab location from each employee's shift roster) so people who ride
+//      together are listed together. To arrange a carpool, tick several
+//      employees on the same route — or "Select all" for a route — and
+//      assign them ONE shared cab. Cancelled bookings can't be selected.
+//   2. ASSIGNED bookings already have a cab, so route grouping no longer
+//      matters — instead they're grouped by CAB as a collapsible list: one
+//      row per cab (cab number, driver, rider count), tap to expand and see
+//      every rider on it (route direction, shift time, pickup address).
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, SectionList, Pressable } from 'react-native';
+import { StyleSheet, View, ScrollView, Pressable } from 'react-native';
 import { Text, Card, Chip, Button, Portal, Dialog, RadioButton, Snackbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeEmployees } from '../../services/profile';
-import { isBookingPast } from '../../utils/datetime';
-import { SOURCE } from '../../data/mockData';
-import { statusColors, colors } from '../../theme';
+import { isBookingPast, isPastDateKey } from '../../utils/datetime';
+import { SOURCE, STATUS } from '../../data/mockData';
+import DeskCancelDialog from '../../components/DeskCancelDialog';
+import { statusColors, colors, font, radius, shadow, spacing } from '../../theme';
 import CalendarFilter, { rangeLabel } from '../../components/CalendarFilter';
 
 const NO_ROUTE = 'No route set';
-const PAST_SECTION = 'Past rides · assignment closed';
 
 export default function BookingsScreen({ navigation }) {
   const {
     bookings, cabs, cabCapacity, getCabById, assignCabToGroup, approveCancel, rejectCancel,
+    deskCancelRide, deskCancelState,
   } = useApp();
 
   const [selected, setSelected] = useState([]); // booking ids ticked for grouping
@@ -35,6 +41,12 @@ export default function BookingsScreen({ navigation }) {
   const [empByUid, setEmpByUid] = useState({}); // uid → employee profile (for route/address)
   const [error, setError] = useState(''); // assignment guard / failure message
   const [dateRange, setDateRange] = useState(null); // { start, end } (YYYY-MM-DD) or null = all dates
+  const [expandedCabIds, setExpandedCabIds] = useState(() => new Set()); // which cab accordions are open
+  const [helpOpen, setHelpOpen] = useState(false); // "How this works" explainer dialog
+  // The booking the desk is standing down for a rider who asked off-app. Same dialog
+  // the day board uses — see DeskCancelDialog.
+  const [cancelFor, setCancelFor] = useState(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   // Live employee profiles, so each booking can show its owner's route + pickup
   // address (these live on the profile, not on the booking itself).
@@ -56,11 +68,19 @@ export default function BookingsScreen({ navigation }) {
   // A ride awaiting cancellation shouldn't be handed a cab — resolve it first.
   const hasPendingCancel = (b) => b.cancelStatus === 'Requested';
   const isPast = (b) => isBookingPast(b); // scheduled date/time already passed
-  // Assignable only if still open, not awaiting cancellation, AND not in the past.
-  const canSelect = (b) => b.status === 'Booked' && !hasPendingCancel(b) && !isPast(b);
+  // Assignable if it's still open and isn't awaiting a cancellation decision.
+  //
+  // "Its time has passed" is deliberately NOT a reason to refuse. That check used
+  // to be here (and in AppContext, and in firestore.rules) and it closed the desk
+  // out at 8:01 PM of an 8:00 PM pickup — the minute a missing cab becomes urgent.
+  // The row is still marked overdue below so nobody mistakes a late assignment for
+  // an on-time one.
+  const canSelect = (b) => b.status === 'Booked' && !hasPendingCancel(b);
   const isNoShow = (b) => b.status === 'No show';
-  // A past ride that never got a cab is "Expired" (assignment closed).
-  const isExpired = (b) => isPast(b) && b.status === 'Booked';
+  // A ride whose slot has passed and that still has no cab. Assignment stays OPEN
+  // on these — the chip is a "this one is late, deal with it first" flag, not a
+  // closed door.
+  const isOverdue = (b) => isPast(b) && b.status === 'Booked';
 
   // Employee details for a booking (from the live profile map).
   const empOf = (b) => empByUid[b.employeeId] || {};
@@ -86,47 +106,76 @@ export default function BookingsScreen({ navigation }) {
     ? bookings.filter((b) => b.date >= dateRange.start && b.date <= dateRange.end)
     : bookings;
 
-  // --- Split upcoming (assignable) from past (read-only) -------------------
-  // Only today's and future rides can be assigned; anything whose scheduled
-  // time has passed drops into a separate, read-only "Past rides" section.
-  const upcoming = visibleBookings.filter((b) => !isPast(b));
-  const past = visibleBookings.filter(isPast);
+  // --- Split by assignment state, not by date ------------------------------
+  // A booking with no cab yet needs the route-grouped, selectable workflow
+  // below. Once it has a cab, it belongs under that cab — route no longer
+  // matters, the cab is the unit the desk thinks in.
+  //
+  // The cut-off for this screen is the DAY, not the minute. Earlier days are left
+  // out — the desk acts on today and later here, and that data isn't deleted:
+  // Ride History, No-Shows and Cancelled Rides still show it. But a ride whose
+  // shift time passed an hour ago is still TODAY's work and stays on the board,
+  // selectable, so a cab can still be sent (see canSelect). Filtering by the
+  // minute instead was why an unassigned 8:00 PM ride vanished from the desk's
+  // screen at 8:01 PM, leaving them nothing to assign a cab to.
+  const unassigned = visibleBookings.filter((b) => !b.assignedCabId && !isPastDateKey(b.date));
+  const assigned = visibleBookings.filter((b) => b.assignedCabId && !isPastDateKey(b.date));
 
-  // Group the UPCOMING bookings by route so carpool candidates sit together.
-  const groups = {};
-  upcoming.forEach((b) => {
+  // --- UNASSIGNED: group by route -------------------------------------------
+  const routeGroups = {};
+  unassigned.forEach((b) => {
     const route = routeOf(b);
-    (groups[route] = groups[route] || []).push(b);
+    (routeGroups[route] = routeGroups[route] || []).push(b);
   });
-  const upcomingSections = Object.keys(groups)
-    .map((route) => {
-      const data = [...groups[route]].sort(
-        (a, b) => (isNoShow(a) ? 0 : 1) - (isNoShow(b) ? 0 : 1) // no-shows first
-      );
-      return { route, data, hasNoShow: data.some(isNoShow) };
-    })
-    // Routes with a no-show first; then real routes A→Z; "No route set" last.
+  const sections = Object.keys(routeGroups)
+    .map((route) => ({ route, data: routeGroups[route] }))
+    // Real routes A→Z; "No route set" last — an unrouted rider is a defect to notice.
     .sort((a, b) => {
-      if (a.hasNoShow !== b.hasNoShow) return a.hasNoShow ? -1 : 1;
       if (a.route === NO_ROUTE) return 1;
       if (b.route === NO_ROUTE) return -1;
       return a.route.localeCompare(b.route);
     });
 
-  // Past rides go last, most-recent first, in one read-only section.
-  const pastSection =
-    past.length > 0
-      ? [
-          {
-            route: PAST_SECTION,
-            isPastSection: true,
-            hasNoShow: false,
-            data: [...past].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))),
-          },
-        ]
-      : [];
+  // --- ASSIGNED: group by cab, one row per cab ------------------------------
+  const cabGroupMap = {};
+  assigned.forEach((b) => {
+    (cabGroupMap[b.assignedCabId] = cabGroupMap[b.assignedCabId] || []).push(b);
+  });
+  const cabGroups = Object.keys(cabGroupMap)
+    .map((cabId) => {
+      const data = [...cabGroupMap[cabId]].sort(
+        (a, b) => String(a.date).localeCompare(String(b.date)) || a.employeeName.localeCompare(b.employeeName)
+      );
+      const cab = getCabById(cabId);
+      const minDate = data.reduce((min, b) => (min === null || String(b.date) < min ? String(b.date) : min), null);
+      return { cabId, cab, data, minDate };
+    })
+    // Soonest ride date first, cab number breaks ties.
+    .sort((a, b) => {
+      const byDate = String(a.minDate || '').localeCompare(String(b.minDate || ''));
+      if (byDate !== 0) return byDate;
+      return String(a.cab?.cabNumber || '').localeCompare(String(b.cab?.cabNumber || ''));
+    });
 
-  const sections = [...upcomingSections, ...pastSection];
+  function openDeskCancel(booking) {
+    setCancelFor(booking);
+  }
+
+  async function confirmDeskCancel() {
+    if (!cancelFor) return;
+    setCancelBusy(true);
+    // No reason — see DeskCancelDialog's header.
+    const res = await deskCancelRide(cancelFor);
+    setCancelBusy(false);
+    if (!res?.ok) {
+      setError(res?.message || 'Could not cancel that ride.');
+      return;
+    }
+    // Untick it if it was selected for grouping — a cancelled ride must never end up
+    // in an assignment.
+    setSelected((prev) => prev.filter((id) => id !== cancelFor.id));
+    setCancelFor(null);
+  }
 
   async function resolve(bookingId, approve) {
     setResolving(bookingId);
@@ -150,13 +199,22 @@ export default function BookingsScreen({ navigation }) {
     setPickerOpen(true);
   }
 
+  function toggleCabExpanded(cabId) {
+    setExpandedCabIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cabId)) next.delete(cabId);
+      else next.add(cabId);
+      return next;
+    });
+  }
+
   async function confirmAssign() {
     if (!chosenCab || selected.length === 0) return;
     setSaving(true);
     try {
       const res = await assignCabToGroup(selected, chosenCab);
       if (!res?.ok) {
-        // Guard rejected (e.g. a selected ride is now in the past).
+        // Guard rejected (no seats left, or the cab is on another trip then).
         setError(res?.message || 'Could not assign the cab. Please try again.');
         setPickerOpen(false);
         setSelected([]);
@@ -171,7 +229,7 @@ export default function BookingsScreen({ navigation }) {
     }
   }
 
-  function renderSectionHeader({ section }) {
+  function renderSectionHeader(section) {
     const selectableCount = section.data.filter(canSelect).length;
     const pastHeader = section.isPastSection;
     return (
@@ -189,7 +247,9 @@ export default function BookingsScreen({ navigation }) {
             ({section.data.length})
           </Text>
         </View>
-        {/* No "Select all" for past rides — they can't be assigned. */}
+        {/* `isPastSection` is never set any more — earlier days don't reach this
+            screen at all, and today's overdue rides sit in their normal route
+            section where they can still be selected and given a cab. */}
         {!pastHeader && selectableCount > 0 && (
           <Button compact mode="text" onPress={() => selectGroup(section.data)}>
             Select all
@@ -199,24 +259,168 @@ export default function BookingsScreen({ navigation }) {
     );
   }
 
-  function renderBooking({ item }) {
-    const cab = item.assignedCabId ? getCabById(item.assignedCabId) : null;
+  // Shared detail body for a single booking — direction, date/shift, pickup
+  // address, and any of the ad-hoc / no-show / pending-cancel call-outs. Used
+  // both by the unassigned route cards and by each rider row inside a cab's
+  // expanded accordion, so the desk never loses these actions either way.
+  function renderBookingBody(item) {
+    const address = addressOf(item);
+    const pendingCancel = hasPendingCancel(item);
+    const busy = resolving === item.id;
+    return (
+      <>
+        <Text variant="bodyMedium" style={styles.detail}>
+          {item.direction}
+        </Text>
+        <Text variant="bodyMedium" style={styles.detail}>
+          {/* The shift's own start/end — a deadline (pickup) or
+              earliest-bound (drop), never a promised cab instant. */}
+          {item.date} · {item.shift}
+        </Text>
+        {/* Where to pick them up: the real address from their roster if we
+            have it, otherwise the generic pickup label on the booking. */}
+        <View style={styles.locationRow}>
+          <MaterialCommunityIcons
+            name="map-marker-outline"
+            size={15}
+            color={colors.muted}
+            style={styles.locationIcon}
+          />
+          <Text variant="bodySmall" style={styles.locationText}>
+            {address || `Pickup: ${item.pickup}`}
+          </Text>
+        </View>
+        {/* Why this one-off ride was raised. The employee fills in a
+            reason and comment on the ad-hoc form, and it was being stored
+            but never shown here — so the desk was approving blind. */}
+        {item.source === SOURCE.ADHOC && (
+          <View style={styles.adhocBox}>
+            <View style={styles.adhocHeader}>
+              <MaterialCommunityIcons name="car-clock" size={15} color={colors.primaryDark} />
+              <Text variant="labelSmall" style={styles.adhocTitle}>
+                One-time ride{item.reason ? ` · ${item.reason}` : ''}
+              </Text>
+            </View>
+            {item.comment ? (
+              <Text variant="bodySmall" style={styles.adhocComment}>
+                “{item.comment}”
+              </Text>
+            ) : null}
+            {item.officeLocation ? (
+              <Text variant="bodySmall" style={styles.adhocMeta}>
+                Office: {item.officeLocation}
+              </Text>
+            ) : null}
+          </View>
+        )}
+
+        {/* --- No-show flag raised by the driver --- */}
+        {isNoShow(item) && (
+          <View style={styles.noShowRow}>
+            <MaterialCommunityIcons name="account-alert" size={16} color={colors.danger} />
+            <Text variant="bodySmall" style={styles.noShowText}>
+              Employee was not at the pickup.
+            </Text>
+          </View>
+        )}
+
+        {/* A ride the desk stood down. Says so plainly, with the reason, so this row
+            cannot be mistaken for an approved employee request. */}
+        {item.status === STATUS.CANCELLED && item.cancellationSource === 'desk' ? (
+          <View style={styles.deskCancelledBox}>
+            <MaterialCommunityIcons name="headset" size={16} color="#C62828" />
+            <Text variant="bodySmall" style={styles.deskCancelledText}>
+              Cancelled by Transport Desk
+              {item.cancellationReason ? ` — ${item.cancellationReason}` : ''}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* THE DESK CANCELS FOR A RIDER WHO ASKED OFF-APP. Offered only on an
+            ACTIVE ride: a cancelled one would overwrite the record of who cancelled
+            it first, and a completed or no-show trip has nothing left to stand down.
+            A ride with a pending REQUEST is deliberately still cancellable — the
+            approve button below is the tidier route, but if the rider then phones in
+            an emergency the desk should not have to approve a request to act on it. */}
+        {/* Gated on the DESK's own window — 30 minutes, against the rider's 4 hours.
+            deskCancelState also covers the cancelled/completed/no-show cases, so the
+            status tests this used to duplicate are gone. */}
+        {deskCancelState(item).canCancel ? (
+          <View style={styles.deskCancelRow}>
+            <Button
+              compact
+              mode="text"
+              icon="calendar-remove"
+              textColor="#C62828"
+              onPress={() => openDeskCancel(item)}
+              disabled={cancelBusy}
+            >
+              Cancel ride
+            </Button>
+          </View>
+        ) : null}
+
+        {/* --- Pending cancellation request: approve or reject --- */}
+        {pendingCancel && (
+          <View style={styles.cancelBox}>
+            <View style={styles.cancelHeader}>
+              <MaterialCommunityIcons name="close-circle-outline" size={18} color="#C62828" />
+              <Text variant="labelLarge" style={styles.cancelTitle}>
+                Cancellation requested
+              </Text>
+            </View>
+            {item.cancelReason ? (
+              <Text variant="bodySmall" style={styles.cancelReason}>
+                “{item.cancelReason}”
+              </Text>
+            ) : (
+              <Text variant="bodySmall" style={styles.cancelReasonMuted}>
+                No reason given.
+              </Text>
+            )}
+            <View style={styles.cancelActions}>
+              <Button
+                mode="outlined"
+                compact
+                onPress={() => resolve(item.id, false)}
+                disabled={busy}
+                style={styles.cancelActionBtn}
+              >
+                Reject
+              </Button>
+              <Button
+                mode="contained"
+                compact
+                icon="check"
+                buttonColor="#C62828"
+                onPress={() => resolve(item.id, true)}
+                loading={busy}
+                disabled={busy}
+                style={styles.cancelActionBtn}
+              >
+                Approve cancel
+              </Button>
+            </View>
+          </View>
+        )}
+      </>
+    );
+  }
+
+  function renderBooking(item) {
     const selectable = canSelect(item);
     const ticked = isSelected(item.id);
     const pendingCancel = hasPendingCancel(item);
-    const busy = resolving === item.id;
-    const address = addressOf(item);
     const past = isPast(item);
-    const expired = isExpired(item); // past + never assigned
+    const overdue = isOverdue(item); // time passed + still no cab (still assignable)
 
     return (
-      <Pressable onPress={() => selectable && toggle(item.id)}>
+      <Pressable key={item.id} onPress={() => selectable && toggle(item.id)}>
         <Card
           style={[
             styles.card,
             ticked && styles.cardSelected,
             pendingCancel && styles.cardCancel,
-            isNoShow(item) && styles.cardNoShow,
             past && styles.cardPast,
           ]}
           mode="elevated"
@@ -233,133 +437,106 @@ export default function BookingsScreen({ navigation }) {
             <View style={styles.cardBody}>
               <View style={styles.rowBetween}>
                 <Text variant="titleMedium">{item.employeeName}</Text>
-                {expired ? (
+                {overdue ? (
                   <Chip
                     compact
                     icon="clock-alert-outline"
-                    style={styles.expiredChip}
+                    style={styles.overdueChip}
                     textStyle={styles.chipText}
                   >
-                    Expired
+                    Overdue
                   </Chip>
                 ) : (
                   <Chip
                     compact
-                    style={{ backgroundColor: statusColors[item.status] || '#9E9E9E' }}
+                    style={{ backgroundColor: statusColors[item.status] || colors.disabled }}
                     textStyle={styles.chipText}
                   >
                     {item.status}
                   </Chip>
                 )}
               </View>
-              <Text variant="bodyMedium" style={styles.detail}>
-                {item.direction}
-              </Text>
-              <Text variant="bodyMedium" style={styles.detail}>
-                {item.date} · {item.shift}
-              </Text>
-              {/* Where to pick them up: the real address from their roster if we
-                  have it, otherwise the generic pickup label on the booking. */}
-              <View style={styles.locationRow}>
-                <MaterialCommunityIcons
-                  name="map-marker-outline"
-                  size={15}
-                  color={colors.muted}
-                  style={styles.locationIcon}
-                />
-                <Text variant="bodySmall" style={styles.locationText}>
-                  {address || `Pickup: ${item.pickup}`}
-                </Text>
-              </View>
-              {/* Why this one-off ride was raised. The employee fills in a
-                  reason and comment on the ad-hoc form, and it was being stored
-                  but never shown here — so the desk was approving blind. */}
-              {item.source === SOURCE.ADHOC && (
-                <View style={styles.adhocBox}>
-                  <View style={styles.adhocHeader}>
-                    <MaterialCommunityIcons name="car-clock" size={15} color={colors.primaryDark} />
-                    <Text variant="labelSmall" style={styles.adhocTitle}>
-                      One-time ride{item.reason ? ` · ${item.reason}` : ''}
-                    </Text>
-                  </View>
-                  {item.comment ? (
-                    <Text variant="bodySmall" style={styles.adhocComment}>
-                      “{item.comment}”
-                    </Text>
-                  ) : null}
-                  {item.officeLocation ? (
-                    <Text variant="bodySmall" style={styles.adhocMeta}>
-                      Office: {item.officeLocation}
-                    </Text>
-                  ) : null}
-                </View>
-              )}
-
-              {cab && (
-                <Text variant="bodyMedium" style={styles.assigned}>
-                  → {cab.cabNumber} · {cab.driverName}
-                </Text>
-              )}
-
-              {/* --- No-show flag raised by the driver --- */}
-              {isNoShow(item) && (
-                <View style={styles.noShowRow}>
-                  <MaterialCommunityIcons name="account-alert" size={16} color={colors.danger} />
-                  <Text variant="bodySmall" style={styles.noShowText}>
-                    Employee was not at the pickup.
-                  </Text>
-                </View>
-              )}
-
-              {/* --- Pending cancellation request: approve or reject --- */}
-              {pendingCancel && (
-                <View style={styles.cancelBox}>
-                  <View style={styles.cancelHeader}>
-                    <MaterialCommunityIcons name="close-circle-outline" size={18} color="#C62828" />
-                    <Text variant="labelLarge" style={styles.cancelTitle}>
-                      Cancellation requested
-                    </Text>
-                  </View>
-                  {item.cancelReason ? (
-                    <Text variant="bodySmall" style={styles.cancelReason}>
-                      “{item.cancelReason}”
-                    </Text>
-                  ) : (
-                    <Text variant="bodySmall" style={styles.cancelReasonMuted}>
-                      No reason given.
-                    </Text>
-                  )}
-                  <View style={styles.cancelActions}>
-                    <Button
-                      mode="outlined"
-                      compact
-                      onPress={() => resolve(item.id, false)}
-                      disabled={busy}
-                      style={styles.cancelActionBtn}
-                    >
-                      Reject
-                    </Button>
-                    <Button
-                      mode="contained"
-                      compact
-                      icon="check"
-                      buttonColor="#C62828"
-                      onPress={() => resolve(item.id, true)}
-                      loading={busy}
-                      disabled={busy}
-                      style={styles.cancelActionBtn}
-                    >
-                      Approve cancel
-                    </Button>
-                  </View>
-                </View>
-              )}
+              {renderBookingBody(item)}
             </View>
           </Card.Content>
         </Card>
       </Pressable>
     );
   }
+
+  // One rider row inside an expanded cab accordion — same detail body as an
+  // unassigned card, minus the checkbox and its own Card chrome.
+  function renderCabEmployeeRow(item) {
+    const past = isPast(item);
+    return (
+      <View
+        key={item.id}
+        style={[styles.cabEmployeeRow, isNoShow(item) && styles.cardNoShow, past && styles.cardPast]}
+      >
+        <View style={styles.rowBetween}>
+          <Text variant="titleSmall">{item.employeeName}</Text>
+          <Chip
+            compact
+            style={{ backgroundColor: statusColors[item.status] || colors.disabled }}
+            textStyle={styles.chipText}
+          >
+            {item.status}
+          </Chip>
+        </View>
+        {renderBookingBody(item)}
+      </View>
+    );
+  }
+
+  // One cab's accordion card — cab number, driver, rider count; expands to
+  // driver phone + every rider currently in the active date filter.
+  function renderCabGroup(group) {
+    const { cabId, cab, data } = group;
+    const expanded = expandedCabIds.has(cabId);
+    const count = data.length;
+    return (
+      <Card key={cabId} style={styles.cabGroupCard} mode="elevated">
+        <Pressable onPress={() => toggleCabExpanded(cabId)}>
+          <Card.Content style={styles.cabGroupHeader}>
+            <View style={styles.cabGroupHeaderLeft}>
+              <MaterialCommunityIcons name="car" size={22} color={colors.primary} style={styles.cabGroupIcon} />
+              <View>
+                <Text variant="titleMedium" style={styles.cabGroupTitle}>
+                  {cab?.cabNumber || 'Unknown cab'}
+                </Text>
+                <Text variant="bodySmall" style={styles.detail}>
+                  Driver: {cab?.driverName || 'Unassigned'}
+                </Text>
+                <Text variant="bodySmall" style={styles.detail}>
+                  {count} Employee{count === 1 ? '' : 's'} Assigned
+                </Text>
+              </View>
+            </View>
+            <MaterialCommunityIcons
+              name={expanded ? 'chevron-up' : 'chevron-down'}
+              size={26}
+              color={colors.muted}
+            />
+          </Card.Content>
+        </Pressable>
+        {expanded && (
+          <Card.Content style={styles.cabGroupBody}>
+            {cab?.driverPhone ? (
+              <Text variant="bodySmall" style={styles.detail}>
+                Phone: {cab.driverPhone}
+              </Text>
+            ) : null}
+            <Text variant="labelLarge" style={styles.employeesHeader}>
+              Employees Assigned
+            </Text>
+            {data.map(renderCabEmployeeRow)}
+          </Card.Content>
+        )}
+      </Card>
+    );
+  }
+
+  const nothingToShow = sections.length === 0 && cabGroups.length === 0;
 
   return (
     <View style={styles.container}>
@@ -382,10 +559,22 @@ export default function BookingsScreen({ navigation }) {
         </View>
       )}
 
-      <Text variant="bodySmall" style={styles.hint}>
-        Employees are grouped by route. Tick people on the same route (or “Select
-        all”) and assign them a shared cab.
-      </Text>
+      <View style={styles.hintRow}>
+        <Text variant="bodySmall" style={styles.hint}>
+          Unassigned employees are grouped by route — tick people on the same route (or
+          “Select all”) and assign them a shared cab. Rides that already have a cab are
+          grouped by cab below.
+        </Text>
+        <Button
+          mode="text"
+          icon="help-circle-outline"
+          compact
+          onPress={() => setHelpOpen(true)}
+          style={styles.hintHelpBtn}
+        >
+          How this works
+        </Button>
+      </View>
 
       {/* Date filter — pick a day, a range, or a whole month. */}
       <View style={styles.filterRow}>
@@ -397,19 +586,39 @@ export default function BookingsScreen({ navigation }) {
         ) : null}
       </View>
 
-      <SectionList
-        sections={sections}
-        keyExtractor={(item) => item.id}
-        renderItem={renderBooking}
-        renderSectionHeader={renderSectionHeader}
-        stickySectionHeadersEnabled={false}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
+      <ScrollView contentContainerStyle={styles.listContent}>
+        {nothingToShow ? (
           <Text style={styles.empty}>
             {dateRange ? `No bookings for ${rangeLabel(dateRange)}.` : 'No bookings yet.'}
           </Text>
-        }
-      />
+        ) : (
+          <>
+            {sections.map((section) => (
+              <View key={section.route}>
+                {renderSectionHeader(section)}
+                {section.data.map(renderBooking)}
+              </View>
+            ))}
+
+            {cabGroups.length > 0 && (
+              <View>
+                <View style={styles.sectionHeader}>
+                  <View style={styles.sectionTitleWrap}>
+                    <MaterialCommunityIcons name="car-multiple" size={18} color={colors.primary} />
+                    <Text variant="titleSmall" style={styles.sectionTitle}>
+                      Assigned cabs
+                    </Text>
+                    <Text variant="bodySmall" style={styles.sectionCount}>
+                      ({cabGroups.length})
+                    </Text>
+                  </View>
+                </View>
+                {cabGroups.map(renderCabGroup)}
+              </View>
+            )}
+          </>
+        )}
+      </ScrollView>
 
       {/* Action bar — appears when at least one booking is ticked */}
       {selected.length > 0 && (
@@ -430,10 +639,17 @@ export default function BookingsScreen({ navigation }) {
           <Dialog.Content>
             <RadioButton.Group onValueChange={setChosenCab} value={chosenCab}>
               {cabs.map((c) => (
+                // Unlinked cabs are disabled: the driver's trip list follows the
+                // cab↔driver link, so assigning one hides the trip from everybody.
                 <RadioButton.Item
                   key={c.id}
-                  label={`${c.cabNumber} · ${c.driverName} · ${cabCapacity(c)} seats`}
+                  label={
+                    c.driverUid
+                      ? `${c.cabNumber} · ${c.driverName || 'driver'} · ${cabCapacity(c)} seats`
+                      : `${c.cabNumber} · no driver linked`
+                  }
                   value={c.id}
+                  disabled={!c.driverUid}
                 />
               ))}
             </RadioButton.Group>
@@ -451,7 +667,52 @@ export default function BookingsScreen({ navigation }) {
         </Dialog>
       </Portal>
 
+      {/* "How this works" — the two-phase model this screen runs on */}
+      <Portal>
+        <Dialog visible={helpOpen} onDismiss={() => setHelpOpen(false)} style={styles.helpDialog}>
+          <Dialog.Title>How Bookings works</Dialog.Title>
+          <Dialog.Content>
+            <View style={styles.helpItem}>
+              <MaterialCommunityIcons name="map-marker-outline" size={18} color={colors.primary} style={styles.helpIcon} />
+              <Text variant="bodyMedium" style={styles.helpText}>
+                Employees with no cab yet are grouped by pickup route — tick people on
+                the same route (or "Select all") and assign them one shared cab.
+              </Text>
+            </View>
+            <View style={styles.helpItem}>
+              <MaterialCommunityIcons name="car-outline" size={18} color={colors.primary} style={styles.helpIcon} />
+              <Text variant="bodyMedium" style={styles.helpText}>
+                Once a cab is assigned, that booking moves into "Assigned cabs" below,
+                grouped by cab instead of route — tap a cab to see everyone riding in it.
+              </Text>
+            </View>
+            <View style={styles.helpItem}>
+              <MaterialCommunityIcons name="account-plus-outline" size={18} color={colors.primary} style={styles.helpIcon} />
+              <Text variant="bodyMedium" style={styles.helpText}>
+                Need a cab for someone not covered by this month's roster at all? Go to
+                Roster Upload → "Add a single employee" first — bookings only exist for
+                rides the roster generates.
+              </Text>
+            </View>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setHelpOpen(false)}>Got it</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
       {/* Guard / error feedback (e.g. a selected ride slipped into the past) */}
+      {/* Same dialog as the coordinator's day board — one place the desk's reason is
+          captured, so the two screens can't drift apart on a field the employee reads. */}
+      <DeskCancelDialog
+        visible={!!cancelFor}
+        ride={cancelFor}
+        cab={cancelFor?.assignedCabId ? getCabById(cancelFor.assignedCabId) : null}
+        busy={cancelBusy}
+        onDismiss={() => setCancelFor(null)}
+        onConfirm={confirmDeskCancel}
+      />
+
       <Snackbar visible={!!error} onDismiss={() => setError('')} duration={4000}>
         {error}
       </Snackbar>
@@ -461,104 +722,223 @@ export default function BookingsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerCol: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
-  hint: { opacity: 0.7, marginHorizontal: 14, marginBottom: 4 },
+  container: { flex: 1, backgroundColor: colors.background },
+  centerCol: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  hint: { color: colors.muted, flex: 1, marginHorizontal: spacing.sm, lineHeight: 19 },
+  hintHelpBtn: { marginLeft: spacing.xs },
+  helpDialog: { maxWidth: 500, alignSelf: 'center', width: '100%' },
+  helpItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  helpIcon: { marginTop: 2 },
+  helpText: { flex: 1, lineHeight: 21, color: colors.textSecondary },
   filterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    marginTop: 6,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.sm,
     marginBottom: 2,
   },
-  listContent: { padding: 12, paddingBottom: 90 },
+  listContent: { padding: spacing.lg, paddingBottom: 96 },
+  // A date/cab heading: tinted band with a brand left rule, so the list reads
+  // as groups rather than one continuous run of cards.
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#E3F0FF',
-    borderRadius: 8,
-    paddingLeft: 10,
-    paddingRight: 4,
-    paddingVertical: 4,
-    marginTop: 8,
-    marginBottom: 8,
+    backgroundColor: colors.primarySoft,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+    borderRadius: radius.sm,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.xs,
+    paddingVertical: spacing.xs,
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
   },
-  sectionTitleWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
-  sectionTitle: { color: colors.primaryDark, fontWeight: 'bold' },
-  sectionCount: { color: colors.primaryDark, opacity: 0.7 },
-  pastSectionHeader: { backgroundColor: '#ECEFF1' },
-  pastSectionTitle: { color: colors.muted },
-  card: { marginBottom: 12 },
-  cardSelected: { borderWidth: 2, borderColor: colors.primary },
-  cardCancel: { borderWidth: 1, borderColor: '#F5B5B0' },
+  sectionTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flex: 1,
+  },
+  sectionTitle: { color: colors.primaryDark, fontFamily: font.semibold },
+  sectionCount: { color: colors.primaryDark, opacity: 0.75 },
+  pastSectionHeader: { backgroundColor: colors.surfaceAlt, borderLeftColor: colors.disabled },
+  pastSectionTitle: { color: colors.textSecondary },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  cardSelected: {
+    borderWidth: 2,
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySofter,
+  },
+  cardCancel: { borderColor: '#F3C2BD', backgroundColor: colors.dangerSoft },
   cardNoShow: { borderLeftWidth: 5, borderLeftColor: colors.danger },
-  cardPast: { opacity: 0.6 },
-  expiredChip: { backgroundColor: '#757575' },
+  // Was `opacity: 0.6`. A dimmed card reads as disabled, and these rows are now
+  // the most actionable ones on the screen — an amber edge flags them instead.
+  cardPast: { borderLeftWidth: 5, borderLeftColor: colors.warning },
+  // Amber, not grey: an overdue ride is a live piece of work, not a closed one.
+  overdueChip: { backgroundColor: colors.warning },
   noShowBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FDECEA',
-    borderRadius: 8,
-    padding: 10,
-    marginHorizontal: 12,
-    marginTop: 4,
+    gap: spacing.sm,
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: '#F3C2BD',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
   },
-  noShowBannerText: { color: colors.danger, flex: 1, fontWeight: '600' },
-  noShowRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
-  noShowText: { color: colors.danger, fontWeight: '600' },
+  noShowBannerText: { color: colors.danger, flex: 1, fontFamily: font.semibold },
+  noShowRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  noShowText: { color: colors.danger, fontFamily: font.semibold },
   cancelBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFF6E5',
-    borderRadius: 8,
-    padding: 10,
-    marginHorizontal: 12,
-    marginTop: 4,
+    gap: spacing.sm,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: '#F2E3C4',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
   },
-  cancelBannerText: { color: '#B26A00', flex: 1 },
+  cancelBannerText: { color: colors.warning, flex: 1 },
   cancelBox: {
-    marginTop: 10,
-    backgroundColor: '#FDECEA',
-    borderRadius: 8,
-    padding: 10,
+    marginTop: spacing.md,
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: '#F3C2BD',
+    borderRadius: radius.md,
+    padding: spacing.md,
   },
-  cancelHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cancelTitle: { color: '#C62828' },
-  cancelReason: { marginTop: 4, fontStyle: 'italic', color: '#7A1F1A' },
-  cancelReasonMuted: { marginTop: 4, opacity: 0.6 },
-  cancelActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },
-  cancelActionBtn: { minWidth: 96 },
+  cancelHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  cancelTitle: { color: colors.danger, fontFamily: font.semibold },
+  deskCancelRow: { alignSelf: 'flex-start', marginTop: spacing.xs, marginLeft: -8 },
+  deskCancelledBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: '#F3C2BD',
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  deskCancelledText: { color: '#7A1810', flex: 1, lineHeight: 18 },
+  cancelReason: { marginTop: spacing.xs, fontStyle: 'italic', color: '#7A1810' },
+  cancelReasonMuted: { marginTop: spacing.xs, color: colors.muted },
+  cancelActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.md,
+    marginTop: spacing.md,
+  },
+  cancelActionBtn: { minWidth: 104, borderRadius: radius.md },
   cardRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  check: { marginRight: 10, marginTop: 2 },
-  cardBody: { flex: 1 },
+  check: { marginRight: spacing.md, marginTop: 2 },
+  cardBody: { flex: 1, minWidth: 0 },
   rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
   },
-  chipText: { color: 'white', fontSize: 12 },
-  detail: { opacity: 0.8, marginTop: 2 },
-  locationRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 4 },
-  locationIcon: { marginTop: 2, marginRight: 4 },
-  locationText: { flex: 1, opacity: 0.8 },
+  chipText: { color: '#FFFFFF', fontSize: 11.5, fontFamily: font.semibold },
+  detail: { color: colors.textSecondary, marginTop: 2 },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: spacing.xs,
+  },
+  locationIcon: { marginTop: 2, marginRight: spacing.xs },
+  locationText: { flex: 1, color: colors.textSecondary, lineHeight: 20 },
   adhocBox: {
-    marginTop: 8,
-    backgroundColor: '#EAF2FE',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    marginTop: spacing.md,
+    backgroundColor: colors.primarySofter,
+    borderWidth: 1,
+    borderColor: colors.primarySoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
   },
-  adhocHeader: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  adhocTitle: { color: colors.primaryDark, fontWeight: 'bold' },
-  adhocComment: { marginTop: 4, fontStyle: 'italic', color: colors.text },
+  adhocHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  adhocTitle: { color: colors.primaryDark, fontFamily: font.semibold },
+  adhocComment: { marginTop: spacing.xs, fontStyle: 'italic', color: colors.text },
   adhocMeta: { marginTop: 2, color: colors.muted },
-  assigned: { marginTop: 8, fontWeight: 'bold', color: colors.success },
-  empty: { textAlign: 'center', marginTop: 40, opacity: 0.6 },
+  cabGroupCard: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  cabGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  cabGroupHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flex: 1,
+    minWidth: 0,
+    gap: spacing.md,
+  },
+  cabGroupIcon: { marginTop: 3 },
+  cabGroupTitle: { fontFamily: font.semibold, color: colors.text },
+  cabGroupBody: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    marginTop: spacing.sm,
+    paddingTop: spacing.md,
+  },
+  employeesHeader: {
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+    color: colors.muted,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  cabEmployeeRow: {
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  empty: { textAlign: 'center', marginTop: 48, color: colors.muted },
+  // Floats over the list, so it needs to read as a bar in front of the page and
+  // not as the last row of it.
   actionBar: {
     position: 'absolute',
     left: 0,
@@ -567,11 +947,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 12,
+    padding: spacing.md,
     backgroundColor: colors.surface,
     borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
+    borderTopColor: colors.border,
+    ...shadow.lg,
   },
-  assignBtn: { flex: 1, marginLeft: 10 },
-  pickerHint: { color: colors.muted, marginTop: 8 },
+  assignBtn: { flex: 1, marginLeft: spacing.md, borderRadius: radius.md },
+  pickerHint: { color: colors.muted, marginTop: spacing.sm },
 });

@@ -14,7 +14,7 @@ import React, { useState } from 'react';
 import { StyleSheet, View, Pressable } from 'react-native';
 import { Menu, Text, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { colors } from '../theme';
+import { colors, font, radius, shadow, spacing } from '../theme';
 
 export default function Dropdown({
   value,
@@ -28,6 +28,10 @@ export default function Dropdown({
   groupBy,
   groupOrder,
   status, // 'error' | 'success' | undefined — tints the (non-compact) field border
+  // (option) => true to show it greyed and unselectable. For options that are
+  // worth SEEING but can't be picked yet — leaving them out entirely reads as
+  // "this is broken", while letting them through would fail further downstream.
+  optionDisabled,
 }) {
   const [visible, setVisible] = useState(false);
   const hasValue = value != null && value !== '';
@@ -95,13 +99,18 @@ export default function Dropdown({
   // Build the menu body — optionally split into labelled groups.
   function renderItem(opt) {
     const selected = hasValue && String(value) === String(opt);
+    const itemDisabled = !!optionDisabled?.(opt);
     return (
       <Menu.Item
         key={String(opt)}
         title={format(opt)}
+        disabled={itemDisabled}
         trailingIcon={selected ? 'check' : undefined}
-        titleStyle={selected ? styles.itemSelected : undefined}
+        titleStyle={
+          itemDisabled ? styles.itemDisabled : selected ? styles.itemSelected : undefined
+        }
         onPress={() => {
+          if (itemDisabled) return;
           onSelect(opt);
           setVisible(false);
         }}
@@ -156,45 +165,57 @@ const styles = StyleSheet.create({
     minWidth: 130,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
     paddingVertical: 10,
     backgroundColor: colors.surface,
+    ...shadow.xs,
   },
-  compactAnchorFilled: { borderColor: colors.primary, backgroundColor: '#F0F6FF' },
-  compactAnchorHover: { borderColor: colors.primaryLight, backgroundColor: '#F5F9FF' },
-  compactText: { flex: 1, fontSize: 14 },
-  compactTextFilled: { color: colors.primary, fontWeight: '600' },
-  leading: { marginRight: 6 },
+  // A filled control keeps the brand tint AND the brand border, so a grid of
+  // these reads as "answered / not answered" without having to read the values.
+  compactAnchorFilled: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  compactAnchorHover: { borderColor: colors.primaryLight, backgroundColor: colors.primarySofter },
+  compactText: { flex: 1, fontSize: 14, color: colors.text },
+  compactTextFilled: { color: colors.primary, fontFamily: font.semibold },
+  leading: { marginRight: spacing.sm },
+  // Matches the height and radius of Paper's outlined TextInput, so a dropdown
+  // and a text field sitting next to each other line up.
   field: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 14,
     backgroundColor: colors.surface,
   },
-  fieldError: { borderColor: colors.danger, backgroundColor: '#FEF3F3' },
+  fieldError: { borderColor: colors.danger, backgroundColor: colors.dangerSoft },
   fieldSuccess: { borderColor: colors.success },
-  fieldHover: { borderColor: colors.primaryLight },
-  trailingStatus: { marginRight: 6 },
+  fieldHover: { borderColor: colors.primary, backgroundColor: colors.primarySofter },
+  trailingStatus: { marginRight: spacing.sm },
   disabled: { opacity: 0.45 },
   fieldText: { flex: 1, fontSize: 15, color: colors.text },
   placeholderText: { color: colors.muted },
-  menuContent: { minWidth: 200, borderRadius: 12, paddingVertical: 4 },
+  menuContent: {
+    minWidth: 210,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.surface,
+    ...shadow.lg,
+  },
   groupHeader: {
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: font.bold,
     color: colors.muted,
-    letterSpacing: 0.6,
+    letterSpacing: 0.7,
     textTransform: 'uppercase',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 2,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
   },
-  groupDivider: { marginTop: 4 },
-  itemSelected: { color: colors.primary, fontWeight: '700' },
+  groupDivider: { marginTop: spacing.xs, backgroundColor: colors.border },
+  itemSelected: { color: colors.primary, fontFamily: font.semibold },
+  itemDisabled: { color: colors.disabled },
 });

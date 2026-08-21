@@ -9,7 +9,7 @@ import { StyleSheet, View, Pressable } from 'react-native';
 import { Text, TextInput, Button, HelperText } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { theme } from '../../theme';
+import { colors, theme, font, radius, shadow, spacing } from '../../theme';
 
 export default function RateUsScreen({ navigation }) {
   const { addRating } = useApp();
@@ -66,7 +66,7 @@ export default function RateUsScreen({ navigation }) {
             <MaterialCommunityIcons
               name={n <= stars ? 'star' : 'star-outline'}
               size={44}
-              color={n <= stars ? '#F9A825' : '#BDBDBD'}
+              color={n <= stars ? '#F9A825' : colors.disabled}
             />
           </Pressable>
         ))}
@@ -93,6 +93,7 @@ export default function RateUsScreen({ navigation }) {
           mode="outlined"
           onPress={() => navigation.goBack()}
           style={styles.flexBtn}
+          contentStyle={styles.btnContent}
           disabled={busy}
         >
           Back
@@ -101,6 +102,7 @@ export default function RateUsScreen({ navigation }) {
           mode="contained"
           onPress={handleSubmit}
           style={styles.flexBtn}
+          contentStyle={styles.btnContent}
           loading={busy}
           disabled={busy}
         >
@@ -113,15 +115,34 @@ export default function RateUsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: 'center', padding: 20 },
-  content: { width: '100%', maxWidth: 480 },
-  title: { textAlign: 'center', marginTop: 12, marginBottom: 20 },
-  starRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 24 },
-  comment: { marginBottom: 4 },
-  buttonRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
-  flexBtn: { flex: 1, paddingVertical: 4 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  thanksTitle: { marginTop: 16, fontWeight: 'bold' },
-  thanksText: { marginTop: 6, opacity: 0.7 },
-  btn: { marginTop: 24 },
+  screen: { flex: 1, alignItems: 'center', padding: spacing.xl },
+  content: { width: '100%', maxWidth: 520 },
+  title: {
+    textAlign: 'center',
+    marginTop: spacing.md,
+    marginBottom: spacing.xl,
+    color: colors.text,
+    fontFamily: font.semibold,
+  },
+  // The stars are the control, so they get room: a wide gap makes each one its
+  // own tap target rather than one strip of gold to poke at.
+  starRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.md,
+    marginBottom: spacing.xxl,
+  },
+  comment: { marginBottom: spacing.xs, backgroundColor: colors.surface },
+  buttonRow: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.xl },
+  flexBtn: { flex: 1, borderRadius: radius.md },
+  btnContent: { paddingVertical: 6 },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  thanksTitle: { marginTop: spacing.lg, fontFamily: font.bold, color: colors.text },
+  thanksText: { marginTop: spacing.sm, color: colors.muted, textAlign: 'center' },
+  btn: { marginTop: spacing.xxl, borderRadius: radius.md },
 });

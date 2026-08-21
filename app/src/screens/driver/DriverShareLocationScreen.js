@@ -13,7 +13,7 @@ import React, { useState } from 'react';
 import { StyleSheet, View, Platform } from 'react-native';
 import { Text, Card, Button } from 'react-native-paper';
 import { useApp } from '../../context/AppContext';
-import { colors } from '../../theme';
+import { colors, font, radius, spacing } from '../../theme';
 import ScreenContainer from '../../components/ScreenContainer';
 
 export default function DriverShareLocationScreen({ navigation }) {
@@ -25,6 +25,8 @@ export default function DriverShareLocationScreen({ navigation }) {
     sharingError,
     startSharingLocation,
     stopSharingLocation,
+    sharingBackground,
+    trackingFresh,
   } = useApp();
   const cabId = currentUser?.cabId;
   const cab = cabId ? getCabById(cabId) : null;
@@ -68,9 +70,18 @@ export default function DriverShareLocationScreen({ navigation }) {
             </View>
           ) : null}
 
+          {/* The same four states the dashboard shows, for the same reason: a screen
+              that says "sharing" while nothing is published is worse than one that
+              admits it doesn't know. */}
           <Text variant="bodyLarge" style={styles.status}>
             {sharing
-              ? '🟢 Sharing live location'
+              ? trackingFresh === false
+                ? '⚠️ On, but no GPS signal reaching the server'
+                : trackingFresh === null
+                  ? '🟡 Starting — waiting for the first fix'
+                  : sharingBackground
+                    ? '🟢 Sharing live location (continues in the background)'
+                    : '🟢 Sharing live location — only while this app is open'
               : busy
                 ? 'Requesting permission…'
                 : denied
@@ -79,6 +90,19 @@ export default function DriverShareLocationScreen({ navigation }) {
                     ? '⚠️ Error'
                     : 'Not sharing'}
           </Text>
+          {/* WHY THIS DISTINCTION IS SPELLED OUT. Foreground-only means the cab goes
+              dark the moment the driver locks the phone or opens Google Maps from the
+              Navigate button — which is most of a trip. The fix is a system setting,
+              so the driver has to be told what to change. */}
+          {sharing && !sharingBackground ? (
+            <View style={styles.warnBox}>
+              <Text variant="bodySmall" style={styles.warnText}>
+                Set location access to “Allow all the time” in your phone's settings
+                so employees keep seeing your cab when your screen is off or you
+                switch to a navigation app.
+              </Text>
+            </View>
+          ) : null}
 
           {sharingCoords && (
             <Text variant="bodySmall" style={styles.coords}>
@@ -139,18 +163,20 @@ export default function DriverShareLocationScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  detail: { opacity: 0.85, marginTop: 6 },
+  detail: { color: colors.textSecondary, marginTop: spacing.sm, lineHeight: 21 },
   warnBox: {
-    backgroundColor: '#FFF6E5',
-    borderRadius: 8,
-    padding: 10,
-    marginTop: 12,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: '#F2E3C4',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.lg,
   },
-  warnText: { color: '#B26A00', lineHeight: 18 },
-  status: { marginTop: 14, fontWeight: 'bold' },
-  coords: { color: colors.muted, marginTop: 4 },
-  help: { color: colors.muted, marginTop: 8 },
-  buttons: { flexDirection: 'row', gap: 12, marginTop: 14 },
-  btn: { flex: 1 },
-  backBtn: { marginTop: 16, alignSelf: 'center' },
+  warnText: { color: colors.warning, lineHeight: 19 },
+  status: { marginTop: spacing.lg, fontFamily: font.semibold, color: colors.text },
+  coords: { color: colors.muted, marginTop: spacing.xs },
+  help: { color: colors.muted, marginTop: spacing.sm, lineHeight: 19 },
+  buttons: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg },
+  btn: { flex: 1, borderRadius: radius.md },
+  backBtn: { marginTop: spacing.lg, alignSelf: 'center' },
 });

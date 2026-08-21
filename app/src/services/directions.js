@@ -6,7 +6,10 @@
 // WEB routing uses OSRM (free, no key, allows browser calls). We do NOT use the
 // Google Directions REST API on web because Google blocks browser (CORS) calls
 // to it — Google's key is instead used on the phone in Stage 4d. If OSRM is
-// unreachable we fall back to a straight-line estimate so the UI still works.
+// unreachable, refuses, or is simply too slow (see ROUTE_TIMEOUT_MS) we fall back
+// to a straight-line estimate so the UI still works. The fallback marks itself
+// `source: 'estimate'`, which is what puts "(approx)" next to the ETA — a rough
+// number the rider can see is rough beats a spinner that never resolves.
 //
 // Returns: { durationSec, distanceMeters, coordinates: [[lat,lng]...], source }
 // ---------------------------------------------------------------------------
@@ -21,28 +24,43 @@ export const OFFICE = {
   label: 'Office — Vamsiram Jyothi Granules, Kondapur',
 };
 
-// Fallback pickup coords for demo pickup names, used only if an employee hasn't
-// set their exact home location in their profile yet.
-const PICKUP_COORDS = {
-  gachibowli: { latitude: 17.44, longitude: 78.3489 },
-  'hitec city': { latitude: 17.4435, longitude: 78.3772 },
-  kondapur: { latitude: 17.4615, longitude: 78.3521 },
-  madhapur: { latitude: 17.4483, longitude: 78.3915 },
-};
-const DEFAULT_DEST = { latitude: 17.44, longitude: 78.3489 }; // Gachibowli
-
-// Turn a pickup name (e.g. "Gachibowli") into coordinates.
-export function resolvePickup(name) {
-  if (!name) return DEFAULT_DEST;
-  return PICKUP_COORDS[name.trim().toLowerCase()] || DEFAULT_DEST;
+// A home record that can actually be routed to, or null.
+//
+// A profile can hold an address as TEXT with no pin dropped on it — enough to
+// print on a driver's trip sheet, not enough to compute a route to. Both halves
+// have to be real numbers before this counts as a location.
+function homePin(home) {
+  return home &&
+    typeof home.latitude === 'number' &&
+    typeof home.longitude === 'number'
+    ? home
+    : null;
 }
 
 // Where the cab is heading for a given trip:
-//   • Home → Office  → the fixed office
-//   • Office → Home  → the employee's saved home (falls back to pickup area)
+//   • Home → Office  → the fixed office, which is always known
+//   • Office → Home  → the employee's saved home pin, or NULL if they have none
+//
+// It returns null rather than guessing, and that is the whole point of this
+// function. There used to be a fallback chain here: no home pin → look the
+// pickup AREA name up in a four-entry table of demo coordinates → and anything
+// not in that table → Gachibowli. So an employee living in Kukatpally with no
+// pin on file was shown "Reaching your drop in 18 min" for a journey to a suburb
+// they have nothing to do with, with no hint the number was about somewhere
+// else. And this was the NORMAL case, not an edge one: roster-generated bookings
+// carry employeeHome: null by construction (see bookingFromRide in rides.js) and
+// every ride in this company comes from the roster.
+//
+// A missing ETA is a gap the rider can see and work around. A confident wrong
+// one is a gap they can't.
+//
+// `pickupName` is no longer read — it is kept so the call signature doesn't
+// change, and named here as what it was: the input that produced the wrong
+// answer.
+// eslint-disable-next-line no-unused-vars
 export function tripDestination(direction, employeeHome, pickupName) {
   if (direction === 'Office → Home') {
-    return employeeHome || resolvePickup(pickupName);
+    return homePin(employeeHome);
   }
   return OFFICE; // Home → Office (and any other case)
 }
@@ -71,12 +89,34 @@ export function tripPickupPoint(booking) {
   if (booking?.direction === 'Office → Home') {
     return { coords: OFFICE, label: OFFICE.label };
   }
-  const home = booking?.employeeHome;
-  const hasCoords = home && typeof home.latitude === 'number';
   return {
-    coords: hasCoords ? home : null,
+    // Same test as the drop side — a longitude of undefined routes as readily
+    // as a missing home does, which is to say not at all.
+    coords: homePin(booking?.employeeHome),
     label: homeLabel(booking) || 'Employee home',
   };
+}
+
+// Where the DRIVER delivers the employee — the exact mirror of tripPickupPoint:
+//   • Home → Office  → the fixed office
+//   • Office → Home  → the employee's home
+//
+// This exists because the driver's Navigate button called tripPickupPoint no
+// matter what the trip was doing, so on a drop run — where the pickup IS the
+// office — it routed a cab full of people back to the car park they had just
+// pulled out of. Which place the driver needs next changes the moment someone
+// gets in, so there have to be two functions and the caller has to choose.
+//
+// Same contract as tripPickupPoint: `coords` may be null when only an address
+// string is known, and openDirections() then falls back to a text search.
+export function tripDropPoint(booking) {
+  if (booking?.direction === 'Office → Home') {
+    return {
+      coords: homePin(booking?.employeeHome),
+      label: homeLabel(booking) || 'Employee home',
+    };
+  }
+  return { coords: OFFICE, label: booking?.officeLocation || OFFICE.label };
 }
 
 // Human-readable PICKUP and DROP labels for a booking. Resolves the generic
@@ -106,22 +146,51 @@ export function distanceMeters(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+// How long to wait for OSRM before giving up and estimating instead.
+//
+// This is a PUBLIC demo server with no uptime promise, and `fetch` has no
+// timeout of its own — a request that hangs hangs until the platform gives up,
+// which on some networks is a minute or more. Track Cab asks for a fresh route
+// about every 8 seconds, so anything slower than that has already been overtaken
+// by the next attempt; 6s leaves room for a slow-but-working reply while
+// guaranteeing the screen gets *some* answer before it asks again. A late reply
+// isn't worth waiting for — it describes where the cab was, not where it is.
+export const ROUTE_TIMEOUT_MS = 6000;
+
 async function osrmRoute(origin, dest) {
   // OSRM wants lng,lat order.
   const url =
     `https://router.project-osrm.org/route/v1/driving/` +
     `${origin.longitude},${origin.latitude};${dest.longitude},${dest.latitude}` +
     `?overview=full&geometries=geojson`;
-  const res = await fetch(url);
-  const json = await res.json();
-  if (json.code !== 'Ok' || !json.routes?.length) throw new Error('no route');
-  const r = json.routes[0];
-  return {
-    durationSec: r.duration,
-    distanceMeters: r.distance,
-    coordinates: r.geometry.coordinates.map(([lng, lat]) => [lat, lng]),
-    source: 'osrm',
-  };
+
+  // Abort rather than merely stop waiting: an un-aborted request holds its
+  // connection and still delivers a reply nobody wants, and this is a screen
+  // that fires one every few seconds.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ROUTE_TIMEOUT_MS);
+  try {
+    // The whole exchange is inside the timeout, not just the fetch. Headers can
+    // arrive promptly and the body then stall — reading it is a second wait, and
+    // an unbounded one if the timer is cleared as soon as `fetch` resolves.
+    const res = await fetch(url, { signal: controller.signal });
+    // A 5xx or a rate-limit reply is not a route. Left unchecked, the body is
+    // parsed as JSON anyway and fails in a less obvious way.
+    if (!res.ok) throw new Error(`routing service returned ${res.status}`);
+    const json = await res.json();
+    if (json.code !== 'Ok' || !json.routes?.length) throw new Error('no route');
+    const r = json.routes[0];
+    return {
+      durationSec: r.duration,
+      distanceMeters: r.distance,
+      coordinates: r.geometry.coordinates.map(([lng, lat]) => [lat, lng]),
+      source: 'osrm',
+    };
+  } finally {
+    // Every outcome — replied, refused, timed out — so a finished request never
+    // leaves a timer running behind it.
+    clearTimeout(timer);
+  }
 }
 
 // Rough fallback: straight line + city-average speed (~22 km/h).
@@ -138,6 +207,9 @@ function estimateRoute(origin, dest) {
   };
 }
 
+// Always resolves, and within ROUTE_TIMEOUT_MS: unreachable, refused, malformed
+// and too-slow all land on the estimate. Callers can rely on getting an answer,
+// so a caller that shows "Calculating…" until this returns is never stuck there.
 export async function getRoute(origin, dest) {
   try {
     return await osrmRoute(origin, dest);

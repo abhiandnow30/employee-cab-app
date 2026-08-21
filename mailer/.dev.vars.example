@@ -1,0 +1,3 @@
+# Copy to ".dev.vars" for `wrangler dev`. That file is git-ignored.
+# Only secrets belong here — everything else is in wrangler.toml [vars].
+SENDGRID_API_KEY=SG.paste-your-sendgrid-api-key-here

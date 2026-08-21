@@ -11,16 +11,18 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, Platform } from 'react-native';
 import {
   Text, Avatar, Card, List, Button, Divider, TextInput, HelperText,
-  Portal, Dialog, Chip,
+  Portal, Dialog, Chip, Snackbar,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import ScreenContainer from '../../components/ScreenContainer';
 import { REQUEST_STATUS } from '../../services/addressRequests';
-import { colors } from '../../theme';
+import { formatLoginCode, isShareableCode } from '../../utils/driverLogin';
+import { colors, font, radius, shadow, spacing } from '../../theme';
+import useMicrosoftAuthRequest from '../../utils/useMicrosoftAuthRequest';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -32,9 +34,9 @@ function formatDate(ts) {
 }
 
 const STATUS_STYLE = {
-  [REQUEST_STATUS.PENDING]: { bg: '#FFF4E0', fg: '#B26A00', icon: 'clock-outline' },
-  [REQUEST_STATUS.APPROVED]: { bg: '#E7F4E8', fg: colors.success, icon: 'check-circle-outline' },
-  [REQUEST_STATUS.REJECTED]: { bg: '#FDECEC', fg: colors.danger, icon: 'close-circle-outline' },
+  [REQUEST_STATUS.PENDING]: { bg: colors.warningSoft, fg: '#B26A00', icon: 'clock-outline' },
+  [REQUEST_STATUS.APPROVED]: { bg: colors.successSoft, fg: colors.success, icon: 'check-circle-outline' },
+  [REQUEST_STATUS.REJECTED]: { bg: colors.dangerSoft, fg: colors.danger, icon: 'close-circle-outline' },
 };
 
 function StatusChip({ status }) {
@@ -44,7 +46,7 @@ function StatusChip({ status }) {
       compact
       icon={s.icon}
       style={{ backgroundColor: s.bg }}
-      textStyle={{ color: s.fg, fontWeight: 'bold' }}
+      textStyle={{ color: s.fg, fontFamily: font.bold }}
     >
       {status}
     </Chip>
@@ -54,11 +56,51 @@ function StatusChip({ status }) {
 const EMPTY_FORM = { requestedAddress: '', landmark: '', reason: '' };
 
 export default function ProfileScreen() {
-  const { currentUser, logout, homeAddressOf, myAddressRequests, requestAddressChange } = useApp();
+  const {
+    currentUser, logout, homeAddressOf, myAddressRequests, requestAddressChange,
+    microsoftLinked, linkWithMicrosoftPopup, linkWithMicrosoftCredential, unlinkMicrosoft,
+  } = useApp();
   const u = currentUser || {};
   const isEmployee = u.role === 'employee';
+  const isDriver = u.role === 'driver';
+  // Only ever the code stored on the profile, which is the real Firebase password.
+  // The phone-only value a driver on no cab holds is not a code and must not show.
+  const loginCode = isDriver && isShareableCode(u.loginCode) ? u.loginCode : '';
   const roleLabel = u.role === 'admin' ? 'Transport Desk' : u.role === 'driver' ? 'Driver' : 'Employee';
   const address = homeAddressOf(u);
+
+  // --- Link / unlink Microsoft --------------------------------------------
+  const { promptMicrosoftSignIn, ready: microsoftReady } = useMicrosoftAuthRequest();
+  const [msBusy, setMsBusy] = useState(false);
+  const [msSnack, setMsSnack] = useState('');
+
+  async function handleLinkMicrosoft() {
+    setMsBusy(true);
+    try {
+      const result =
+        Platform.OS === 'web'
+          ? await linkWithMicrosoftPopup()
+          : await (async () => {
+              const token = await promptMicrosoftSignIn();
+              if (!token) return { ok: true }; // cancelled
+              return linkWithMicrosoftCredential(token.idToken, token.rawNonce);
+            })();
+      setMsSnack(
+        result.ok ? 'Microsoft account linked — you can use it to sign in next time.' : result.message
+      );
+    } catch (e) {
+      setMsSnack(e.message || 'Could not link your Microsoft account.');
+    } finally {
+      setMsBusy(false);
+    }
+  }
+
+  async function handleUnlinkMicrosoft() {
+    setMsBusy(true);
+    const result = await unlinkMicrosoft();
+    setMsBusy(false);
+    setMsSnack(result.ok ? 'Microsoft account unlinked.' : result.message);
+  }
 
   const initials = (u.name || '?')
     .split(' ')
@@ -115,14 +157,39 @@ export default function ProfileScreen() {
 
       {/* All fields are read-only — the admin manages profile data. */}
       <Card mode="outlined" style={styles.card}>
-        <List.Item title="Email" description={u.email || '—'} left={(p) => <List.Icon {...p} icon="email" />} />
+        {/* A DRIVER SEES THEIR LOGIN CODE, not an email. Their stored address is
+            synthesized on an unroutable domain (see utils/driverLogin.js) — it
+            would only invite them to try mailing it — and the code is the one thing
+            they actually need to know, especially after a cab change. */}
+        {isDriver ? (
+          <List.Item
+            title="Login code"
+            description={
+              loginCode
+                ? formatLoginCode(loginCode)
+                : 'None yet — the transport desk gives you one when they assign your cab'
+            }
+            descriptionStyle={loginCode ? styles.codeValue : undefined}
+            left={(p) => <List.Icon {...p} icon="dialpad" />}
+          />
+        ) : (
+          <List.Item
+            title="Email"
+            description={u.email || '—'}
+            left={(p) => <List.Icon {...p} icon="email" />}
+          />
+        )}
         <Divider />
-        <List.Item
-          title="Employee ID"
-          description={u.empId || 'Not set'}
-          left={(p) => <List.Icon {...p} icon="identifier" />}
-        />
-        <Divider />
+        {isDriver ? null : (
+          <>
+            <List.Item
+              title="Employee ID"
+              description={u.empId || 'Not set'}
+              left={(p) => <List.Icon {...p} icon="identifier" />}
+            />
+            <Divider />
+          </>
+        )}
         <List.Item
           title="Phone"
           description={u.phone || 'Not set'}
@@ -193,12 +260,53 @@ export default function ProfileScreen() {
               </Card.Content>
             </Card>
           ) : null}
+
+          {/* Added ALONGSIDE the email/password sign-in you already used to get
+              here — never a replacement. Linking makes Microsoft usable next
+              time, on the SAME account (same profile, same ride history). */}
+          <Card mode="outlined" style={styles.card}>
+            <Card.Content>
+              <Text variant="titleMedium">Microsoft sign-in</Text>
+              <Text variant="bodySmall" style={styles.help}>
+                {microsoftLinked
+                  ? 'Your Microsoft work account is linked — you can use it to sign in instead of your password.'
+                  : 'Link your Microsoft work account so you can sign in with it next time, in addition to your password.'}
+              </Text>
+              {microsoftLinked ? (
+                <Button
+                  mode="outlined"
+                  icon="link-off"
+                  onPress={handleUnlinkMicrosoft}
+                  loading={msBusy}
+                  disabled={msBusy}
+                  style={styles.requestBtn}
+                >
+                  Unlink Microsoft account
+                </Button>
+              ) : (
+                <Button
+                  mode="contained"
+                  icon="microsoft"
+                  onPress={handleLinkMicrosoft}
+                  loading={msBusy}
+                  disabled={msBusy || (Platform.OS !== 'web' && !microsoftReady)}
+                  style={styles.requestBtn}
+                >
+                  Link Microsoft account
+                </Button>
+              )}
+            </Card.Content>
+          </Card>
         </>
       ) : null}
 
       <Button mode="contained" icon="logout" onPress={logout} style={styles.logout}>
         Log out
       </Button>
+
+      <Snackbar visible={!!msSnack} onDismiss={() => setMsSnack('')} duration={4000}>
+        {msSnack}
+      </Snackbar>
 
       <Portal>
         <Dialog visible={open} onDismiss={() => setOpen(false)} style={styles.dialog}>
@@ -257,37 +365,65 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { paddingVertical: 4 },
-  header: { alignItems: 'center', marginBottom: 24 },
-  name: { marginTop: 12, fontWeight: 'bold' },
-  role: { opacity: 0.7 },
-  card: { marginBottom: 20 },
-  help: { opacity: 0.7, marginTop: 4, marginBottom: 12 },
-  requestBtn: { marginTop: 4 },
-  requestsTitle: { marginBottom: 8 },
+  container: { paddingVertical: spacing.xs },
+  header: { alignItems: 'center', marginBottom: spacing.xl },
+  name: { marginTop: spacing.md, fontFamily: font.bold, color: colors.text },
+  role: { color: colors.muted, marginTop: 2 },
+  card: {
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  codeValue: {
+    // Deliberately NOT Poppins: a monospaced face is what keeps 0/O and 1/l
+    // apart, and the driver reads this off the screen to type it into a login
+    // box, so a guess here costs them the login.
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 16,
+    letterSpacing: 1.5,
+    color: colors.text,
+  },
+  help: { color: colors.muted, marginTop: spacing.xs, marginBottom: spacing.md },
+  requestBtn: { marginTop: spacing.xs, borderRadius: radius.md, alignSelf: 'flex-start' },
+  requestsTitle: { marginBottom: spacing.md, color: colors.text },
+  // A status-coloured left rule plus a tinted tray, so a stack of these reads
+  // as a list of decisions rather than as indented paragraphs.
   requestRow: {
     borderLeftWidth: 3,
-    paddingLeft: 12,
-    paddingVertical: 8,
-    marginBottom: 8,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceAlt,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.md,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.md,
   },
-  requestTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  requestWhen: { opacity: 0.6 },
-  requestNew: { marginTop: 6 },
-  rejectReason: { color: colors.danger, marginTop: 4 },
-  logout: { paddingVertical: 4, marginTop: 4 },
-  dialog: { width: '100%', maxWidth: 440, alignSelf: 'center' },
-  dialogBody: { paddingVertical: 8 },
-  currentLabel: { opacity: 0.8, marginBottom: 4 },
+  requestTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  requestWhen: { color: colors.muted },
+  requestNew: { marginTop: spacing.sm, color: colors.text },
+  rejectReason: { color: colors.danger, marginTop: spacing.xs },
+  logout: { marginTop: spacing.xs, borderRadius: radius.md },
+  dialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
+  dialogBody: { paddingVertical: spacing.sm },
+  currentLabel: { color: colors.muted, marginBottom: spacing.xs },
   currentBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 6,
-    backgroundColor: '#EDF3FB',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
+    gap: spacing.sm,
+    backgroundColor: colors.primarySofter,
+    borderWidth: 1,
+    borderColor: colors.primarySoft,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
   },
   currentText: { flex: 1, color: colors.text },
-  input: { marginBottom: 10 },
+  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
 });

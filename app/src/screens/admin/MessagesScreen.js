@@ -10,7 +10,7 @@ import { StyleSheet, View, FlatList } from 'react-native';
 import { Text, Card, Chip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { subscribeAllMessages } from '../../services/messages';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -83,17 +83,42 @@ export default function MessagesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerCol: { flex: 1, width: '100%', maxWidth: 640, alignSelf: 'center', padding: 12 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 2 },
-  hint: { opacity: 0.7, flex: 1 },
-  countChip: { backgroundColor: '#E3F0FF' },
-  list: { paddingVertical: 12 },
-  card: { marginBottom: 10 },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 4 },
-  when: { opacity: 0.55 },
-  message: { marginTop: 2 },
-  error: { color: colors.danger, marginBottom: 8 },
-  empty: { alignItems: 'center', paddingVertical: 48, gap: 10 },
-  emptyText: { opacity: 0.7 },
+  container: { flex: 1, backgroundColor: colors.background },
+  centerCol: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 680,
+    alignSelf: 'center',
+    padding: spacing.lg,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    paddingHorizontal: 2,
+  },
+  hint: { color: colors.muted, flex: 1, lineHeight: 19 },
+  countChip: { backgroundColor: colors.primarySoft },
+  list: { paddingVertical: spacing.lg },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  when: { color: colors.muted },
+  message: { marginTop: 2, color: colors.textSecondary, lineHeight: 21 },
+  error: { color: colors.danger, marginBottom: spacing.md },
+  empty: { alignItems: 'center', paddingVertical: 56, gap: spacing.md },
+  emptyText: { color: colors.muted },
 });

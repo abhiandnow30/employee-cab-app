@@ -11,7 +11,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Text } from 'react-native-paper';
 import { loadLeaflet, addTileLayer, DEFAULT_CENTER } from './leaflet';
-import { colors } from '../theme';
+import { colors, font, radius } from '../theme';
 
 // A blue pin with a car glyph + the cab label underneath.
 function cabIcon(L, label) {
@@ -19,12 +19,15 @@ function cabIcon(L, label) {
     className: '',
     html:
       `<div style="display:flex;flex-direction:column;align-items:center">` +
-      `<div style="background:#1565C0;color:#fff;width:26px;height:26px;border-radius:50% 50% 50% 0;` +
+      `<div style="background:${colors.primary};color:#fff;width:26px;height:26px;border-radius:50% 50% 50% 0;` +
       `transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);` +
       `display:flex;align-items:center;justify-content:center">` +
       `<span style="transform:rotate(45deg);font-size:13px">🚕</span></div>` +
-      `<span style="margin-top:2px;background:#fff;padding:1px 5px;border-radius:6px;font-size:11px;` +
-      `font-weight:600;color:#0D47A1;box-shadow:0 1px 3px rgba(0,0,0,.25);white-space:nowrap">${label}</span>` +
+      // The cab number under the pin. Poppins by family name (never by
+      // font-weight — see src/fonts.js) so it matches the rest of the UI.
+      `<span style="margin-top:3px;background:#fff;padding:2px 6px;border-radius:8px;font-size:11px;` +
+      `font-family:${font.semibold},system-ui,sans-serif;letter-spacing:.2px;` +
+      `color:${colors.primaryDark};box-shadow:0 1px 3px rgba(16,24,40,.25);white-space:nowrap">${label}</span>` +
       `</div>`,
     iconSize: [26, 42],
     iconAnchor: [13, 26],
@@ -119,7 +122,12 @@ export default function FleetMap({ cabs = [] }) {
 }
 
 const styles = StyleSheet.create({
-  map: { flex: 1, minHeight: 360, borderRadius: 8, overflow: 'hidden' },
-  fallback: { backgroundColor: '#E8EEF5', alignItems: 'center', justifyContent: 'center', padding: 20 },
-  fallbackText: { color: colors.muted, textAlign: 'center' },
+  map: { flex: 1, minHeight: 360, borderRadius: radius.md, overflow: 'hidden' },
+  fallback: {
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  fallbackText: { color: colors.muted, textAlign: 'center', lineHeight: 20 },
 });

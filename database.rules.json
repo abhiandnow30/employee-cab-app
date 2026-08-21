@@ -1,14 +1,21 @@
 {
-  "//": "REALTIME DATABASE SECURITY RULES — replaces open test mode.",
-  "//2": "Only signed-in users can read/write a cab's live location. Everything",
-  "//3": "else is denied by default. (Stricter option: allow a cab's location to",
-  "//4": "be written only by that cab's assigned driver — needs a uid->cab map.)",
   "rules": {
-    "cabs": {
-      "$cabId": {
-        "location": {
-          ".read": "auth != null",
-          ".write": "auth != null"
+    "driverLocations": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['latitude', 'longitude', 'updatedAt'])",
+        "latitude": {
+          ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90"
+        },
+        "longitude": {
+          ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180"
+        },
+        "updatedAt": {
+          ".validate": "newData.val() === now"
+        },
+        "$other": {
+          ".validate": false
         }
       }
     }

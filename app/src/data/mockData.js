@@ -5,27 +5,14 @@
 // starter fleet the admin can seed from.)
 // ---------------------------------------------------------------------------
 
-// How many riders a cab seats when nothing else is set. The admin can give each
-// cab its own capacity in Manage Cabs; this is only the fallback for cabs that
-// were created before capacity existed.
+// How many riders a cab seats when nothing else is set. Each driver enters their
+// own vehicle's seat count when they register it; this is only the fallback for
+// cabs saved before capacity existed.
 export const DEFAULT_CAB_CAPACITY = 6;
 
-// The company's starter cabs (seeded on request from Manage Cabs).
-export const cabs = [
-  { id: 'c1', cabNumber: 'TS 09 AB 1234', driverName: 'Ramesh', driverPhone: '9111111111', capacity: 6 },
-  { id: 'c2', cabNumber: 'TS 09 CD 5678', driverName: 'Suresh', driverPhone: '9222222222', capacity: 6 },
-  { id: 'c3', cabNumber: 'TS 09 EF 9012', driverName: 'Mahesh', driverPhone: '9333333333', capacity: 6 },
-];
-
-// Times shown in the Weekly Schedule table (night-shift service: 9 PM → 6 AM).
-// "Pickup" = cab picks you up from home to office → start of the night shift
-//            (late evening: 9-11 PM).
-// "Drop"   = cab drops you home from office → end of the night shift
-//            (early morning of the next day: 4-6 AM).
-// "NA" is the default (no ride that leg).
-export const NONE = 'NA';
-export const PICKUP_TIMES = [NONE, '09:00 PM', '10:00 PM', '11:00 PM'];
-export const DROP_TIMES = [NONE, '04:00 AM', '05:00 AM', '06:00 AM'];
+// (There is no starter fleet any more. Cabs are registered by the drivers who
+// drive them, so an empty fleet is a real, meaningful state — "no coordinator has
+// added a cab yet" — rather than something to paper over with demo vehicles.)
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -87,10 +74,19 @@ export const STATUS = {
   ASSIGNED: 'Cab assigned',
   ON_THE_WAY: 'On the way',
   ARRIVED: 'Arrived',
+  // The rider read out their start OTP and the driver typed it in — the one
+  // status the driver cannot set on their own. See RIDE_OTP_LENGTH below.
+  ON_BOARD: 'On board',
   COMPLETED: 'Completed',
   NO_SHOW: 'No show', // driver reached the pickup but the employee wasn't there
   CANCELLED: 'Cancelled',
 };
+
+// How many digits the ride-start OTP has. SIX, not four, is deliberate: the code
+// is checked by `firestore.rules`, and rules cannot count failed attempts, so the
+// only thing standing between a scripted client and a guessed code is the size of
+// the space. Four digits is 10,000 tries; six is a million.
+export const RIDE_OTP_LENGTH = 6;
 
 // Employees must book a ride at least this many hours before it starts.
 export const BOOKING_LEAD_HOURS = 9;
@@ -98,6 +94,24 @@ export const BOOKING_LEAD_HOURS = 9;
 // Employees must raise a cancellation request at least this many hours before
 // the ride; the admin then approves or rejects it.
 export const CANCEL_CUTOFF_HOURS = 4;
+
+// THE DESK'S OWN DEADLINE — 30 minutes, not 4 hours.
+//
+// Two different actors, two different windows, and the gap between them is the
+// point. The employee's 4 hours exists so a seat freed up is still usable: at 4
+// hours' notice the coordinator can re-plan the run. The desk's 30 minutes exists
+// for the opposite reason — they are the ones being phoned at 9:40 PM about a 10 PM
+// drop, and refusing them would leave a cab driving to collect somebody who has
+// already said they aren't coming.
+//
+// Expressed in HOURS as a fraction because that is what every existing helper takes
+// (canRequestCancel, cancelDeadline, hoursUntil all work in fractional hours), so
+// this needs no parallel set of minute-based functions.
+//
+// Anything inside the last 30 minutes is deliberately still refused: at that point
+// the driver is at or near the pickup, and the honest record of what happened is a
+// no-show, not a cancellation.
+export const DESK_CANCEL_CUTOFF_HOURS = 0.5;
 
 // The state of a cancellation request on a booking (separate from `status`, so
 // the ride stays active until the admin approves).

@@ -32,3 +32,6 @@ Thumbs.db
 .vscode/
 .idea/
 .gstack/
+
+# Firebase CLI local deploy cache — machine-local, not source
+.firebase/

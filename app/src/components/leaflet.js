@@ -11,6 +11,8 @@
 //     instead of a blank box that waits forever.
 // ---------------------------------------------------------------------------
 
+import { font } from '../fonts';
+
 const VERSION = '1.9.4';
 const LEAFLET_JS = `https://unpkg.com/leaflet@${VERSION}/dist/leaflet.js`;
 const LEAFLET_CSS = `https://unpkg.com/leaflet@${VERSION}/dist/leaflet.css`;
@@ -41,6 +43,7 @@ export function loadLeaflet() {
       link.crossOrigin = 'anonymous';
       document.head.appendChild(link);
     }
+    injectFontCss();
 
     let script = document.getElementById('leaflet-js');
     if (!script) {
@@ -69,6 +72,33 @@ export function loadLeaflet() {
   });
 
   return loader;
+}
+
+// Leaflet ships its own type styles, so its popups, tooltips and the attribution
+// strip arrive in the browser's default sans — the one visible island of a
+// different typeface in an otherwise all-Poppins app. expo-font has already
+// registered each weight under its own family name on the web (see src/fonts.js),
+// so this only has to point Leaflet's own classes at them.
+//
+// Injected once, alongside the stylesheet it overrides, and only on the web —
+// there is no Leaflet on a phone.
+const FONT_CSS = [
+  '.leaflet-container,',
+  '.leaflet-container .leaflet-popup-content,',
+  '.leaflet-container .leaflet-control,',
+  '.leaflet-container .leaflet-control-attribution {',
+  `  font-family: ${font.regular}, system-ui, sans-serif;`,
+  '}',
+  '.leaflet-container .leaflet-popup-content { font-size: 13px; line-height: 1.5; }',
+  '.leaflet-popup-content-wrapper, .leaflet-popup-tip { border-radius: 12px; }',
+].join('\n');
+
+function injectFontCss() {
+  if (document.getElementById('leaflet-font-css')) return;
+  const style = document.createElement('style');
+  style.id = 'leaflet-font-css';
+  style.textContent = FONT_CSS;
+  document.head.appendChild(style);
 }
 
 // The OpenStreetMap tile layer every map uses.

@@ -8,6 +8,11 @@
 // Layout: company brand at top, nav items in the middle, and the signed-in
 // employee at the BOTTOM — showing just the name, which expands on tap to reveal
 // Employee ID, email, and a "Change password" action.
+//
+// EXCEPT FOR DRIVERS AND COORDINATORS, who get neither: they sign in with a code
+// the desk issues, so they have no password of their own and no real email
+// address. See the comment in UserCard for why offering "Change password" to
+// either would lock them out permanently rather than merely being useless.
 // ---------------------------------------------------------------------------
 
 import React, { useState } from 'react';
@@ -17,16 +22,28 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COMPANY_NAME, companyLogo } from '../branding';
+import { colors, font, radius, shadow, spacing } from '../theme';
 
 // Each menu item → which screen it opens.
+//
+// My Shift Calendar, Change Request and Feedback are deliberately NOT here: the
+// Home screen already puts them front and centre as tiles, and listing them in
+// both places made the menu longer without making anything reachable that wasn't
+// already one tap away. Home is the first item, so the tiles are never far.
+// Appended to the employee menu ONLY while it means something: someone with no
+// address/route yet, or with a request still in flight. A fully set-up rider has
+// nothing to do here, so it isn't a permanent row.
+export const CAB_SERVICE_ITEM = {
+  label: 'Cab Service', icon: 'car-clock', screen: 'CabServiceRequest',
+};
+
 export const DRAWER_ITEMS = [
   { label: 'Home', icon: 'home', screen: 'EmployeeHome' },
   { label: 'Profile', icon: 'account', screen: 'Profile' },
   { label: 'My Rides', icon: 'calendar-search', screen: 'MyRides' },
+  { label: 'Notifications', icon: 'bell', screen: 'Notifications' },
   { label: 'Ride History', icon: 'history', screen: 'RosterHistory' },
-  { label: 'Trip Cancel', icon: 'car-off', screen: 'TripCancel' },
   { label: 'Track Cab', icon: 'map-marker-radius', screen: 'TrackCab' },
-  { label: 'Feedback', icon: 'message-text', screen: 'Feedback' },
   { label: 'Rate Us', icon: 'star', screen: 'RateUs' },
 ];
 
@@ -34,24 +51,88 @@ export const DRAWER_ITEMS = [
 // registered but unreachable — the only navigation they had was the back arrow.
 export const DRIVER_DRAWER_ITEMS = [
   { label: 'My Trips', icon: 'car-clock', screen: 'DriverHome' },
-  { label: 'Share Location', icon: 'crosshairs-gps', screen: 'DriverShareLocation' },
+  // NO "Share Location" ROW. Sharing is a switch on My Trips now, so a menu item
+  // leading to a screen whose only control has moved is a second door to a room
+  // the driver is already standing in. The screen itself is still registered and
+  // still reachable — tapping the sharing line on My Trips opens it — because it
+  // holds the live coordinates and the warning for a cab that isn't linked back.
   { label: 'Profile', icon: 'account', screen: 'Profile' },
 ];
 
 // Admin (transport desk) menu — the actions that used to be top buttons.
+// HR / Admin owns the SOURCE DATA and the policy: the monthly roster, who exists,
+// what the shifts mean, and the reporting. Day-to-day cab assignment is the
+// coordinator's job and deliberately absent here.
 export const ADMIN_DRAWER_ITEMS = [
-  { label: 'Dashboard', icon: 'view-dashboard', screen: 'Bookings' },
+  { label: 'Upload Roster', icon: 'file-upload-outline', screen: 'RosterUpload' },
+  // WHERE "ALL BOOKINGS" USED TO BE. HR gets the day board here instead — the same
+  // screen the coordinator runs on, and the one place "Add a rider" exists, which is
+  // what HR actually needs: the monthly sheet always misses somebody (a mid-month
+  // joiner, someone who turns out to need a cab) and HR is usually who hears about
+  // it. Adding them writes the roster day, so the rider appears on the coordinator's
+  // board with no re-upload. HR needn't assign the cab — the rider shows as Waiting.
+  //
+  // The Bookings screen is NOT deleted: it is still registered for both desk roles
+  // in App.js and still in the coordinator's menu. Two things live only there, so if
+  // HR ever needs them again this is the line to restore: approving/rejecting a
+  // rider's cancellation REQUEST, and the by-cab view of the last 180 days.
+  { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
+  // The transport desk itself. Its own screen rather than a role toggle inside
+  // Add Employee: a coordinator is an account but not a rider, so none of the
+  // rider fields on that form apply to them.
+  { label: 'Coordinators', icon: 'headset', screen: 'ManageCoordinators' },
+  // No "Exception Approvals" here. Nothing routes to HR any more: the company runs
+  // two scheduled rides and nothing else, so the requests that needed HR's
+  // sign-off (a cab after an extended shift, an emergency ride) no longer exist.
+  // What remains — leave, absent, drop a ride, shift changed — only ever cancels or
+  // re-codes a ride, which is the coordinator's job as they run the day.
   { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
-  { label: 'Messages', icon: 'email-outline', screen: 'Messages' },
-  { label: 'Manage Cabs', icon: 'car-multiple', screen: 'ManageCabs' },
-  { label: 'Manage Drivers', icon: 'account-tie-hat', screen: 'ManageDrivers' },
-  { label: 'Shift Roster', icon: 'calendar-account', screen: 'ShiftRoster' },
-  { label: 'Manage Timings', icon: 'clock-edit-outline', screen: 'ManageTimings' },
-  { label: 'Track Cabs', icon: 'map-marker-radius', screen: 'TrackCabs' },
+  // People who signed in with their company account but were never entered by
+  // HR, so they have no address or route and no cab can be sent for them. HR
+  // approves; the coordinator sets the route (same screen, see its header).
+  { label: 'New Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
+  // HR needs to SEE who is driving what — which cab a ride was given to, and which
+  // driver account is behind it — without owning the fleet. These two screens
+  // render read-only for the admin role; the coordinator keeps the controls.
+  { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
+  { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
+  // No "Cab Routes" screen. The route list is no longer edited in the app: the
+  // monthly sheet carries a Route column, and the names it may use are the fixed
+  // list in data/mockData.js (CAB_ROUTES). canonicalRoute() still snaps a sheet
+  // spelling onto that list and still REFUSES anything not on it — so adding a
+  // new pickup area is now a code change, deliberately, rather than a field
+  // anyone can type into and split a carpool across two spellings.
   { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
   { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
+  // NEAR THE BOTTOM ON PURPOSE. What the shift codes MEAN — the hours each one
+  // runs and which of them get a cab — is set once and then left alone for months,
+  // whereas everything above it is opened daily or weekly. It sat second, directly
+  // under Upload Roster, which put the rarest screen in the menu at the top of it.
+  // Second-from-last keeps it a click away without it being in the way.
+  // What actually ran, over a week or a month. HR had no way to answer "how many
+  // rides did we do last month" — the day board shows one day and All Bookings
+  // shows rows, not counts. Sits with the other look-back screens rather than
+  // with the daily work.
+  { label: 'Reports', icon: 'chart-box-outline', screen: 'Reports' },
+  { label: 'Shift Timings', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
+];
+
+// The COORDINATOR runs the day: turn the roster into assigned cabs, watch the
+// trips, keep the fleet current. No roster upload, no policy, no employee
+// records.
+export const COORDINATOR_DRAWER_ITEMS = [
+  { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
+  { label: 'Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
+  // The coordinator is who knows which route an address is on, so they triage
+  // these even though HR does the approving.
+  { label: 'New Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
+  { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
+  { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
+  { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
+  { label: 'Messages', icon: 'email-outline', screen: 'Messages' },
+  { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
 ];
 
 const EMPTY_PW = { current: '', next: '', confirm: '' };
@@ -145,37 +226,147 @@ function ChangePasswordDialog({ visible, onDismiss, onChangePassword }) {
 }
 
 // Friendly label for a role.
-const ROLE_LABEL = { admin: 'Admin', driver: 'Driver', employee: 'Employee' };
+const ROLE_LABEL = {
+  admin: 'HR / Admin',
+  coordinator: 'Transport Coordinator',
+  driver: 'Driver',
+  employee: 'Employee',
+};
 
 // The signed-in user card at the bottom: name + role, expands on tap.
-function UserCard({ user, onChangePassword }) {
+// Logout lives HERE, inside the expanded panel — not as a nav row and not in
+// the header. Signing out is an account action, so it belongs with the account,
+// alongside Change password, rather than sitting in the list of places to go.
+function UserCard({ user, onChangePassword, onLogout }) {
   const [expanded, setExpanded] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const u = user || {};
   const roleLabel = ROLE_LABEL[u.role] || 'Employee';
 
+  // NEITHER A DRIVER NOR A COORDINATOR HAS A PASSWORD OF THEIR OWN, so this card
+  // must not offer to change one. It isn't merely a pointless row: their Firebase
+  // password IS the code the desk issued them, so changing it would succeed and
+  // leave them holding a secret their login screen cannot accept — a driver's
+  // takes 14 digits and nothing else, a coordinator's takes a phone plus the
+  // 4-digit passcode — locking them out for good.
+  //
+  // The two differ in how recoverable that is, and both are bad. A driver's code
+  // is derived from cab + phone, so it can at least be recomputed; a
+  // coordinator's passcode is random and mirrored only on their profile, so a
+  // password changed out from under it could not be recovered at all — the
+  // account would be scrap.
+  //
+  // Their email is hidden for the same family of reasons: it is synthesized on
+  // an unroutable domain (see utils/driverLogin.js and utils/coordinatorLogin.js),
+  // so showing it only invites someone to write to it — and for a coordinator it
+  // also displays, to them, half of a credential they are supposed to think of as
+  // "my phone number". The phone is the identity that actually means something.
+  //
+  // The phone shows for EVERY role that has one. It used to be driver-only, which
+  // left the desk's own card showing an ID and an email and no way to check the
+  // number riders are told to call — the one thing on the card someone else has
+  // to dial. A blank `phone` simply omits the row, same as before.
+  const isCodeUser = u.role === 'driver' || u.role === 'coordinator';
+  const showEmail = !!u.email && !isCodeUser;
+  const showPhone = !!u.phone;
+  const hasMeta = !!u.empId || showEmail || showPhone;
+
   return (
     <View style={styles.userBox}>
       {/* Expanded details appear ABOVE the name (since the card sits at the
-          bottom of the sidebar, details open upward). */}
+          bottom of the sidebar, details open upward).
+
+          Every row here — meta, action, profile — uses the SAME 30px icon
+          column as the nav items above, so all the text in the sidebar lines up
+          on one edge instead of the account block sitting at its own indent. */}
       {expanded ? (
         <View style={styles.userDetails}>
           {u.empId ? (
-            <Text style={styles.userMeta}>Employee ID: {u.empId}</Text>
+            <View style={styles.metaRow}>
+              <MaterialCommunityIcons
+                name="card-account-details-outline"
+                size={18}
+                color="#D6E4FF"
+                style={styles.rowIcon}
+              />
+              <Text style={styles.userMeta} numberOfLines={1}>
+                Employee ID: {u.empId}
+              </Text>
+            </View>
           ) : null}
-          {u.email ? (
-            <Text style={styles.userMeta}>{u.email}</Text>
+          {showEmail ? (
+            <View style={styles.metaRow}>
+              <MaterialCommunityIcons
+                name="email-outline"
+                size={18}
+                color="#D6E4FF"
+                style={styles.rowIcon}
+              />
+              {/* Left to wrap rather than truncated — a half-shown address is
+                  no use to someone checking which account they're signed into. */}
+              <Text style={styles.userMeta}>{u.email}</Text>
+            </View>
           ) : null}
-          <Pressable style={styles.changePw} onPress={() => setPwOpen(true)}>
-            <MaterialCommunityIcons name="lock-reset" size={18} color="#FFFFFF" />
-            <Text style={styles.changePwText}>Change password</Text>
-          </Pressable>
+          {showPhone ? (
+            <View style={styles.metaRow}>
+              <MaterialCommunityIcons
+                name="phone-outline"
+                size={18}
+                color="#D6E4FF"
+                style={styles.rowIcon}
+              />
+              <Text style={styles.userMeta}>{u.phone}</Text>
+            </View>
+          ) : null}
+
+          {/* Hairline between what the rows SAY and what they DO, so the tappable
+              rows below read as actions rather than more detail. */}
+          {hasMeta ? <View style={styles.detailDivider} /> : null}
+
+          {/* Both actions share one row shape — same gutter, size and weight —
+              so neither looks like the odd one out. */}
+          {isCodeUser ? null : (
+            <Pressable
+              style={styles.accountAction}
+              onPress={() => setPwOpen(true)}
+              android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
+            >
+              <MaterialCommunityIcons
+                name="lock-reset"
+                size={20}
+                color="#FFFFFF"
+                style={styles.rowIcon}
+              />
+              <Text style={styles.accountActionText}>Change password</Text>
+            </Pressable>
+          )}
+
+          {onLogout ? (
+            <Pressable
+              style={styles.accountAction}
+              onPress={onLogout}
+              android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
+            >
+              <MaterialCommunityIcons
+                name="logout"
+                size={20}
+                color="#FFFFFF"
+                style={styles.rowIcon}
+              />
+              <Text style={styles.accountActionText}>Logout</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
       {/* Name + role row — tap to expand/collapse the details above. */}
       <Pressable style={styles.userTop} onPress={() => setExpanded((e) => !e)}>
-        <MaterialCommunityIcons name="account-circle" size={32} color="#FFFFFF" />
+        <MaterialCommunityIcons
+          name="account-circle"
+          size={24}
+          color="#FFFFFF"
+          style={styles.rowIcon}
+        />
         <View style={styles.userNameCol}>
           {/* Admins show just "Admin" (no account name / second line);
               other roles show their name with the role beneath it. */}
@@ -190,78 +381,94 @@ function UserCard({ user, onChangePassword }) {
         </View>
         <MaterialCommunityIcons
           name={expanded ? 'chevron-down' : 'chevron-up'}
-          size={22}
+          size={20}
           color="#FFFFFF"
         />
       </Pressable>
 
-      <ChangePasswordDialog
-        visible={pwOpen}
-        onDismiss={() => setPwOpen(false)}
-        onChangePassword={onChangePassword}
-      />
+      {/* Not mounted at all for a code-based login, so there is no path to it even
+          if the row above were ever restored by accident. */}
+      {isCodeUser ? null : (
+        <ChangePasswordDialog
+          visible={pwOpen}
+          onDismiss={() => setPwOpen(false)}
+          onChangePassword={onChangePassword}
+        />
+      )}
     </View>
   );
 }
 
 // The brand strip + nav list + user card. Shared by both modes.
+// `counts` is { [screenName]: number } — how much is waiting on this person for
+// that screen. Rendered as a pill on the row, because a desk queue that only
+// announces itself once you open it is a queue that gets left.
 function DrawerBody({
-  user, items = DRAWER_ITEMS, onNavigate, onClose, onChangePassword, onLogout, activeScreen, permanent,
+  user, items = DRAWER_ITEMS, onNavigate, onClose, onChangePassword, onLogout,
+  activeScreen, permanent, counts = {},
 }) {
   return (
     <View style={styles.body}>
       {/* Company brand: logo + name on a white strip at the very top */}
       <View style={styles.brandBar}>
         <Image source={companyLogo} style={styles.brandLogo} resizeMode="contain" />
-        <Text style={styles.brandName} numberOfLines={1}>
-          {COMPANY_NAME}
-        </Text>
+        <View style={styles.brandTextCol}>
+          <Text style={styles.brandName} numberOfLines={1}>
+            {COMPANY_NAME}
+          </Text>
+          <Text style={styles.brandTagline} numberOfLines={1}>
+            Cab Service
+          </Text>
+        </View>
         {!permanent ? (
-          <Pressable onPress={onClose} hitSlop={10}>
-            <MaterialCommunityIcons name="close" size={22} color="#0D47A1" />
+          <Pressable onPress={onClose} hitSlop={10} style={styles.brandClose}>
+            <MaterialCommunityIcons name="close" size={20} color={colors.primaryDark} />
           </Pressable>
         ) : null}
       </View>
 
       {/* Menu items (fills the space between brand and the user card) */}
-      <ScrollView style={styles.menu}>
+      <ScrollView style={styles.menu} contentContainerStyle={styles.menuContent}>
         {items.map((item) => {
           const active = item.screen === activeScreen;
+          const waiting = counts[item.screen] || 0;
           return (
             <Pressable
               key={item.label}
               style={[styles.item, active && styles.itemActive]}
               onPress={() => onNavigate(item)}
               android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
+              accessibilityLabel={
+                waiting ? `${item.label}, ${waiting} waiting` : item.label
+              }
             >
               <MaterialCommunityIcons
                 name={item.icon}
                 size={20}
-                color="#FFFFFF"
+                color={active ? '#FFFFFF' : colors.onDarkMuted}
                 style={styles.itemIcon}
               />
               <Text style={[styles.itemText, active && styles.itemTextActive]}>
                 {item.label}
               </Text>
+              {waiting ? (
+                <View style={[styles.countPill, active && styles.countPillActive]}>
+                  <Text style={[styles.countText, active && styles.countTextActive]}>
+                    {waiting > 99 ? '99+' : waiting}
+                  </Text>
+                </View>
+              ) : null}
             </Pressable>
           );
         })}
 
-        {/* Logout — shown when a handler is provided (admin sidebar). */}
-        {onLogout ? (
-          <Pressable
-            style={[styles.item, styles.logoutItem]}
-            onPress={onLogout}
-            android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
-          >
-            <MaterialCommunityIcons name="logout" size={20} color="#FFFFFF" style={styles.itemIcon} />
-            <Text style={styles.itemText}>Logout</Text>
-          </Pressable>
-        ) : null}
+        {/* Nav is places to GO only. Logout is an account action and lives in
+            the profile card below — it was a row here, which put it in the same
+            list as the screens and gave the sidebar two kinds of thing. */}
       </ScrollView>
 
-      {/* Signed-in user — at the bottom */}
-      <UserCard user={user} onChangePassword={onChangePassword} />
+      {/* Signed-in user — at the bottom. Carries the app's ONLY logout. */}
+      <UserCard user={user} onChangePassword={onChangePassword} onLogout={onLogout} />
     </View>
   );
 }
@@ -275,6 +482,7 @@ export default function AppDrawer({
   onChangePassword,
   onLogout,
   activeScreen,
+  counts,
   permanent = false,
 }) {
   // Permanent sidebar: a static left column, always on screen.
@@ -288,6 +496,7 @@ export default function AppDrawer({
           onChangePassword={onChangePassword}
           onLogout={onLogout}
           activeScreen={activeScreen}
+          counts={counts}
           permanent
         />
       </View>
@@ -308,6 +517,7 @@ export default function AppDrawer({
             onLogout={onLogout}
             onClose={onClose}
             activeScreen={activeScreen}
+            counts={counts}
           />
         </View>
         {/* Tapping outside the panel closes it */}
@@ -327,74 +537,160 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   panel: {
-    width: '78%',
-    maxWidth: 320,
+    width: '80%',
+    maxWidth: 300,
     height: '100%',
-    backgroundColor: '#0D47A1', // dark blue
+    backgroundColor: colors.primaryDark,
+    ...shadow.lg,
   },
   permanentPanel: {
-    width: 250,
+    width: 264,
     height: '100%',
-    backgroundColor: '#0D47A1', // dark blue
+    backgroundColor: colors.primaryDark,
+    // A single hairline rather than a shadow: the sidebar sits flush against a
+    // pale page, and a shadow on that edge muddies the join.
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(0,0,0,0.12)',
   },
   body: { flex: 1 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  // White brand band lifted toward the top; the nav starts lower (menu has its
-  // own top padding) so there's clear separation between brand and menu.
+  backdrop: { flex: 1, backgroundColor: 'rgba(16, 24, 40, 0.45)' },
+  // White brand band at the top. The logo sits in the same 20px gutter the nav
+  // icons use, so the brand name and every menu label share one left edge.
   brandBar: {
     backgroundColor: '#FFFFFF',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20, // matches the nav items below
-    paddingBottom: 8, // minimal white below the logo before the blue menu
-    paddingTop: 24, // enough to clear the status bar, but tighter to the top
+    paddingBottom: spacing.md,
+    paddingTop: spacing.xl,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  // Logo sized to its true aspect (≈106:119) and left-aligned so its left edge
-  // sits at 20px like the nav icons; the 3px margin makes the column total 30px
-  // so the brand name lands at 50px — exactly under the menu labels below.
-  brandLogo: { width: 27, height: 30, marginRight: 3 },
-  brandName: { color: '#0D47A1', fontWeight: 'bold', fontSize: 16, flex: 1 },
-  menu: { flex: 1 }, // nav sits right below the brand band
+  // Sized to the logo's true aspect (≈106:119) and left-aligned; the 8px gap
+  // makes the column 35px so the brand text clears the icon gutter cleanly.
+  brandLogo: { width: 30, height: 34, marginRight: spacing.sm },
+  brandTextCol: { flex: 1, minWidth: 0 },
+  brandName: {
+    color: colors.primaryDark,
+    fontFamily: font.bold,
+    fontSize: 15,
+    lineHeight: 20,
+    letterSpacing: 0.1,
+  },
+  // The one word that says what this app IS, under the company that owns it.
+  brandTagline: {
+    color: colors.muted,
+    fontFamily: font.medium,
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 1,
+  },
+  brandClose: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+  },
+  menu: { flex: 1 },
+  menuContent: { paddingVertical: spacing.md, paddingHorizontal: spacing.md },
+  // Rows are inset and rounded so the active one reads as a selected pill
+  // rather than a full-bleed band of a slightly different blue.
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    marginBottom: 2,
   },
-  itemActive: { backgroundColor: '#1565C0' }, // highlight current screen
-  logoutItem: {
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.15)',
-  },
+  itemActive: { backgroundColor: colors.primary, ...shadow.xs },
   itemIcon: { width: 30 },
-  itemText: { color: '#FFFFFF', fontSize: 16 },
-  itemTextActive: { fontWeight: 'bold' },
-  userBox: {
-    backgroundColor: '#1E88E5',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.2)',
+  // Inactive labels sit a step back from white; the active one comes forward in
+  // both colour and weight, so the current screen is obvious at a glance.
+  itemText: {
+    color: colors.onDarkMuted,
+    fontFamily: font.medium,
+    fontSize: 14.5,
+    letterSpacing: 0.1,
+    flex: 1,
   },
-  userTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  userNameCol: { flex: 1 },
-  userName: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
-  userRole: { color: '#E3F0FF', fontSize: 12, marginTop: 1 },
-  userDetails: { marginBottom: 12 },
-  userMeta: { color: '#E3F0FF', fontSize: 12, marginBottom: 4 },
-  changePw: {
+  itemTextActive: { color: '#FFFFFF', fontFamily: font.semibold },
+  countPill: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: radius.pill,
+    paddingHorizontal: 7,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countPillActive: { backgroundColor: '#FFFFFF' },
+  countText: { color: '#FFFFFF', fontSize: 11.5, lineHeight: 16, fontFamily: font.bold },
+  countTextActive: { color: colors.primary },
+  // Account block, pinned to the bottom. A shade lighter than the nav above it
+  // so it separates without a hard rule.
+  userBox: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 20,
+    paddingVertical: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.onDarkFaint,
+  },
+  // The shared 30px icon gutter — same width as `itemIcon`, so meta text,
+  // "Change password" and the profile name all begin at the same x as the nav
+  // labels. Changing one of these without the other is what made the block
+  // look bolted on.
+  rowIcon: { width: 30 },
+  userTop: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.xs },
+  userNameCol: { flex: 1, minWidth: 0 },
+  userName: { color: '#FFFFFF', fontFamily: font.semibold, fontSize: 14.5, lineHeight: 20 },
+  userRole: {
+    color: colors.onDarkMuted,
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    lineHeight: 16,
+    marginTop: 1,
+  },
+  // Hairline separating the details from the profile row, so the expanded card
+  // reads as two grouped parts instead of one long list.
+  userDetails: {
+    paddingBottom: spacing.sm,
+    marginBottom: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.onDarkFaint,
+  },
+  metaRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
+  userMeta: {
+    color: colors.onDarkMuted,
+    fontFamily: font.regular,
+    fontSize: 12.5,
+    lineHeight: 18,
+    flex: 1,
+  },
+  // Separates the read-only meta rows from the tappable ones below.
+  detailDivider: {
+    height: 1,
+    backgroundColor: colors.onDarkFaint,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  // Shared by Change password and Logout — one shape for both, so the account
+  // panel doesn't invent a second row style for its second action.
+  accountAction: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 8,
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingVertical: 9,
   },
-  changePwText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
-  pwInput: { marginBottom: 10 },
-  pwDialog: { width: '100%', maxWidth: 400, alignSelf: 'center' },
+  accountActionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontFamily: font.medium,
+    flex: 1,
+  },
+  pwInput: { marginBottom: spacing.md },
+  pwDialog: { width: '100%', maxWidth: 420, alignSelf: 'center' },
 });

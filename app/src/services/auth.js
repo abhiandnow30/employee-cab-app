@@ -5,35 +5,289 @@
 //   • signOutUser   — sign out
 //   • watchAuth     — get notified whenever the login state changes
 // Firebase securely stores & checks the passwords; we never see them.
+//
+// DRIVERS SIGN IN DIFFERENTLY — one number, no email and no password of their
+// own (signInWithDriverCode below). It is still an email/password sign-in
+// underneath; utils/driverLogin.js explains how the code becomes the credentials
+// and why it has to.
 // ---------------------------------------------------------------------------
 
 import {
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   updatePassword,
   reauthenticateWithCredential,
   sendPasswordResetEmail,
   EmailAuthProvider,
+  OAuthProvider,
+  signInWithPopup,
+  signInWithCredential,
+  linkWithPopup,
+  linkWithCredential,
+  unlink,
+  deleteUser,
 } from 'firebase/auth';
 import { auth } from './firebase';
+import { driverEmail, phoneFromLoginCode, isDriverLoginCode } from '../utils/driverLogin';
+import {
+  coordinatorEmail, coordinatorAuthPassword, isPasscode, PASSCODE_LENGTH,
+} from '../utils/coordinatorLogin';
+
+// --- Microsoft (Entra ID / Azure AD) sign-in --------------------------------
+// Company work accounts only — see the tenant id below. Added ALONGSIDE
+// email/password, never replacing it: an employee's Firebase account (and
+// their employees/{uid} profile) is always created by the admin first with
+// email/password; Microsoft is an extra credential linked onto that SAME
+// account afterward (see linkMicrosoftPopup/linkMicrosoftCredential), so
+// linking never changes the uid a profile is keyed to.
+//
+// EXPO_PUBLIC_MICROSOFT_TENANT_ID is your Microsoft Entra tenant id (a GUID
+// or your verified domain, e.g. "cloudfuze.onmicrosoft.com") — NOT a secret,
+// same as the Google Maps key in .env. Restricting to one tenant (rather than
+// 'common') means only accounts inside your own company directory can even
+// attempt to sign in.
+const MICROSOFT_TENANT_ID = process.env.EXPO_PUBLIC_MICROSOFT_TENANT_ID || 'common';
+
+function microsoftProvider() {
+  const provider = new OAuthProvider('microsoft.com');
+  provider.setCustomParameters({
+    tenant: MICROSOFT_TENANT_ID,
+    // Always show the account picker. Without this, Microsoft silently reuses
+    // whichever work account the browser already has a session for, so someone
+    // on a shared or previously-used machine gets signed in as that person with
+    // no chance to choose — and on a phone or kiosk there is no visible way to
+    // tell which identity was picked.
+    prompt: 'select_account',
+  });
+  return provider;
+}
+
+// ---------------------------------------------------------------------------
+// MAKING THE MICROSOFT WINDOW FILL THE SCREEN
+//
+// Firebase opens its sign-in popup at a hardcoded 500×600, centred. Those are
+// private constants inside @firebase/auth (`DEFAULT_WIDTH`/`DEFAULT_HEIGHT` in
+// its popup helper) — signInWithPopup takes no size argument and the resolver
+// that would carry one is not part of the public API, so there is no supported
+// setting to change. What the SDK does expose, unavoidably, is that it reaches
+// `window.open(url, target, features)` to do it.
+//
+// So the features string is rewritten on its way through: width, height, top
+// and left are replaced with the full available screen, and every other flag
+// Firebase set (resizable, scrollbars, the Firefox special-casing) is passed
+// along untouched.
+//
+// WHY THE PATCH IS SO NARROW. Replacing a global is only safe if it is put back,
+// and put back quickly. `_openPopup` awaits the redirect URL before it opens
+// anything, so the window.open does NOT happen synchronously inside the call —
+// restoring straight after signInWithPopup returns would restore too early and
+// change nothing. Instead the wrapper restores itself the instant it fires:
+// that one call IS the auth popup, and from then on window.open is the browser's
+// own again, even though the user has not finished signing in. The `finally` is
+// a backstop for the case where it never fires at all — a blocked popup, or the
+// flow failing before it gets that far.
+// ---------------------------------------------------------------------------
+
+// The four Firebase computes and this overrides. Everything else it sets is kept.
+const SIZE_FEATURES = new Set(['width', 'height', 'top', 'left']);
+
+function maximisedFeatures(features) {
+  const screen = (typeof window !== 'undefined' && window.screen) || {};
+  // availWidth/Height exclude the OS taskbar, so this fills the usable desktop
+  // rather than hiding behind it. The fallbacks matter for embedded webviews,
+  // which sometimes report no screen at all.
+  const width = Math.max(Number(screen.availWidth) || window.outerWidth || 1024, 360);
+  const height = Math.max(Number(screen.availHeight) || window.outerHeight || 768, 480);
+  // availTop/availLeft are non-standard (Firefox has them, Chrome does not), so
+  // they are read defensively — on a multi-monitor setup they put the window on
+  // the right screen, and 0 is correct everywhere else.
+  const overrides = {
+    width,
+    height,
+    top: Number(screen.availTop) || 0,
+    left: Number(screen.availLeft) || 0,
+  };
+  const kept = String(features || '')
+    .split(',')
+    .map((pair) => pair.trim())
+    .filter(Boolean)
+    .filter((pair) => !SIZE_FEATURES.has(pair.split('=')[0].trim().toLowerCase()));
+  const sized = Object.entries(overrides).map(([k, v]) => `${k}=${v}`);
+  return [...kept, ...sized].join(',');
+}
+
+function withMaximisedPopup(run) {
+  // Native has no window.open and never takes this path anyway (the phone flow
+  // is useMicrosoftAuthRequest + the *Credential functions below).
+  if (typeof window === 'undefined' || typeof window.open !== 'function') return run();
+
+  const nativeOpen = window.open;
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    window.open = nativeOpen;
+  };
+
+  window.open = function patchedOpen(url, target, features, ...rest) {
+    restore(); // see the header comment — one call, then hands the global back
+    return nativeOpen.call(window, url, target, maximisedFeatures(features), ...rest);
+  };
+
+  // Called synchronously, NOT behind a .then: an extra tick before the SDK gets
+  // going is exactly the kind of thing popup blockers punish.
+  let running;
+  try {
+    running = run();
+  } catch (e) {
+    restore();
+    throw e;
+  }
+  return Promise.resolve(running).finally(restore);
+}
+
+// WEB ONLY — a plain popup Firebase drives entirely itself. Phones have no
+// popup; see the *Credential variants below, used with useMicrosoftAuthRequest.
+export function signInWithMicrosoftPopup() {
+  return withMaximisedPopup(() => signInWithPopup(auth, microsoftProvider()));
+}
+
+export function linkMicrosoftPopup() {
+  const user = auth?.currentUser;
+  if (!user) throw new Error('You are not signed in.');
+  return withMaximisedPopup(() => linkWithPopup(user, microsoftProvider()));
+}
+
+// NATIVE — built from the id_token (and the raw nonce that hashed into the
+// request) that useMicrosoftAuthRequest got back from the system browser.
+function microsoftCredential(idToken, rawNonce) {
+  return new OAuthProvider('microsoft.com').credential({ idToken, rawNonce });
+}
+
+export function signInWithMicrosoftCredential(idToken, rawNonce) {
+  return signInWithCredential(auth, microsoftCredential(idToken, rawNonce));
+}
+
+export function linkMicrosoftCredential(idToken, rawNonce) {
+  const user = auth?.currentUser;
+  if (!user) throw new Error('You are not signed in.');
+  return linkWithCredential(user, microsoftCredential(idToken, rawNonce));
+}
+
+export function unlinkMicrosoft() {
+  const user = auth?.currentUser;
+  if (!user) throw new Error('You are not signed in.');
+  return unlink(user, 'microsoft.com');
+}
+
+// Reads the linked-providers list Firebase already tracks on the user object
+// — no extra Firestore field needed, this is exactly what Firebase itself
+// checks before allowing a second credential of the same type to link.
+export function isMicrosoftLinked(firebaseUser) {
+  return !!firebaseUser?.providerData?.some((p) => p.providerId === 'microsoft.com');
+}
+
+// --- Direct Microsoft sign-in, no Cloud Function ----------------------------
+// Cloud Functions need the paid Blaze plan just to deploy at all (Artifact
+// Registry/Cloud Build are billed regardless of what the function does or how
+// little it's used) — genuinely reassigning an employees/{uid} doc (and every
+// booking/roster that references it) to a new uid needs Admin-SDK privileges
+// a client can never safely have under firestore.rules either way. So instead
+// of migrating data to a fresh Microsoft-derived account, we do the opposite:
+// sign into the EXISTING account with a password (once, the first time) and
+// link the Microsoft credential onto THAT — same uid, zero data migration,
+// entirely within what the client SDK can already do. See AppContext.js
+// (microsoftConfirm state) and the "Confirm your Microsoft sign-in" screen in
+// App.js for how these fit together.
+
+// Pulls the reusable OAuthCredential out of a signInWithPopup/
+// signInWithCredential result — a plain data object (the actual token
+// values), so it stays usable even after the throwaway account that first
+// obtained it has been deleted (deleteCurrentUser, below).
+export function microsoftCredentialFromResult(result) {
+  return OAuthProvider.credentialFromResult(result);
+}
+
+// Same idea, but for when Firebase refuses the sign-in outright instead of
+// returning a result — see the auth/account-exists-with-different-credential
+// case in AppContext.js. Firebase still hands back the OAuth credential the
+// user proved ownership of, attached to the error itself, specifically so it
+// can be linked after the existing account is confirmed with a password.
+export function microsoftCredentialFromError(error) {
+  return OAuthProvider.credentialFromError(error);
+}
+
+// Deletes the CURRENTLY SIGNED IN user's own account — the one thing the
+// client SDK is always allowed to do to itself, no rules or Admin SDK needed.
+// Used to clean up the throwaway Microsoft-only account created by a fresh
+// sign-in that turned out to have no employees/{uid} doc, rather than leaving
+// an orphaned account behind every time someone's first Microsoft attempt
+// needs a password confirmation.
+export function deleteCurrentUser() {
+  const user = auth?.currentUser;
+  if (!user) return Promise.resolve();
+  return deleteUser(user);
+}
+
+// Links an already-obtained OAuthCredential (from microsoftCredentialFromResult)
+// onto whichever account is CURRENTLY signed in — used right after signing
+// into the employee's real (old) account with their password, to attach
+// Microsoft to it. Distinct from linkMicrosoftCredential/linkMicrosoftPopup
+// above, which build a credential themselves for the manual Profile-page flow.
+export function linkMicrosoftOAuthCredential(credential) {
+  const user = auth?.currentUser;
+  if (!user) throw new Error('You are not signed in.');
+  return linkWithCredential(user, credential);
+}
 
 export function signIn(email, password) {
   return signInWithEmailAndPassword(auth, email.trim(), password);
 }
+
+// --- Driver sign-in ---------------------------------------------------------
+// The driver types ONE number — last 4 digits of their cab + their phone — and
+// both halves of a normal email/password sign-in are worked out from it: the last
+// 10 digits give the account's email, the whole thing is the password. See
+// utils/driverLogin.js for why it is built this way.
+//
+// Nothing is read from Firestore first, so this needs no rule that would let an
+// unauthenticated caller look a driver up.
+export function signInWithDriverCode(code) {
+  if (!auth) throw new Error('Backend not configured.');
+  const digits = String(code ?? '').replace(/[^0-9]/g, '');
+  if (!isDriverLoginCode(digits)) throw new Error('That login code is not complete.');
+  return signInWithEmailAndPassword(auth, driverEmail(phoneFromLoginCode(digits)), digits);
+}
+
+// --- Coordinator sign-in -----------------------------------------------------
+// Phone + the 4-digit passcode the desk issued. The phone derives the account's
+// synthesized email and the passcode IS the password — see
+// utils/coordinatorLogin.js.
+//
+// Like the driver path above, nothing is read from Firestore first, so this needs
+// no rule allowing an unauthenticated lookup.
+export function signInWithCoordinatorCode(phone, passcode) {
+  if (!auth) throw new Error('Backend not configured.');
+  const email = coordinatorEmail(phone);
+  if (!email) throw new Error('Enter the full 10-digit phone number.');
+  const code = String(passcode ?? '').replace(/[^0-9]/g, '');
+  if (!isPasscode(code)) throw new Error(`The passcode is ${PASSCODE_LENGTH} digits.`);
+  // The stored password is passcode + phone — Firebase will not hold anything
+  // shorter than 6 characters. See coordinatorAuthPassword().
+  return signInWithEmailAndPassword(auth, email, coordinatorAuthPassword(code, phone));
+}
+
+// There is no password reset for a coordinator: their address is synthesized on
+// an unroutable domain, so there is no inbox for Firebase to mail. A lost
+// passcode is re-issued by the desk instead — rotateCoordinatorPasscode() in
+// services/profile.js.
 
 // Send a password-reset email. Firebase mails a secure link the user follows to
 // set a new password — we never see or handle the password ourselves.
 export function sendPasswordReset(email) {
   if (!auth) throw new Error('Backend not configured.');
   return sendPasswordResetEmail(auth, email.trim());
-}
-
-// Create a brand-new account (used by Sign Up). Firebase stores the password
-// securely and signs the new user in automatically.
-export function signUp(email, password) {
-  return createUserWithEmailAndPassword(auth, email.trim(), password);
 }
 
 export function signOutUser() {
@@ -62,24 +316,60 @@ export function watchAuth(callback) {
 }
 
 // Turn Firebase error codes into friendly messages for the UI.
-export function friendlyAuthError(e) {
+//
+// Pass { driver: true } from the driver login screen: a driver never typed an
+// email or a password, so telling them one of those is wrong sends them looking
+// for something that doesn't exist. Every other caller omits it and reads exactly
+// as before.
+export function friendlyAuthError(e, { driver = false } = {}) {
   switch (e?.code) {
     case 'auth/invalid-credential':
     case 'auth/wrong-password':
     case 'auth/user-not-found':
-      return 'Wrong email or password.';
+      // Firebase collapses "no such account" into invalid-credential when email
+      // enumeration protection is on (the default), so one message has to cover
+      // both — which is also the right thing not to leak.
+      return driver
+        ? 'That login code was not recognised. Check it with the transport desk — it changes whenever your cab changes.'
+        : 'Wrong email or password.';
     case 'auth/invalid-email':
-      return 'Please enter a valid email address.';
+      return driver
+        ? 'That login code is not valid. It is the last 4 digits of your cab number followed by your 10-digit phone number.'
+        : 'Please enter a valid email address.';
     case 'auth/too-many-requests':
       return 'Too many attempts. Please wait a moment and try again.';
     case 'auth/operation-not-allowed':
-      return 'Email/password sign-in is not enabled in Firebase yet.';
+      // Firebase throws this SAME code for any disabled sign-in method, not
+      // just email/password — Microsoft included. A generic message here
+      // avoids blaming the wrong provider (this one used to always say
+      // "Email/password", which was actively misleading while debugging a
+      // Microsoft-specific config issue).
+      return 'This sign-in method is not enabled in Firebase yet.';
     case 'auth/email-already-in-use':
       return 'An account with this email already exists. Please sign in instead.';
     case 'auth/weak-password':
       return 'Password is too weak — use at least 6 characters.';
     case 'auth/network-request-failed':
       return 'Network error. Check your connection and try again.';
+    case 'auth/popup-closed-by-user':
+    case 'auth/cancelled-popup-request':
+      return ''; // the person just closed the popup — not a real error
+    // THE POPUP NEVER OPENED. This was falling through to the default branch, which
+    // showed Firebase's own wording — "Unable to establish a connection with the
+    // popup" — to someone whose only actual problem is a blocked popup and who has
+    // no idea that is what happened. It is the one Microsoft failure the person can
+    // fix themselves, so it says how.
+    case 'auth/popup-blocked':
+      return (
+        'Your browser blocked the Microsoft sign-in window. Allow pop-ups for this ' +
+        'site (the icon in the address bar), then try again.'
+      );
+    case 'auth/credential-already-in-use':
+      return 'That Microsoft account is already linked to a different employee.';
+    case 'auth/account-exists-with-different-credential':
+      return 'An account already exists for that email with a different sign-in method.';
+    case 'auth/provider-already-linked':
+      return 'A Microsoft account is already linked to this profile.';
     default:
       return e?.message || 'Could not sign in. Please try again.';
   }

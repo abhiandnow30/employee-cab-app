@@ -12,7 +12,7 @@ import { StyleSheet, View, FlatList } from 'react-native';
 import { Text, Card, Chip, SegmentedButtons, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { subscribeFeedback, subscribeRatings } from '../../services/feedback';
-import { colors } from '../../theme';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -158,27 +158,55 @@ export default function FeedbackInboxScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerCol: { flex: 1, width: '100%', maxWidth: 640, alignSelf: 'center', padding: 12 },
-  tabs: { marginBottom: 12 },
-  avgRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  avgNum: { fontWeight: 'bold', color: colors.primary },
-  avgLabel: { opacity: 0.6 },
+  container: { flex: 1, backgroundColor: colors.background },
+  centerCol: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 680,
+    alignSelf: 'center',
+    padding: spacing.lg,
+  },
+  tabs: { marginBottom: spacing.lg },
+  // The headline number for the whole screen, so it sits in its own panel
+  // rather than as a line of text above the list.
+  avgRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
+  avgNum: { fontFamily: font.bold, color: colors.primary },
+  avgLabel: { color: colors.muted },
   stars: { flexDirection: 'row' },
-  list: { paddingBottom: 24 },
-  card: { marginBottom: 10 },
+  list: { paddingBottom: spacing.xl },
+  card: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.sm,
+  },
   rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
   },
-  catChip: { backgroundColor: '#E3F0FF' },
-  catChipText: { fontSize: 12 },
-  message: { marginTop: 2 },
-  when: { opacity: 0.55, marginTop: 6 },
+  catChip: { backgroundColor: colors.primarySoft },
+  catChipText: { fontSize: 11.5, color: colors.primaryDark, fontFamily: font.semibold },
+  message: { marginTop: 2, color: colors.textSecondary, lineHeight: 21 },
+  when: { color: colors.muted, marginTop: spacing.sm },
   sep: { opacity: 0 },
-  error: { color: colors.danger, marginBottom: 8 },
-  empty: { alignItems: 'center', paddingVertical: 48, gap: 10 },
-  emptyText: { opacity: 0.7 },
+  error: { color: colors.danger, marginBottom: spacing.md },
+  empty: { alignItems: 'center', paddingVertical: 56, gap: spacing.md },
+  emptyText: { color: colors.muted },
 });

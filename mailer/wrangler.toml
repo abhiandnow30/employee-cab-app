@@ -1,0 +1,42 @@
+# Cloudflare Workers config for the SendGrid mailer.
+#
+# `name` becomes the hostname: https://<name>.<your-subdomain>.workers.dev
+# That URL is what goes into app/.env as EXPO_PUBLIC_MAILER_URL.
+#
+# SENDGRID_API_KEY is NOT here — it is a secret:
+#   npx wrangler secret put SENDGRID_API_KEY
+# Everything in [vars] below is plain configuration and ships readable, which is
+# fine: none of it is sensitive.
+
+name = "cab-mailer"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Firebase project the mailer reads bookings/riders/cabs from. Must match
+# app/src/services/firebase.js — the caller's ID token is only valid for its own
+# project, so a mismatch fails every read.
+FIREBASE_PROJECT_ID = "cab-app-eec4c"
+
+# MUST be a verified sender in SendGrid (Settings -> Sender Authentication).
+# SendGrid returns 403 for anything else, and the mailer parks such a job as
+# 'failed' rather than retrying it.
+FROM_EMAIL = "abhilasha.kandakatla@cloudfuze.com"
+FROM_NAME = "Cab Service"
+
+# Optional: where a reply goes. Leave unset and replies bounce — the mail says
+# "do not reply".
+# REPLY_TO_EMAIL = "transport.desk@your-domain.com"
+
+# Shown in the email footer ("an automated message from the … app"). Kept in step
+# with COMPANY_NAME in app/src/branding.js so the email and the app agree.
+COMPANY_NAME = "Neutara Technologies"
+
+# Browser origins allowed to call this worker. The web build runs on Firebase
+# Hosting; Expo's dev server is here so emails can be tested locally. The phone
+# apps send no Origin header and are unaffected.
+#
+# This is a courtesy check, not the security boundary — see the header comment in
+# src/worker.js. Anyone can curl this endpoint; without a desk user's Firebase ID
+# token, Firestore rules mean they can still send nothing.
+ALLOWED_ORIGINS = "https://cab-app-eec4c.web.app,https://cab-app-eec4c.firebaseapp.com,http://localhost:8081,http://localhost:19006"
