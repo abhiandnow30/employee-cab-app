@@ -64,11 +64,29 @@ app/
     components/  AppDrawer, Dropdown, ScreenContainer, ErrorBoundary, leaflet.js (shared web-map loader),
                  DriverRunSection + DriverRiderCard (the driver's run/rider split),
                  FleetMap.{web,native}, TrackMap.{web,native}
+    analytics/hotjar.js      Hotjar session recording, WEB ONLY. Off unless a Site ID
+                             is configured, which is the default. Also exports
+                             HJ_SUPPRESS — spread it onto anything that must never
+                             reach a recording (every credential in the app is a
+                             numeric field, not a password input, so Hotjar does
+                             NOT mask them for you)
+    config/runtimeConfig.js  Values read at page load from public/runtime-config.js
+                             instead of being frozen into the bundle by Metro, so
+                             the deploy can change them without a rebuild.
+                             Runtime wins; EXPO_PUBLIC_* is the fallback
     data/mockData.js         Starter fleet + shared constants (STATUS, lead/cutoff hours, capacity, etc.)
     theme.js                 colors, statusColors, spacing, Paper MD3 theme
     branding.js              COMPANY_NAME + logo + SUPPORT_HELPLINE
     utils/datetime.js        Booking lead-time / cancel-cutoff / date-key helpers
     utils/useSyncedDraft.js  Edit form over live data (re-seeds while untouched — see its header)
+
+  public/index.html          The web build's HTML template (Expo copies public/ into
+                             dist/ verbatim). Loads runtime-config.js BEFORE the bundle
+  public/runtime-config.js   Runtime-editable config, committed BLANK. The Hotjar Site
+                             ID is written in here on the server by
+                             deploy/remote_deploy.sh from the GitHub Actions repository
+                             VARIABLE HOTJAR_SITE_ID (a variable, not a secret — it
+                             ships in client-side JS either way). Unset = Hotjar off
 
 mailer/                      THE ONLY SERVER CODE. A worker on a free host (not Firebase),
                              because SendGrid from a Cloud Function needs the Blaze plan.

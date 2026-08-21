@@ -6,6 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
     <meta name="theme-color" content="#0129AC" />
     <title>Cab Service</title>
+
+    <!-- RUNTIME CONFIG, LOADED BEFORE THE BUNDLE. Copied verbatim out of
+         public/ into dist/, so the values inside it can be changed on the server
+         without rebuilding the bundle - which is what lets the deploy switch
+         Hotjar on from a GitHub Actions variable. Not async/defer: the app reads
+         window.__APP_CONFIG__ during its first module evaluation, so it has to
+         already be there. It is a handful of bytes, served from our own origin. -->
+    <script src="/runtime-config.js"></script>
     <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
     <style id="expo-reset">
       /* These styles make the body full-height */

@@ -23,6 +23,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COMPANY_NAME, companyLogo } from '../branding';
 import { colors, font, radius, shadow, spacing } from '../theme';
+import { HJ_SUPPRESS } from '../analytics/hotjar';
 
 // Each menu item → which screen it opens.
 //
@@ -186,7 +187,11 @@ function ChangePasswordDialog({ visible, onDismiss, onChangePassword }) {
       <Dialog visible={visible} onDismiss={close} style={styles.pwDialog}>
         <Dialog.Title>Change password</Dialog.Title>
         <Dialog.Content>
+          {/* These three are always secureTextEntry, so Hotjar would mask them
+              anyway — suppressed explicitly so "no credential in this app is ever
+              recorded" holds without depending on a vendor default. */}
           <TextInput
+            {...HJ_SUPPRESS}
             label="Current password"
             value={form.current}
             onChangeText={(t) => setForm((f) => ({ ...f, current: t }))}
@@ -196,6 +201,7 @@ function ChangePasswordDialog({ visible, onDismiss, onChangePassword }) {
             style={styles.pwInput}
           />
           <TextInput
+            {...HJ_SUPPRESS}
             label="New password"
             value={form.next}
             onChangeText={(t) => setForm((f) => ({ ...f, next: t }))}
@@ -205,6 +211,7 @@ function ChangePasswordDialog({ visible, onDismiss, onChangePassword }) {
             style={styles.pwInput}
           />
           <TextInput
+            {...HJ_SUPPRESS}
             label="Confirm new password"
             value={form.confirm}
             onChangeText={(t) => setForm((f) => ({ ...f, confirm: t }))}

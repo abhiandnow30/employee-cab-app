@@ -21,6 +21,7 @@ import { useApp } from '../../context/AppContext';
 import ScreenContainer from '../../components/ScreenContainer';
 import { REQUEST_STATUS } from '../../services/addressRequests';
 import { formatLoginCode, isShareableCode } from '../../utils/driverLogin';
+import { HJ_SUPPRESS } from '../../analytics/hotjar';
 import { colors, font, radius, shadow, spacing } from '../../theme';
 import useMicrosoftAuthRequest from '../../utils/useMicrosoftAuthRequest';
 
@@ -163,6 +164,7 @@ export default function ProfileScreen() {
             they actually need to know, especially after a cab change. */}
         {isDriver ? (
           <List.Item
+            {...HJ_SUPPRESS}
             title="Login code"
             description={
               loginCode

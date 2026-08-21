@@ -5,7 +5,7 @@
 //   3. Navigation     → decides which screens to show based on the logged-in user
 // ---------------------------------------------------------------------------
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, Image, Linking, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -20,6 +20,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { theme, colors, font, radius, shadow, spacing } from './src/theme';
 import { useAppFonts } from './src/fonts';
 import { AppProvider, useApp } from './src/context/AppContext';
+import { HJ_SUPPRESS, identifyHotjarUser } from './src/analytics/hotjar';
 import AppDrawer, {
   DRAWER_ITEMS, ADMIN_DRAWER_ITEMS, DRIVER_DRAWER_ITEMS, COORDINATOR_DRAWER_ITEMS,
   CAB_SERVICE_ITEM,
@@ -427,7 +428,11 @@ function MicrosoftConfirmScreen() {
           to link Microsoft to it — after this, "Sign in with Microsoft" will work
           directly, every time.
         </Text>
+        {/* Hotjar masks type="password" on its own, but the eye toggle turns this
+            into a plain text input mid-typing — so suppress it explicitly rather
+            than relying on a vendor default that the toggle defeats. */}
         <TextInput
+          {...HJ_SUPPRESS}
           label="Password"
           value={password}
           onChangeText={setPassword}
@@ -519,6 +524,7 @@ function RootNavigator() {
   const {
     currentUser, authReady, profileMissing, profileError, changePassword, logout,
     menuCounts, microsoftConfirm, needsCabSetup, myPendingCabRequest,
+    firebaseUser,
   } = useApp();
   const { width } = useWindowDimensions();
   const navRef = useNavigationContainerRef();
@@ -547,6 +553,26 @@ function RootNavigator() {
   // rest of the app (see CabServiceRequestScreen).
   const holdForCabSetup =
     currentUser?.role === 'employee' && needsCabSetup && !myPendingCabRequest;
+
+  // Tag the Hotjar recording with who is using the app, once we know. A no-op
+  // unless a Site ID is configured — see src/analytics/hotjar.js.
+  //
+  // It waits for the PROFILE, not just the Firebase session, because the role is
+  // the attribute worth filtering on and only the profile carries it. The one
+  // exception is an account with no profile at all: that session is the most
+  // interesting one on the list — somebody was given a login that leads nowhere —
+  // so it is tagged from the raw auth user instead of being left anonymous.
+  const identityKey = currentUser?.uid || (profileMissing ? firebaseUser?.uid : null);
+  useEffect(() => {
+    if (!identityKey) return;
+    identifyHotjarUser(
+      currentUser || { uid: firebaseUser?.uid, email: firebaseUser?.email, role: 'UNPROVISIONED' }
+    );
+    // Keyed on the uid and the role alone: currentUser is a fresh object on every
+    // profile snapshot, so depending on it directly would re-identify on each
+    // unrelated edit to the employee document.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identityKey, currentUser?.role]);
 
   // While Firebase checks for an existing session, show a spinner instead of
   // briefly flashing the login screen.

@@ -30,6 +30,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeCoordinators, subscribeInvites, adminRevokeInvite } from '../../services/profile';
 import { formatPasscode } from '../../utils/coordinatorLogin';
+import { HJ_SUPPRESS } from '../../analytics/hotjar';
 import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const EMPTY = { name: '', phone: '' };
@@ -293,7 +294,8 @@ export default function ManageCoordinatorsScreen() {
                     <Text variant="labelSmall" style={styles.codeLabel}>
                       Signs in with
                     </Text>
-                    <Text variant="titleMedium" style={styles.code} selectable>
+                    {/* A live passcode on a desk screen — never recorded. */}
+                    <Text variant="titleMedium" style={styles.code} selectable {...HJ_SUPPRESS}>
                       {item.phone || '—'} · {item.loginCode ? formatPasscode(item.loginCode) : '—'}
                     </Text>
                   </View>
@@ -442,7 +444,7 @@ export default function ManageCoordinatorsScreen() {
               <Text variant="labelSmall" style={[styles.codeLabel, styles.issuedSpacer]}>
                 Passcode
               </Text>
-              <Text variant="headlineSmall" style={styles.issuedValue} selectable>
+              <Text variant="headlineSmall" style={styles.issuedValue} selectable {...HJ_SUPPRESS}>
                 {formatPasscode(issued?.passcode || '')}
               </Text>
             </View>

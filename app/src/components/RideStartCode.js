@@ -29,6 +29,7 @@ import { useRideOtp } from '../utils/useRideOtp';
 import { getRideOtp } from '../services/rideOtp';
 import { STATUS } from '../data/mockData';
 import { colors, font, radius, shadow, spacing } from '../theme';
+import { HJ_SUPPRESS } from '../analytics/hotjar';
 
 // The statuses where a code still has a job to do. Mirrors the gate inside
 // useRideOtp, for the on-demand path which doesn't go through it.
@@ -51,7 +52,8 @@ function RiderPanel({ booking }) {
           Ride start code
         </Text>
       </View>
-      <Text style={styles.code}>{code}</Text>
+      {/* The credential itself — kept out of session recordings. */}
+      <Text style={styles.code} {...HJ_SUPPRESS}>{code}</Text>
       <Text variant="bodySmall" style={styles.help}>
         Give this to your driver when the cab arrives. The ride can't be started
         without it.
@@ -92,7 +94,7 @@ function DeskReveal({ booking }) {
           <Text variant="bodySmall" style={styles.inlineLabel}>
             Start code
           </Text>
-          <Text variant="bodySmall" style={styles.inlineCode}>
+          <Text variant="bodySmall" style={styles.inlineCode} {...HJ_SUPPRESS}>
             {code}
           </Text>
         </>

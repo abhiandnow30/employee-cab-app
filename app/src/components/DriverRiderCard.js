@@ -26,6 +26,7 @@ import { RIDE_OTP_LENGTH, STATUS } from '../data/mockData';
 import { statusColors, colors, font, radius, shadow, spacing } from '../theme';
 import { tripPickupPoint, tripDropPoint, tripPlaceLabels } from '../services/directions';
 import { openDirections } from '../utils/externalLinks';
+import { HJ_SUPPRESS } from '../analytics/hotjar';
 
 // How a rider appears on the driver's screen: their name, falling back to their
 // employee ID and then to a plain label. Both fallbacks matter — a card with no
@@ -198,7 +199,9 @@ export default function DriverRiderCard({
             Ask them for the {RIDE_OTP_LENGTH}-digit code in their app.
           </Text>
           <View style={styles.otpRow}>
+            {/* The rider's code, keystroke by keystroke — never recorded. */}
             <TextInput
+              {...HJ_SUPPRESS}
               mode="outlined"
               label="Code"
               value={code}
