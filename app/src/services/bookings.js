@@ -454,6 +454,43 @@ export async function createDeskCancelledBooking(fields, { reason, uid, role }) 
   });
 }
 
+// PUTTING A DESK-CANCELLED RIDE BACK ON THE BOARD.
+//
+// The desk stands cabs down on the phone, and the phone call sometimes goes the
+// other way five minutes later. Until this existed the only route back was to
+// re-add the rider by hand, which invents a second record of a ride that already
+// has one.
+//
+// NOT A DELETE. `allow delete: if false` on bookings — a booking is the record
+// that this ride existed and what happened to it, and that includes the half hour
+// it spent cancelled. So this is an update, and the cancellation fields SURVIVE
+// it on purpose: the document ends up saying "the desk cancelled this at 18:40
+// and put it back at 18:47", which is what actually happened.
+//
+// THE CANCELLATION FIELDS ALSO CANNOT BE CLEARED, even if we wanted to.
+// touchingDeskCancellation() in firestore.rules routes any write that touches
+// `cancellationSource` or `cancelledByRole` into validDeskCancellation(), which
+// requires status == 'Cancelled'. A restore that tried to tidy them away would be
+// refused outright. Nothing reads them without first checking the status is
+// 'Cancelled' (deskCancellationsOn, the Cancelled Rides report, the rider's own
+// ride card), so leaving them is correct as well as necessary.
+//
+// IT COMES BACK WAITING, NOT WITH ITS OLD CAB. Cancelling freed the seat — the
+// banner says so in as many words — and the coordinator may well have given it
+// to somebody else in the meantime. Restoring the assignment would put two
+// riders in one seat with no capacity check anywhere in the way. So the ride
+// returns as an unassigned ride and the desk assigns a cab deliberately, which
+// is the same path every other ride on the board takes.
+export async function restoreDeskCancelledBooking(bookingId, { uid, role }) {
+  return updateDoc(doc(firestore, COL, bookingId), {
+    status: STATUS.BOOKED,
+    assignedCabId: null,
+    restoredAt: serverTimestamp(),
+    restoredBy: uid || null,
+    restoredByRole: role || null,
+  });
+}
+
 // Admin approves or rejects a pending cancellation request.
 //   approve → the booking is Cancelled and the request marked Approved
 //   reject  → the request is marked Rejected; the booking stays active

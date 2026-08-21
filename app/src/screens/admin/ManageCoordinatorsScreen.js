@@ -35,7 +35,10 @@ import { colors, font, radius, shadow, spacing } from '../../theme';
 const EMPTY = { name: '', phone: '' };
 
 export default function ManageCoordinatorsScreen() {
-  const { addCoordinatorAccount, regenerateCoordinatorPasscode, adminRemoveEmployee } = useApp();
+  const {
+    addCoordinatorAccount, regenerateCoordinatorPasscode, adminRemoveEmployee,
+    adminSaveEmployee,
+  } = useApp();
 
   const [coordinators, setCoordinators] = useState([]);
   const [error, setError] = useState('');
@@ -46,6 +49,10 @@ export default function ManageCoordinatorsScreen() {
   const [formError, setFormError] = useState('');
   const [busy, setBusy] = useState(false);
   const [removeFor, setRemoveFor] = useState(null);
+  // The coordinator being renamed, and the draft name. Only the NAME — see the
+  // edit dialog for why the phone is fixed for the life of the account.
+  const [editFor, setEditFor] = useState(null);
+  const [editName, setEditName] = useState('');
   // Unclaimed coordinator invites left by the old Microsoft flow — see below.
   const [staleInvites, setStaleInvites] = useState([]);
   const [clearing, setClearing] = useState(false);
@@ -96,6 +103,36 @@ export default function ManageCoordinatorsScreen() {
       setIssued({ name: form.name.trim(), phone: form.phone, passcode: res.passcode });
     } else {
       setFormError(res?.message || 'Could not add that coordinator.');
+    }
+  }
+
+  function openEdit(coordinator) {
+    setEditFor(coordinator);
+    setEditName(coordinator.name || '');
+    setFormError('');
+  }
+
+  async function saveEdit() {
+    const next = editName.trim();
+    if (!next) {
+      setFormError('A name is required.');
+      return;
+    }
+    // Nothing to write. Saying so beats a success message for a write that never
+    // happened, and beats a no-op round trip.
+    if (next === (editFor.name || '').trim()) {
+      setEditFor(null);
+      return;
+    }
+    setFormError('');
+    setBusy(true);
+    const res = await adminSaveEmployee(editFor.uid, { name: next });
+    setBusy(false);
+    if (res?.ok) {
+      setEditFor(null);
+      setSnack(`Saved. ${next} is unchanged everywhere else — same phone, same passcode.`);
+    } else {
+      setFormError(res?.message || 'Could not save that name.');
     }
   }
 
@@ -226,13 +263,22 @@ export default function ManageCoordinatorsScreen() {
                       {item.phone || 'No phone on file'}
                     </Text>
                   </View>
-                  <IconButton
-                    icon="delete"
-                    size={20}
-                    iconColor={colors.danger}
-                    onPress={() => setRemoveFor(item)}
-                    accessibilityLabel={`Remove ${item.name || item.phone}`}
-                  />
+                  <View style={styles.cardActions}>
+                    <IconButton
+                      icon="pencil-outline"
+                      size={20}
+                      iconColor={colors.primary}
+                      onPress={() => openEdit(item)}
+                      accessibilityLabel={`Edit ${item.name || item.phone}`}
+                    />
+                    <IconButton
+                      icon="delete"
+                      size={20}
+                      iconColor={colors.danger}
+                      onPress={() => setRemoveFor(item)}
+                      accessibilityLabel={`Remove ${item.name || item.phone}`}
+                    />
+                  </View>
                 </View>
 
                 {/* Their login, in full. Both halves together, because reading
@@ -318,6 +364,57 @@ export default function ManageCoordinatorsScreen() {
             </Button>
             <Button mode="contained" onPress={save} loading={busy} disabled={busy}>
               Create account
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      {/* EDIT — the name, and only the name.
+          THE PHONE IS THE ACCOUNT, not a detail on it. Both halves of the
+          credential are derived from it: the Firebase Auth address is
+          c<phone>@coordinator.cab.invalid, and the password is the passcode with
+          the phone on the end (Firebase will not hold four characters — see
+          utils/coordinatorLogin.js). Changing it therefore means moving the Auth
+          email as well as the password, and an email on a .invalid domain can
+          never receive the verification Firebase now requires before it will let
+          an address move. So it is shown, disabled, with the way round said out
+          loud, rather than offered as a field that would fail on save. */}
+      <Portal>
+        <Dialog
+          visible={!!editFor}
+          onDismiss={() => !busy && setEditFor(null)}
+          style={styles.dialog}
+        >
+          <Dialog.Title>Edit coordinator</Dialog.Title>
+          <Dialog.Content>
+            <TextInput
+              label="Name"
+              value={editName}
+              onChangeText={setEditName}
+              mode="outlined"
+              autoFocus
+              style={styles.input}
+            />
+            <TextInput
+              label="Phone (their login — cannot be changed)"
+              value={editFor?.phone || ''}
+              mode="outlined"
+              disabled
+              style={styles.input}
+            />
+            <HelperText type="info" visible style={styles.dialogHint}>
+              The phone number IS the account — their sign-in and their passcode
+              are both built from it. To move a coordinator to a different number,
+              remove them and add them again; they get a new passcode.
+            </HelperText>
+            {formError ? <HelperText type="error" visible>{formError}</HelperText> : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setEditFor(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button mode="contained" onPress={saveEdit} loading={busy} disabled={busy}>
+              Save
             </Button>
           </Dialog.Actions>
         </Dialog>
@@ -424,6 +521,9 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     ...shadow.sm,
   },
+  // The two per-coordinator actions, kept together on the right. IconButton
+  // carries its own margin, so no gap is needed between them.
+  cardActions: { flexDirection: 'row', alignItems: 'center' },
   rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',

@@ -76,7 +76,7 @@ const FEATURES = [
 // the final value shortly after the animation should have finished. Timers and
 // frames fail independently, so the odds of both stalling are remote — and if
 // the animation did run, setting 1 on a value already at 1 is a no-op.
-function Reveal({ delay = 0, children, style }) {
+export function Reveal({ delay = 0, children, style }) {
   const v = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const anim = Animated.timing(v, {

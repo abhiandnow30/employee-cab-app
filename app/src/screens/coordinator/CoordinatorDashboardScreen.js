@@ -30,7 +30,7 @@
 // write, not after.
 // ---------------------------------------------------------------------------
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View, SectionList, Pressable, useWindowDimensions } from 'react-native';
 import {
   Text, Card, Chip, Button, SegmentedButtons, Portal, Dialog, RadioButton,
@@ -44,7 +44,9 @@ import DeskCancelDialog from '../../components/DeskCancelDialog';
 // groupByShift is no longer imported — the board groups by route only. It is still
 // exported from services/rides.js, so restoring the removed toggle means adding it
 // back here and nothing more.
-import { groupByRoute, rideStats } from '../../services/rides';
+import {
+  groupByRoute, rideStats, rideMatches, searchWordsOf,
+} from '../../services/rides';
 import { routeKey } from '../../services/roster';
 import { cabCapacity } from '../../services/cabs';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
@@ -66,7 +68,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     ridesOn, assignCabToRides, cabs, rosterMonth, setRosterMonth, monthRosters,
     routeOptions, setEmployeeRoute, employeeCancellationsOn, getCabById,
     employees, shiftPolicy, addRiderToDay, deskCancelRide, deskCancellationsOn,
-    deskCancelState,
+    restoreDeskCancelledRide, deskCancelState,
   } = useApp();
 
   // PHONE OR NOT. One breakpoint, matching ShiftPolicyScreen's — this board is
@@ -90,6 +92,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   // splitting the day by direction it had little left to show. `groupByShift` is
   // still exported by services/rides.js if it is ever wanted back.
   const [selected, setSelected] = useState([]); // ride keys
+  const [search, setSearch] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [chosenCab, setChosenCab] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -155,11 +158,34 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   // ("1/0") tells you nothing.
   const stats = useMemo(() => rideStats(legRides), [legRides]);
   const dayStats = useMemo(() => rideStats(rides), [rides]);
+  const searchWords = useMemo(() => searchWordsOf(search), [search]);
+  // One place that answers "does this ride match what was typed?", used by the
+  // list, by the tick-dropping in changeSearch, and by the other-direction hint.
+  const matches = useCallback(
+    (r) => rideMatches(r, searchWords, r.assignedCabId ? getCabById(r.assignedCabId) : null),
+    [searchWords, getCabById]
+  );
+
   const visible = useMemo(() => {
-    if (rideFilter === 'waiting') return legRides.filter((r) => !r.assignedCabId);
-    if (rideFilter === 'assigned') return legRides.filter((r) => r.assignedCabId);
-    return legRides;
-  }, [legRides, rideFilter]);
+    const byStatus =
+      rideFilter === 'waiting'
+        ? legRides.filter((r) => !r.assignedCabId)
+        : rideFilter === 'assigned'
+        ? legRides.filter((r) => r.assignedCabId)
+        : legRides;
+    return searchWords.length ? byStatus.filter(matches) : byStatus;
+  }, [legRides, rideFilter, searchWords, matches]);
+
+  // Nothing here, but something the OTHER way? The board only ever shows one of
+  // the day's two runs, so a search that finds nobody is ambiguous — "she isn't
+  // travelling today" and "she's on the other leg" look identical. The existing
+  // empty state already extends this courtesy for a whole empty direction; a
+  // search that comes back empty deserves it more, because the coordinator has a
+  // name in their hand and is about to conclude it's wrong.
+  const otherLegHits = useMemo(() => {
+    if (!searchWords.length) return 0;
+    return rides.filter((r) => r.leg !== legFilter && matches(r)).length;
+  }, [rides, legFilter, searchWords, matches]);
   const sections = useMemo(
     () => groupByRoute(visible),
     [visible]
@@ -187,11 +213,43 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     [deskCancellationsOn, date]
   );
 
+  // FOLDED AWAY, NOT DISMISSED. The desk asked for a way to get this notice out of
+  // the way once they had read it, and a close button was the obvious answer — but a
+  // close button has to decide what "closed" means for a cancellation that arrives an
+  // hour later, and every answer to that is a way to hide one. Collapsing has no such
+  // question in it: the count in the header is always live, so an afternoon
+  // cancellation changes the header whether the panel is open or shut.
+  //
+  // Starts closed. The thing the coordinator must not miss is that a ride WAS
+  // cancelled, and the header says that on its own — the names are what they open it
+  // for. Either way the rides are already off the board below.
+  const [deskCancelOpen, setDeskCancelOpen] = useState(false);
+
   // Switching direction drops the current selection, the same way moving to another
   // day does. A cab cannot run both legs at once — cabAssignmentProblem() refuses it
   // as "already doing a Office → Home trip at that time" — so a selection carried
   // from IN into OUT can only end in a rejected assignment, and worse, some of the
   // ticks causing it would be on rows no longer on screen.
+  // THE SAME HAZARD changeLegFilter guards, one control along: a tick on a row
+  // the search has just hidden is a cab about to be assigned to somebody the
+  // coordinator cannot see. But blanket-clearing on every keystroke would throw
+  // away a carpool half-built, so only the ticks that ACTUALLY leave the screen
+  // are dropped — the selection stays equal to what is on it.
+  function changeSearch(next) {
+    setSearch(next);
+    const words = searchWordsOf(next);
+    if (!words.length) return; // clearing the box only ever reveals rows
+    setSelected((prev) =>
+      prev.filter((key) => {
+        const r = rides.find((x) => x.key === key);
+        return (
+          !!r &&
+          rideMatches(r, words, r.assignedCabId ? getCabById(r.assignedCabId) : null)
+        );
+      })
+    );
+  }
+
   function changeLegFilter(next) {
     setSelected([]);
     setLegFilter(next);
@@ -313,6 +371,27 @@ export default function CoordinatorDashboardScreen({ navigation }) {
 
   function openDeskCancel(ride) {
     setCancelFor(ride);
+  }
+
+  // CONFIRMED, NOT ONE-CLICK. Restoring is not destructive — it can be undone by
+  // cancelling again — but it does tell the rider their cab is back on, and that
+  // message cannot be recalled. On a list of several cancellations the name is
+  // the only thing between reinstating the right ride and the wrong one, which
+  // is the same reason DeskCancelDialog restates the ride.
+  const [restoreFor, setRestoreFor] = useState(null);
+
+  async function confirmRestore() {
+    if (!restoreFor) return;
+    setBusy(true);
+    const res = await restoreDeskCancelledRide(restoreFor);
+    setBusy(false);
+    if (!res?.ok) {
+      setError(res?.message || 'Could not restore that ride.');
+      return;
+    }
+    const name = restoreFor.employeeName || 'Rider';
+    setRestoreFor(null);
+    setSnack(`${name}'s ride is back on the board — waiting for a cab.`);
   }
 
   async function confirmDeskCancel() {
@@ -694,36 +773,67 @@ export default function CoordinatorDashboardScreen({ navigation }) {
         {deskCancellations.length ? (
           <Card mode="outlined" style={styles.deskCancelCard}>
             <Card.Content>
-              <View style={styles.cancelHead}>
+              <Pressable
+                onPress={() => setDeskCancelOpen((open) => !open)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: deskCancelOpen }}
+                accessibilityLabel={
+                  `${deskCancellations.length} ride${
+                    deskCancellations.length === 1 ? '' : 's'
+                  } cancelled by the desk. ${deskCancelOpen ? 'Hide' : 'Show'} who.`
+                }
+                style={({ pressed }) => [styles.cancelHead, pressed && styles.headPressed]}
+              >
                 <MaterialCommunityIcons name="headset" size={18} color={colors.warning} />
-                <Text variant="titleSmall" style={styles.deskCancelTitle}>
+                <Text variant="titleSmall" style={[styles.deskCancelTitle, styles.growTitle]}>
                   {deskCancellations.length} ride
                   {deskCancellations.length === 1 ? '' : 's'} cancelled by the desk
                 </Text>
-              </View>
-              <Text variant="bodySmall" style={styles.cancelIntro}>
-                Already off the board below — do not assign a cab for these.
-              </Text>
-              {deskCancellations.map((b) => {
-                const cab = b.assignedCabId ? getCabById(b.assignedCabId) : null;
-                return (
-                  <View key={b.id} style={styles.cancelRow}>
-                    <Text variant="bodyMedium" style={styles.cancelName}>
-                      {b.employeeName || 'Employee'}
-                      {b.empId ? ` · ${b.empId}` : ''}
-                    </Text>
-                    <Text variant="bodySmall" style={styles.cancelMeta}>
-                      {b.direction} · {b.shift}
-                      {cab ? ` · seat free on ${cab.cabNumber}` : ''}
-                    </Text>
-                    <Text variant="bodySmall" style={styles.deskCancelWho}>
-                      Cancelled by the transport desk
-                      {b.cancelledByRole ? ` (${b.cancelledByRole})` : ''}
-                      {b.cancellationReason ? ` — ${b.cancellationReason}` : ''}
-                    </Text>
-                  </View>
-                );
-              })}
+                <MaterialCommunityIcons
+                  name={deskCancelOpen ? 'chevron-up' : 'chevron-down'}
+                  size={22}
+                  color={colors.warning}
+                />
+              </Pressable>
+              {deskCancelOpen ? (
+                <Text variant="bodySmall" style={styles.cancelIntro}>
+                  Already off the board below — do not assign a cab for these.
+                </Text>
+              ) : null}
+              {deskCancelOpen &&
+                deskCancellations.map((b) => {
+                  const cab = b.assignedCabId ? getCabById(b.assignedCabId) : null;
+                  return (
+                    <View key={b.id} style={styles.cancelRow}>
+                      <View style={styles.cancelRowText}>
+                        <Text variant="bodyMedium" style={styles.cancelName}>
+                          {b.employeeName || 'Employee'}
+                          {b.empId ? ` · ${b.empId}` : ''}
+                        </Text>
+                        <Text variant="bodySmall" style={styles.cancelMeta}>
+                          {b.direction} · {b.shift}
+                          {cab ? ` · seat free on ${cab.cabNumber}` : ''}
+                        </Text>
+                        <Text variant="bodySmall" style={styles.deskCancelWho}>
+                          Cancelled by the transport desk
+                          {b.cancelledByRole ? ` (${b.cancelledByRole})` : ''}
+                          {b.cancellationReason ? ` — ${b.cancellationReason}` : ''}
+                        </Text>
+                      </View>
+                      <Button
+                        mode="contained-tonal"
+                        icon="undo-variant"
+                        textColor={colors.primary}
+                        onPress={() => setRestoreFor(b)}
+                        style={styles.restoreBtn}
+                        labelStyle={styles.restoreBtnLabel}
+                        contentStyle={styles.restoreBtnContent}
+                      >
+                        Put back
+                      </Button>
+                    </View>
+                  );
+                })}
             </Card.Content>
           </Card>
         ) : null}
@@ -800,6 +910,36 @@ export default function CoordinatorDashboardScreen({ navigation }) {
           </Button>
         </View>
 
+        {/* Its own row rather than squeezed in beside IN/OUT: that row already
+            wraps on a phone with just the segments and "Add a rider" in it, and
+            a search box is not something to hunt for on a board of sixteen. */}
+        <View style={styles.searchRow}>
+          <TextInput
+            mode="outlined"
+            dense
+            value={search}
+            onChangeText={changeSearch}
+            placeholder="Search name, ID, route, address or cab"
+            accessibilityLabel="Search today's rides"
+            left={<TextInput.Icon icon="magnify" />}
+            right={
+              search ? (
+                <TextInput.Icon
+                  icon="close"
+                  onPress={() => changeSearch('')}
+                  accessibilityLabel="Clear the search"
+                />
+              ) : undefined
+            }
+            style={styles.search}
+          />
+          {searchWords.length ? (
+            <Text variant="bodySmall" style={styles.searchCount}>
+              {visible.length} of {stats.total} shown
+            </Text>
+          ) : null}
+        </View>
+
         <SectionList
           sections={sections}
           keyExtractor={(item) => item.key}
@@ -808,6 +948,29 @@ export default function CoordinatorDashboardScreen({ navigation }) {
           stickySectionHeadersEnabled={false}
           contentContainerStyle={styles.list}
           ListEmptyComponent={
+            searchWords.length ? (
+              /* Kept ahead of everything below, because those branches all
+                 explain the DAY — "every pickup has a cab", "nobody is down to
+                 travel". With a search running they would all be answering a
+                 question nobody asked, and the one that matters ("no match") is
+                 not among them. */
+              <View style={styles.empty}>
+                <MaterialCommunityIcons name="magnify-close" size={44} color={colors.muted} />
+                <Text variant="bodyMedium" style={styles.emptyText}>
+                  Nothing here matches “{search.trim()}”.
+                </Text>
+                <Text variant="bodySmall" style={styles.emptyHint}>
+                  {otherLegHits
+                    ? `${otherLegHits} match${otherLegHits === 1 ? '' : 'es'} on ${
+                        legFilter === 'in' ? 'Logout' : 'Login'
+                      } — switch direction above.`
+                    : `Searching ${legFilter === 'in' ? 'Login' : 'Logout'} rides on this day only.`}
+                </Text>
+                <Button mode="text" onPress={() => changeSearch('')}>
+                  Clear search
+                </Button>
+              </View>
+            ) : (
             <View style={styles.empty}>
               <MaterialCommunityIcons
                 name={noRoster ? 'calendar-alert' : 'check-circle-outline'}
@@ -870,6 +1033,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                 </Text>
               ) : null}
             </View>
+            )
           }
         />
 
@@ -1036,6 +1200,47 @@ export default function CoordinatorDashboardScreen({ navigation }) {
       </Portal>
 
       {/* The desk standing a ride down for a rider who asked off-app. */}
+      {/* Deliberately plain, and deliberately explicit about the two things that
+          are NOT a straight undo: the cab does not come back with the ride, and
+          the rider gets told. */}
+      <Portal>
+        <Dialog
+          visible={!!restoreFor}
+          onDismiss={() => !busy && setRestoreFor(null)}
+          style={styles.restoreDialog}
+        >
+          <Dialog.Title>Put this ride back?</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium" style={styles.restoreWho}>
+              {restoreFor?.employeeName || 'This rider'}
+              {restoreFor?.empId ? ` · ${restoreFor.empId}` : ''}
+            </Text>
+            <Text variant="bodySmall" style={styles.restoreMeta}>
+              {restoreFor?.direction} · {restoreFor?.shift}
+            </Text>
+            <Text variant="bodySmall" style={styles.restoreNote}>
+              It comes back waiting for a cab — the seat it had was freed when it
+              was cancelled, so assign one again. The rider is told the ride is
+              back on.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setRestoreFor(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              icon="undo-variant"
+              onPress={confirmRestore}
+              loading={busy}
+              disabled={busy}
+            >
+              Put it back
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
       <DeskCancelDialog
         visible={!!cancelFor}
         ride={cancelFor}
@@ -1193,10 +1398,63 @@ const styles = StyleSheet.create({
   },
   deskCancelTitle: { color: colors.warning, fontFamily: font.semibold },
   deskCancelWho: { color: colors.warning, marginTop: 2 },
+  // Solid enough to read as a control on an amber panel, quiet enough not to
+  // compete with "Add a rider" or the assign button below it — this undoes a
+  // decision somebody already made, it isn't the day's main action. White fill
+  // rather than the tonal default, which lands as a muddy grey-lilac here.
+  restoreBtn: {
+    flexShrink: 0,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: '#E7D2A6',
+    ...shadow.xs,
+  },
+  // THE LABEL'S LEFT MARGIN IS NOT PADDING — IT IS THE GAP AFTER THE ICON.
+  //
+  // Paper's md3Icon gives the icon `marginRight: -16`, deliberately, because it
+  // expects the label to arrive carrying md3Label's `marginHorizontal: 24`; the
+  // two cancel out to an 8px gap. Override the label margin without accounting
+  // for that pull and the difference goes NEGATIVE — at marginHorizontal: 4 the
+  // label sat 12px on top of the icon and the undo arrow was drawn through the
+  // "P" of "Put back".
+  //
+  // So marginLeft is written as 16 (the pull) + 8 (the gap we want), and any
+  // future tightening has to keep clearing that 16.
+  restoreBtnLabel: {
+    fontFamily: font.semibold,
+    fontSize: 13,
+    letterSpacing: 0.2,
+    marginVertical: 0,
+    marginLeft: 24,
+    marginRight: 16,
+  },
+  // No horizontal padding here: the insets are the icon's own marginLeft (16)
+  // and the label's marginRight (16), so putting padding on the content as well
+  // would count the same space twice.
+  restoreBtnContent: { height: 34, paddingHorizontal: 0 },
+  restoreDialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
+  restoreWho: { fontFamily: font.semibold, color: colors.text },
+  restoreMeta: { color: colors.textSecondary, marginTop: 2 },
+  restoreNote: { color: colors.muted, marginTop: spacing.md, lineHeight: 19 },
   cancelHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  // The title takes the slack so the chevron sits hard right, and minWidth:0 lets a
+  // long line ellipsize rather than shove the chevron off the card.
+  growTitle: { flex: 1, minWidth: 0 },
+  headPressed: { opacity: 0.65 },
   cancelTitle: { color: colors.danger, fontFamily: font.semibold },
   cancelIntro: { color: colors.textSecondary, marginTop: 2 },
-  cancelRow: { marginTop: spacing.md },
+  // Text on the left taking the slack, action on the right. alignItems
+  // flex-start pins the button to the NAME's line rather than floating it to the
+  // middle of a three-line block; minWidth:0 is what lets the text actually wrap
+  // instead of shoving the button off the card.
+  cancelRow: {
+    marginTop: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+  },
+  cancelRowText: { flex: 1, minWidth: 0 },
   cancelName: { fontFamily: font.semibold, color: colors.text },
   cancelMeta: { color: colors.textSecondary, marginTop: 1 },
   cancelWhy: { fontStyle: 'italic', marginTop: 2, color: colors.text },
@@ -1293,6 +1551,13 @@ const styles = StyleSheet.create({
   // line and then align it LEFT again, whereas auto margin keeps it right
   // wherever it lands.
   addRider: { marginLeft: 'auto', borderRadius: radius.md },
+  searchRow: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+    gap: spacing.xs,
+  },
+  search: { backgroundColor: colors.surface },
+  searchCount: { color: colors.muted, marginLeft: spacing.xs },
   // THE ACTIVE HALF. Filled with the brand blue — the same colour the sidebar and
   // primary buttons use, so this reads as part of the app rather than a new idea.
   // Paper applies a segment's own `style` last ([buttonStyle, styles.button, style]

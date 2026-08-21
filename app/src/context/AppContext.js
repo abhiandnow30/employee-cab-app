@@ -61,6 +61,7 @@ import {
   cancelAssignedBooking,
   deskCancelBooking,
   createDeskCancelledBooking,
+  restoreDeskCancelledBooking,
   subscribeMyBookings,
   subscribeAllBookings,
   subscribeCabBookings,
@@ -100,7 +101,8 @@ import {
 } from '../services/changeRequests';
 import {
   notify, notifyMany, subscribeMyNotifications, markRead, markAllRead,
-  NOTIFY, cabAssignedMessage, rideCancelledMessage, requestResolvedMessage,
+  NOTIFY, cabAssignedMessage, rideCancelledMessage, rideRestoredMessage,
+  requestResolvedMessage,
   noShowMessage,
 } from '../services/notifications';
 import { queueCabAssignedEmails } from '../services/mail';
@@ -1615,6 +1617,72 @@ export function AppProvider({ children }) {
   // news about the rider; the desk cancelling is news about a decision someone at
   // the desk already made — and merging them would also put desk cancellations into
   // the rider drop-out count, which is exactly what that function exists to keep out.
+  // UNDOING A DESK CANCELLATION. Only the desk's own cancellations, and only
+  // while they are still cancelled — a rider's cancellation is theirs, and the
+  // outcome of a change request is undone by reopening the request, not here.
+  async function restoreDeskCancelledRide(booking) {
+    if (!isDeskRole(currentUser?.role)) {
+      return { ok: false, message: 'Only the transport desk can restore a ride.' };
+    }
+    if (!booking?.id) return { ok: false, message: 'That ride no longer exists.' };
+    if (booking.status !== STATUS.CANCELLED) {
+      return { ok: false, message: 'That ride is not cancelled — there is nothing to restore.' };
+    }
+    if (booking.cancellationSource !== 'desk') {
+      return {
+        ok: false,
+        message:
+          'Only a cancellation made by the transport desk can be reversed here. ' +
+          'This one came from the rider.',
+      };
+    }
+
+    // THE ONE WAY THIS SILENTLY DOES NOTHING. ridesOn() runs the restored ride
+    // back through excuseResolvedRequests(), which drops any ride already excused
+    // by a resolved Leave or Cancel-one-ride. Put the booking back and the row
+    // would leave this banner and still not appear on the board — so say so
+    // instead, and name the thing that has to be reopened first.
+    const excused = (changeRequests || []).some(
+      (r) =>
+        r.status === REQUEST_STATUS.RESOLVED &&
+        r.employeeId === booking.employeeId &&
+        ((r.effect === EFFECT.CANCEL_DAY && r.date === booking.shiftDate) ||
+          (r.effect === EFFECT.CANCEL_RIDE && !!r.rideKey && r.rideKey === booking.rideKey))
+    );
+    if (excused) {
+      return {
+        ok: false,
+        message:
+          `${booking.employeeName || 'This rider'} also has an approved request off this ` +
+          'ride, so it would stay off the board. Reopen that request first.',
+      };
+    }
+
+    try {
+      await restoreDeskCancelledBooking(booking.id, {
+        uid: currentUser.uid,
+        role: currentUser.role,
+      });
+    } catch (e) {
+      return failure(e, 'Could not restore that ride.');
+    }
+
+    // Best-effort, exactly as the cancellation notice is: the restore has already
+    // committed and a failed notice must not read as a failed restore.
+    if (booking.employeeId) {
+      const msg = rideRestoredMessage(booking);
+      notify({
+        employeeId: booking.employeeId,
+        type: NOTIFY.RIDE_RESTORED,
+        title: msg.title,
+        body: msg.body,
+        payload: { bookingId: booking.id, date: booking.date },
+      }).catch((e) => console.warn('[notify] ride restored notice failed:', e?.message));
+    }
+
+    return { ok: true };
+  }
+
   function deskCancellationsOn(date) {
     return bookings.filter(
       (b) => b.date === date && b.status === STATUS.CANCELLED && b.cancellationSource === 'desk'
@@ -2128,10 +2196,16 @@ export function AppProvider({ children }) {
 
   // Coordinator names the pickup route for a request's address — the one field
   // they may write here, so the admin approves with it already filled in.
+  // The desk TYPES this route now rather than picking it off a list, so it goes
+  // through the same snapping every other hand-entered route does — otherwise
+  // "jntu cab" becomes a second pickup area alongside the "JNTU Cab" everyone
+  // else is already on. The stored spelling is returned so the field can show
+  // what actually landed.
   async function proposeCabRequestRoute(requestId, route) {
+    const snapped = snapRoute(route);
     try {
-      await proposeCabRequestRouteSvc(requestId, route);
-      return { ok: true };
+      await proposeCabRequestRouteSvc(requestId, snapped);
+      return { ok: true, route: snapped || '' };
     } catch (e) {
       return failure(e, 'Could not save the route.');
     }
@@ -2141,7 +2215,15 @@ export function AppProvider({ children }) {
   // they become a fully routed rider. Returns { ok, message }.
   async function approveCabService(request, edits) {
     try {
-      const res = await approveCabServiceRequest(request, currentUser?.name, edits);
+      // Snapped for the same reason as above. The `|| ''` matters: snapRoute
+      // gives null for a blank box, and null would fall through to the
+      // request's proposedRoute inside the service — so clearing the field
+      // would approve the old route instead of asking for one.
+      const route = snapRoute(edits?.route) || '';
+      const res = await approveCabServiceRequest(request, currentUser?.name, {
+        ...edits,
+        route,
+      });
       return { ok: true, ...res };
     } catch (e) {
       return failure(e, 'Could not approve the request.');
@@ -2236,6 +2318,24 @@ export function AppProvider({ children }) {
       // coordinator's board under "No route set".
       ...(snapRoute(form.route) ? { roster: { route: snapRoute(form.route) } } : {}),
     };
+    // AN INVITE FOR SOMEBODY WHO ALREADY HAS AN ACCOUNT IS UNCLAIMABLE.
+    // getOrCreateProfile returns on the existing employees/<uid> before it ever
+    // looks for an invite, so this would write a document that sits in the queue
+    // for ever, showing them as "yet to do their first login" when they have
+    // already signed in. The roster import refuses the same thing; this is the
+    // other door into adminCreateInvite.
+    const already = (employees || []).find(
+      (e) => String(e.email || '').trim().toLowerCase() === email.toLowerCase()
+    );
+    if (already) {
+      return {
+        ok: false,
+        message:
+          `${already.name || email} already has an account. Open their card in ` +
+          'Employees to change their details instead of inviting them again.',
+      };
+    }
+
     try {
       await adminCreateInvite({
         email,
@@ -2831,6 +2931,7 @@ export function AppProvider({ children }) {
     deskCancelRide,
     employeeCancellationsOn,
     deskCancellationsOn,
+    restoreDeskCancelledRide,
     deskCancelState,
     approveCancel,
     rejectCancel,

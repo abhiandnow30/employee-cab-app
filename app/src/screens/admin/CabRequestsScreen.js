@@ -16,14 +16,15 @@
 // behind a button that fails.
 // ---------------------------------------------------------------------------
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import {
   Text, Card, Button, Chip, Divider, Portal, Dialog, TextInput,
   HelperText, Snackbar, SegmentedButtons,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import Dropdown from '../../components/Dropdown';
+import useSyncedDraft from '../../utils/useSyncedDraft';
+import { routeKey } from '../../services/roster';
 import { useApp } from '../../context/AppContext';
 import { colors, spacing, font, radius, shadow } from '../../theme';
 
@@ -63,14 +64,19 @@ export default function CabRequestsScreen() {
 
   const pendingCount = (cabServiceRequests || []).filter((r) => r.status === 'Pending').length;
 
-  function openApprove(req) {
+  // `typedRoute` is what is in the card's route box this instant, which is not
+  // always what is on the server: clicking Approve blurs the box and starts the
+  // save, but the dialog opens before that round trip lands. Seeding from the
+  // saved value alone would show an empty route to someone who had just typed
+  // one, and they would type it again.
+  function openApprove(req, typedRoute) {
     setDialogError('');
     setEdits({
       name: req.name || '',
       empId: req.empId || '',
       phone: req.phone || '',
       address: req.address || '',
-      route: req.proposedRoute || '',
+      route: (typedRoute || '').trim() || req.proposedRoute || '',
     });
     setApproving(req);
   }
@@ -104,9 +110,16 @@ export default function CabRequestsScreen() {
   // The coordinator's one write. Saved immediately rather than behind a dialog:
   // it's a single field, and the point is that the admin finds it already filled
   // in when they come to approve.
+  // Returns the result so the field can adopt the SNAPPED spelling — type
+  // "jntu cab" and what comes back is "JNTU Cab". Without that the box would
+  // keep showing the typed version, look permanently unsaved, and re-save
+  // itself on every blur.
   async function setRoute(req, route) {
     const res = await proposeCabRequestRoute(req.id, route);
-    setSnack(res.ok ? `Route set to ${route} for ${req.name || 'this request'}.` : res.message);
+    if (!res.ok) setSnack(res.message);
+    else if (res.route) setSnack(`Route set to ${res.route} for ${req.name || 'this request'}.`);
+    else setSnack(`Route cleared for ${req.name || 'this request'}.`);
+    return res;
   }
 
   return (
@@ -164,7 +177,7 @@ export default function CabRequestsScreen() {
               isAdmin={isAdmin}
               routeOptions={routeOptions}
               onSetRoute={(route) => setRoute(item, route)}
-              onApprove={() => openApprove(item)}
+              onApprove={(typedRoute) => openApprove(item, typedRoute)}
               onReject={() => {
                 setReason('');
                 setDialogError('');
@@ -222,16 +235,13 @@ export default function CabRequestsScreen() {
                 numberOfLines={3}
                 style={styles.input}
               />
-              <Text variant="bodySmall" style={styles.fieldLabel}>
-                Pickup route
-              </Text>
-              <Dropdown
-                compact={false}
+              <TextInput
+                label="Pickup route"
                 value={edits.route}
-                options={routeOptions}
-                onSelect={(r) => setEdits((e) => ({ ...e, route: r }))}
-                placeholder="Pick the route for this address"
-                status={edits.route ? 'success' : undefined}
+                onChangeText={(t) => setEdits((e) => ({ ...e, route: t }))}
+                mode="outlined"
+                placeholder="e.g. JNTU Cab"
+                style={styles.input}
               />
               {/* Approving without a route would leave them under "No route
                   set" on the board every single day — the exact problem this
@@ -239,6 +249,7 @@ export default function CabRequestsScreen() {
               <HelperText type="info" visible style={styles.hint}>
                 Required. Without a route they land under "No route set" every day.
               </HelperText>
+              <NewRouteHint value={edits.route} options={routeOptions} />
               {dialogError ? (
                 <HelperText type="error" visible>
                   {dialogError}
@@ -272,10 +283,11 @@ export default function CabRequestsScreen() {
           <Dialog.Content>
             <Text variant="bodySmall" style={styles.dialogHint}>
               They stay signed in but still can't be sent a cab, so a reason is
-              the only useful thing they get.
+              the only useful thing they get — but it is optional, and leaving it
+              blank still rejects the request.
             </Text>
             <TextInput
-              label="Reason"
+              label="Reason (optional)"
               value={reason}
               onChangeText={setReason}
               mode="outlined"
@@ -318,6 +330,30 @@ function RequestCard({ req, isAdmin, routeOptions, onSetRoute, onApprove, onReje
   const tint = STATUS_TINT[req.status] || STATUS_TINT.Pending;
   const isPending = req.status === 'Pending';
 
+  // TYPED, NOT PICKED. A dropdown could only ever offer routes that already
+  // exist, which is no help to the one person this screen is for: somebody at
+  // an address no current route covers.
+  //
+  // useSyncedDraft rather than useState, because the queue is a live
+  // subscription that both desk roles are looking at — a route the coordinator
+  // sets from their own screen should appear in this box, but never on top of
+  // something being typed into it right now.
+  const [route, setRoute, { dirty }] = useSyncedDraft(req.proposedRoute || '');
+  const saving = useRef(false);
+
+  // A write per keystroke is not an option, so the save happens on leaving the
+  // field — blur, Enter, or the save icon. A single click on that icon fires
+  // the blur too, hence the latch.
+  async function commitRoute() {
+    if (saving.current) return;
+    const next = route.trim();
+    if (next === (req.proposedRoute || '').trim()) return;
+    saving.current = true;
+    const res = await onSetRoute(next);
+    saving.current = false;
+    if (res?.ok) setRoute(res.route || '');
+  }
+
   return (
     <Card style={styles.card} mode="elevated">
       <Card.Content>
@@ -355,20 +391,34 @@ function RequestCard({ req, isAdmin, routeOptions, onSetRoute, onApprove, onReje
             <Text variant="bodySmall" style={styles.fieldLabel}>
               Pickup route {req.proposedRoute ? '' : '— not set yet'}
             </Text>
-            <Dropdown
-              compact={false}
-              value={req.proposedRoute || ''}
-              options={routeOptions}
-              onSelect={onSetRoute}
+            <TextInput
+              mode="outlined"
+              value={route}
+              onChangeText={setRoute}
+              onBlur={commitRoute}
+              onSubmitEditing={commitRoute}
+              returnKeyType="done"
               placeholder="Which route covers this address?"
-              status={req.proposedRoute ? 'success' : 'error'}
+              outlineColor={req.proposedRoute ? colors.success : colors.borderStrong}
+              style={styles.routeInput}
+              right={
+                dirty ? (
+                  <TextInput.Icon
+                    icon="content-save"
+                    onPress={commitRoute}
+                    forceTextInputFocus={false}
+                    accessibilityLabel="Save pickup route"
+                  />
+                ) : undefined
+              }
             />
+            <NewRouteHint value={route} options={routeOptions} />
             {isAdmin ? (
               <View style={styles.actions}>
                 <Button mode="text" textColor={colors.danger} onPress={onReject}>
                   Reject
                 </Button>
-                <Button mode="contained" icon="check" onPress={onApprove}>
+                <Button mode="contained" icon="check" onPress={() => onApprove(route)}>
                   Approve
                 </Button>
               </View>
@@ -394,6 +444,28 @@ function RequestCard({ req, isAdmin, routeOptions, onSetRoute, onApprove, onReje
         )}
       </Card.Content>
     </Card>
+  );
+}
+
+// THE COST OF A FREE-TEXT ROUTE, SAID OUT LOUD RATHER THAN PREVENTED.
+//
+// Route names are matched exactly — canonicalRoute() snaps case and spacing and
+// nothing else — so "Miyapur" and "Miyapur Cab" are two different pickup areas
+// as far as the coordinator's board is concerned, and one carpool quietly
+// becomes two. A dropdown made that impossible; a text box makes it a typo away.
+//
+// Not blocked, because a genuinely new route is exactly what this field is for.
+// Just named, at the moment it is being created, to the only person who can
+// tell a new route from a misspelt one.
+function NewRouteHint({ value, options }) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  if ((options || []).some((r) => routeKey(r) === routeKey(text))) return null;
+  return (
+    <HelperText type="info" visible style={styles.hint}>
+      "{text}" is a new route — nobody is on it yet. Check the spelling, or the
+      same pickup area ends up as two groups.
+    </HelperText>
   );
 }
 
@@ -466,6 +538,7 @@ const styles = StyleSheet.create({
     maxWidth: 340,
     lineHeight: 20,
   },
+  routeInput: { backgroundColor: colors.surface },
   dialog: { width: '100%', maxWidth: 540, alignSelf: 'center' },
   dialogBody: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   dialogHint: { color: colors.muted, marginBottom: spacing.md, lineHeight: 19 },

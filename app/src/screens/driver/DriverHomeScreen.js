@@ -274,10 +274,11 @@ export default function DriverHomeScreen({ navigation }) {
           button plus a banner underneath — two rows and the loudest thing on the
           screen, competing with the trip actions for attention. It is a background
           setting, and a switch is what a setting looks like:
-            ● Location sharing ON   [on]
-            ○ Location sharing OFF  [off]
-          The dot and the word are still there because the switch alone is a small
-          target to read at a glance in a moving car — three cues for one state.
+            ⌖ Location sharing ON   [on]
+            ⦸ Location sharing OFF  [off]
+          The pin and the word are still there because the switch alone is a small
+          target to read at a glance in a moving car — three cues for one state,
+          and the pin is the one that says what the row is FOR without being read.
           Share Location is still in the driver's menu: that screen keeps the live
           coordinates readout and the warning for a cab that isn't linked back, which
           are worth a screen and not worth a row here. */}
@@ -304,12 +305,39 @@ export default function DriverHomeScreen({ navigation }) {
                 OFF           — not sharing.
               trackingFresh is null until the first fix, which is what separates
               "starting" from "failing". */}
-          <View
-            style={[
-              styles.shareDot,
-              sharingLocation && trackingFresh !== false ? styles.shareDotOn : styles.shareDotOff,
-              sharingLocation && trackingFresh === false ? styles.shareDotWarn : null,
-            ]}
+          {/* A LOCATION PIN, NOT A COLOURED DOT. The dot said "something is in one
+              of two states" and left the driver to remember which thing — fine for
+              anyone who set it up, useless at a glance from the driver's seat. A
+              map pin says WHAT the row is about before a word is read, which is
+              the point for a screen used one-handed at a kerb, at night, by
+              someone who may not read the English beside it.
+
+              THE SHAPE CHANGES WITH THE STATE, not just the colour. The old dot
+              carried its meaning almost entirely in green-vs-grey, and the one
+              state that matters most — switch on, nothing actually reaching the
+              database — was amber against green, the exact pair red-green colour
+              blindness merges. A struck-through pin, a pin with a warning, and a
+              pin with signal rings are told apart without any colour at all. */}
+          <MaterialCommunityIcons
+            name={
+              !sharingLocation
+                ? 'map-marker-off'
+                : trackingFresh === false
+                ? 'map-marker-alert'
+                : trackingFresh === null
+                ? 'crosshairs-gps'
+                : 'map-marker-radius'
+            }
+            size={22}
+            color={
+              !sharingLocation
+                ? colors.muted
+                : trackingFresh === false
+                ? colors.warning
+                : trackingFresh === null
+                ? colors.muted
+                : colors.success
+            }
           />
           <Text
             variant="bodyMedium"
@@ -505,12 +533,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  shareDot: { width: 11, height: 11, borderRadius: radius.pill },
-  // Filled when on, a hollow ring when off — readable without the colour, which
-  // matters in sunlight on a phone at arm's length.
-  shareDotOn: { backgroundColor: colors.success },
-  shareDotOff: { borderWidth: 2, borderColor: colors.muted },
-  // The tappable half: dot, words, chevron. flex: 1 here instead of on the text, so
+  // The tappable half: pin, words, chevron. flex: 1 here instead of on the text, so
   // the whole label group takes the free space and the switch stays hard right.
   shareLabel: {
     flexDirection: 'row',
@@ -521,7 +544,6 @@ const styles = StyleSheet.create({
   },
   shareText: { color: colors.muted },
   shareTextOn: { color: colors.success, fontFamily: font.semibold },
-  shareDotWarn: { backgroundColor: colors.warning, borderWidth: 0 },
   shareTextWarn: { color: colors.warning, fontFamily: font.semibold },
   shareErrRow: {
     flexDirection: 'row',

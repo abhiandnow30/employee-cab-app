@@ -34,6 +34,7 @@ export const NOTIFY = {
   ADDRESS_RESOLVED: 'address_resolved',
   ROSTER_PUBLISHED: 'roster_published',
   CAB_SERVICE_RESOLVED: 'cab_service_resolved',
+  RIDE_RESTORED: 'ride_restored',
   // THE ONLY TYPE A DRIVER CAN SEND. Every other notification in this list is
   // raised by the desk; this one is raised from the kerb, by the person who
   // decided the rider wasn't there. firestore.rules is written around that
@@ -150,6 +151,22 @@ export function rideCancelledMessage(ride, note) {
     body:
       `Your ${ride.direction} ride on ${ride.date} has been cancelled.` +
       (note ? `\n${note}` : ''),
+  };
+}
+
+// The desk put a cancelled ride back on. THE RIDER HAS ALREADY BEEN TOLD IT WAS
+// CANCELLED — rideCancelledMessage went out at the time — so without this they
+// are working from a cancellation that is no longer true, and the cab arrives for
+// somebody who made their own way in. The correction matters more than the
+// original notice did.
+export function rideRestoredMessage(ride) {
+  return {
+    title: `Ride back on — ${ride?.date || 'today'}`,
+    body:
+      `Your ${ride?.direction || 'cab'} ride on ${ride?.date || 'today'}` +
+      `${ride?.shift ? ` at ${ride.shift}` : ''} is back on — ` +
+      'the transport desk reversed the cancellation.' +
+      '\nA cab will be assigned nearer the time.',
   };
 }
 

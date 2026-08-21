@@ -180,6 +180,39 @@ export function ridesForDate(travelDate, rosters, policy, bookings = []) {
 // itself still takes no request-shaped argument (see CLAUDE.md) — it only ever
 // REMOVES a ride here, never adds one, so the "no extra-request path" rule
 // stays true of the actual derivation.
+// ---------------------------------------------------------------------------
+// SEARCH
+//
+// EVERY WORD MUST MATCH, so typing more narrows rather than widens — "meghana
+// gachibowli" finds one rider, not everyone called Meghana plus everyone in
+// Gachibowli. Same rule the Employees screen already uses, so the two search
+// boxes in this app behave identically.
+//
+// The address is in the haystack on purpose. The coordinator is often working
+// from what somebody said on the phone — "the girls' PG in Ameerpet" — which is
+// a landmark, not a name they can spell.
+//
+// Lives here, not on the dashboard, because ONE function has to answer this.
+// What the board hides is also what decides which ticks survive a keystroke
+// (see changeSearch there) — and a tick left on a hidden row is a cab assigned
+// to somebody the coordinator cannot see. Two copies could drift; one cannot.
+// ---------------------------------------------------------------------------
+export function searchWordsOf(term) {
+  return String(term || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+export function rideMatches(ride, words, cab) {
+  if (!words?.length) return true;
+  const hay = [
+    ride?.employeeName, ride?.empId, ride?.route, ride?.employeeAddress,
+    ride?.shift, ride?.direction, cab?.cabNumber, cab?.driverName,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
 export function excuseResolvedRequests(rides, changeRequests) {
   if (!rides.length || !changeRequests?.length) return rides;
 
