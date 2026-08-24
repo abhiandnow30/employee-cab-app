@@ -25,9 +25,13 @@ import { colors, font, radius, shadow, spacing } from '../../theme';
 // One glance-icon per shift code — purely a display touch, no meaning any
 // other screen depends on. Neutral (one tint for all) rather than
 // per-shift-colored, to keep the page reading as one system.
+// Roughly what the sky is doing when the shift ENDS, which is the half that
+// matters here — every one of these except Night is a drop home.
 const SHIFT_ICONS = {
   A: 'weather-sunny',
+  A2: 'weather-sunset-down',
   E: 'weather-sunset',
+  E2: 'weather-night-partly-cloudy',
   N: 'weather-night',
   WO: 'calendar-weekend-outline',
   H: 'calendar-star',

@@ -6,16 +6,23 @@
 // which direction) is derived from these codes plus the policy below, so adding
 // or retiming a shift is a CONFIG change, not a code change.
 //
-//   A  Afternoon  1:00 PM – 10:00 PM    → DROP home at 10:00 PM. No pickup.
-//   E  Evening    4:00 PM – 1:00 AM     → no cab today (see DEFAULT_SHIFT_POLICY)
-//   N  Night      9:00 PM – 6:00 AM     → PICKUP from home at 8:00 PM. No drop.
+//   A  Afternoon   1:00 PM – 10:00 PM   → DROP home at 10:00 PM. No pickup.
+//   A2 Afternoon 2 3:00 PM – 12:00 AM   → DROP home at midnight. No pickup.
+//   E  Evening     4:00 PM – 1:00 AM    → no cab today (see DEFAULT_SHIFT_POLICY)
+//   E2 Evening 2   5:30 PM – 2:30 AM    → DROP home at 2:30 AM. No pickup.
+//   N  Night       9:00 PM – 6:00 AM    → PICKUP from home at 8:00 PM. No drop.
 //   WO Week Off                         → no ride
 //   H  Holiday                          → no ride
 //   L  Leave                            → no ride
 //
-// So the company runs exactly TWO rides. A shift being "working" means the person
-// is at work, NOT that a cab runs both ways — which leg is provided is a separate,
-// admin-editable decision per shift (providePickup / provideDrop).
+// So the company runs FOUR rides: one pickup and three drops. A shift being
+// "working" means the person is at work, NOT that a cab runs both ways — which
+// leg is provided is a separate, admin-editable decision per shift
+// (providePickup / provideDrop).
+//
+// A2 and E2 were added Aug 2026 for two employees on hours no existing code
+// covered. Both start in daylight, so they make their own way in like the
+// Afternoon shift; both finish inside cab hours, so both get a drop.
 //
 // OVERNIGHT SHIFTS ARE THE TRICKY PART. A shift starting on the 5th and ending at
 // 1:00 AM ends on the 6th, so its two legs fall on DIFFERENT calendar days:
@@ -31,7 +38,7 @@
 // them — by when the shift starts (afternoon, evening, night) — because this
 // order is what the Shift Policy screen, the roster legend and the employee's
 // shift dropdown all render in.
-export const WORKING_CODES = ['A', 'E', 'N'];
+export const WORKING_CODES = ['A', 'A2', 'E', 'E2', 'N'];
 // The codes that mean "no ride" — kept as data so the reason can be displayed.
 export const NON_WORKING_CODES = ['WO', 'H', 'L'];
 
@@ -48,6 +55,12 @@ const SHIFT_SYNONYMS = {
   E: 'E', EVENING: 'E', EVE: 'E', EVN: 'E',
   A: 'A', AFTERNOON: 'A', AFT: 'A', NOON: 'A',
   N: 'N', NIGHT: 'N', NGT: 'N',
+  // The later variants of the afternoon and evening shifts. Spelled-out forms
+  // included because a sheet that writes "Evening" for E will write
+  // "Evening 2" here — and normaliseCell() has already collapsed the spacing
+  // and dropped a trailing "SHIFT" by the time these are compared.
+  A2: 'A2', 'A 2': 'A2', 'AFTERNOON 2': 'A2', AFTERNOON2: 'A2',
+  E2: 'E2', 'E 2': 'E2', 'EVENING 2': 'E2', EVENING2: 'E2',
   WO: 'WO', 'WEEK OFF': 'WO', WEEKOFF: 'WO', 'W/O': 'WO', 'WEEKLY OFF': 'WO',
   OFF: 'WO', 'REST DAY': 'WO', RD: 'WO',
   H: 'H', HOLIDAY: 'H', HOL: 'H', 'PUBLIC HOLIDAY': 'H', PH: 'H',
@@ -129,9 +142,24 @@ export const DEFAULT_SHIFT_POLICY = {
     label: 'Evening', start: '16:00', end: '01:00', working: true,
     providePickup: false, provideDrop: false,
   },
+  // E AND E2 DELIBERATELY DIFFER on provideDrop: E is a working shift the
+  // company runs no cab for, E2 gets a 2:30 AM drop. They look like a pair and
+  // are not one — do not "tidy" them into the same flags.
+  E2: {
+    label: 'Evening 2', start: '17:30', end: '02:30', working: true,
+    providePickup: false, provideDrop: true,
+  },
   A: {
     label: 'Afternoon', start: '13:00', end: '22:00', working: true,
     providePickup: false, provideDrop: true, // drop home when the shift ends
+  },
+  // Ends at MIDNIGHT, so `endsNextDay` is true and the drop lands on the
+  // following calendar day — the coordinator sees it on the 6th for a shift
+  // worked on the 5th. Same shape as A otherwise: a 3 PM start is outside cab
+  // hours, so nobody is collected.
+  A2: {
+    label: 'Afternoon 2', start: '15:00', end: '00:00', working: true,
+    providePickup: false, provideDrop: true,
   },
   N: {
     label: 'Night', start: '21:00', end: '06:00', working: true,
@@ -157,9 +185,16 @@ export const DEFAULT_SHIFT_POLICY = {
 // distinguishable in a calendar grid, so: N gets a slate tint (it is a WORKING
 // shift and must not read as an empty cell) and L gets red (it is an absence).
 // Change these two freely — nothing depends on the specific hues.
+// A2 and E2 take a DEEPER shade of their base shift's hue, so the pairs read as
+// related at a glance and the code on the chip ("A" vs "A2") is what tells them
+// apart. They need an entry rather than falling back: RosterUploadScreen decides
+// whether a code is known by `!!SHIFT_COLORS[code]`, so a missing one would show
+// as unrecognised in the upload preview even though the policy accepts it.
 export const SHIFT_COLORS = {
   E: { bg: '#D8EFD3', fg: '#1B5E20' },
+  E2: { bg: '#C3E3C6', fg: '#14532D' },
   A: { bg: '#FCE4D6', fg: '#A64B06' },
+  A2: { bg: '#FBD3AE', fg: '#8C4A00' },
   N: { bg: '#E4E9EF', fg: '#33475B' },
   WO: { bg: '#F2F2F2', fg: '#5F6368' },
   H: { bg: '#C9EEF8', fg: '#0A5A6E' },

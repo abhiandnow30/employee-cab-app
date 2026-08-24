@@ -10,17 +10,22 @@
 // buttons, one outcome, and riders choosing between them at random. See the
 // retired entry in REQUEST_CATALOGUE for the full reasoning.
 //
-// WHAT IS DELIBERATELY NOT HERE. The company runs exactly two rides — the 8:00 PM
-// pickup for the Night shift and the 10:00 PM drop for the Afternoon shift — and
-// nothing else, ever. So there is no request for a later cab after a shift ran
-// long, no emergency ride, and no "collect me at a different time": every one of
-// those asks for a ride outside the two, which is not a thing the desk can grant.
-// Removing them is why nothing routes to HR any more (see ROUTE_TO) and why the
+// WHAT IS DELIBERATELY NOT HERE. Every ride the company runs is derived from a
+// rostered shift code plus the shift policy — nothing else, ever. So there is no
+// request for a later cab after a shift ran long, no emergency ride, and no
+// "collect me at a different time": every one of those asks for a ride the
+// roster does not produce, which is not a thing the desk can grant. Removing
+// them is why nothing routes to HR any more (see ROUTE_TO) and why the
 // coordinator's board is purely roster-driven. Anyone genuinely stranded phones
 // the transport desk — the call button in the app header.
 //
-// Every request that remains only ever CANCELS or CORRECTS one of the two rides,
-// so `effect` has no "add a ride" case at all.
+// The remedy for genuinely different hours is a SHIFT, not a request: HR adds or
+// retimes one in Shift Timings and rosters the person onto it (that is what A2
+// and E2 are — see data/shifts.js). That keeps the ride derivable from the
+// roster, which is the whole property this file is protecting.
+//
+// Every request that remains only ever CANCELS or CORRECTS a ride the roster
+// already produces, so `effect` has no "add a ride" case at all.
 // ---------------------------------------------------------------------------
 
 export const REQUEST_TYPES = {
