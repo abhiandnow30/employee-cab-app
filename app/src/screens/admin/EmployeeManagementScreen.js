@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View, FlatList } from 'react-native';
+import { Platform, Pressable, StyleSheet, View, FlatList } from 'react-native';
 import {
   Text, Card, Button, Divider, TextInput, Snackbar, HelperText,
   IconButton, Portal, Dialog,
@@ -21,8 +21,56 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { subscribeEmployees, subscribeInvites } from '../../services/profile';
+import { needsCabServiceSetup } from '../../services/cabServiceRequests';
 import useSyncedDraft from '../../utils/useSyncedDraft';
 import { colors, font, radius, shadow, spacing } from '../../theme';
+
+// One headline number. Three of them across the top of the screen, because the
+// three questions HR opens this page with are "how many people are on the
+// service", "who has not arrived yet" and "who can a cab not be sent for" — and
+// only the first was answerable at a glance before.
+//
+// The third is the one that earns its place. needsCabServiceSetup() is what
+// holds an employee at the cab-service form, and until now the only way to
+// discover somebody was in that state was for them to fail to log in and say so.
+// It is a count you want to see fall to zero, so it is also the only tile that
+// filters: a number nobody can act on is decoration.
+function StatTile({ icon, tint, value, label, sub, onPress, active, disabled }) {
+  const body = (
+    <>
+      <View style={[styles.tileIcon, { backgroundColor: tint.soft }]}>
+        <MaterialCommunityIcons name={icon} size={17} color={tint.fg} />
+      </View>
+      <Text style={[styles.tileValue, { color: tint.fg }]}>{value}</Text>
+      <Text variant="bodySmall" style={styles.tileLabel} numberOfLines={1}>
+        {label}
+      </Text>
+      {sub ? (
+        <Text variant="bodySmall" style={styles.tileSub} numberOfLines={1}>
+          {sub}
+        </Text>
+      ) : null}
+    </>
+  );
+  if (!onPress) return <View style={styles.tile}>{body}</View>;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityState={{ selected: !!active, disabled: !!disabled }}
+      accessibilityLabel={`${value} ${label}. ${active ? 'Showing only these. Tap to show everyone' : 'Tap to show only these'}`}
+      style={({ pressed, hovered }) => [
+        styles.tile,
+        !disabled && hovered && styles.tileHover,
+        pressed && styles.tilePressed,
+        active && styles.tileActive,
+      ]}
+    >
+      {body}
+    </Pressable>
+  );
+}
 
 function draftOf(emp, homeAddressOf) {
   return {
@@ -91,6 +139,18 @@ function EmployeeCard({ emp, onSave, onDelete, homeAddressOf, routeOptions, dupl
                   Second profile on this email
                 </Text>
               </View>
+            ) : null}
+            {duplicate ? (
+              <Text variant="bodySmall" style={styles.dupeUid} selectable>
+                Account ID {emp.uid}
+              </Text>
+            ) : null}
+            {duplicate ? (
+              <Text variant="bodySmall" style={styles.dupeUidHint}>
+                Compare with Firebase → Authentication → Users. The one that
+                matches a real account is the one they sign in as — keep that
+                one. The other has no login behind it.
+              </Text>
             ) : null}
           </View>
           <IconButton
@@ -353,6 +413,9 @@ export default function EmployeeManagementScreen() {
   const [snack, setSnack] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [deleteFor, setDeleteFor] = useState(null); // employee pending deletion
+  // "Show me only the people a cab cannot be sent for." Off by default: this is
+  // a page for managing everybody, not a to-do list.
+  const [onlyUnset, setOnlyUnset] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -387,11 +450,14 @@ export default function EmployeeManagementScreen() {
   // themselves alone: FlatList keys on `uid`, so a card that stays in the list
   // keeps its draft while the search narrows around it.
   const shown = useMemo(() => {
+    // The tile filter first, then the search — so a search inside the filtered
+    // view narrows it rather than escaping it.
+    const base = onlyUnset ? (employees || []).filter(needsCabServiceSetup) : employees;
     const q = search.trim().toLowerCase();
-    if (!q) return employees;
+    if (!q) return base;
     // Every word must match somewhere, so "bhuvana jntu" narrows rather than widens.
     const words = q.split(/\s+/);
-    return employees.filter((e) => {
+    return base.filter((e) => {
       const haystack = [
         e.name, e.empId, e.email, e.phone, e.roster?.route, e.address, e.department,
       ]
@@ -400,7 +466,7 @@ export default function EmployeeManagementScreen() {
         .toLowerCase();
       return words.every((w) => haystack.includes(w));
     });
-  }, [employees, search]);
+  }, [employees, search, onlyUnset]);
 
   // TWO PROFILES, ONE PERSON — the state the app cannot prevent and must not hide.
   //
@@ -429,6 +495,15 @@ export default function EmployeeManagementScreen() {
 
   const isDuplicate = (e) =>
     duplicateEmails.has(String(e?.email || '').trim().toLowerCase());
+
+  // Nobody can be sent a cab without BOTH a home address and a pickup route —
+  // the same test that decides whether they are held at the cab-service form,
+  // reused rather than reimplemented so the count and the gate can never
+  // disagree about who is stuck.
+  const unsetCount = useMemo(
+    () => (employees || []).filter(needsCabServiceSetup).length,
+    [employees]
+  );
 
   // The same search narrows the pending list, so "where is Abhilasha" finds her
   // whether or not she has signed in yet.
@@ -487,6 +562,37 @@ export default function EmployeeManagementScreen() {
             Add Employee
           </Button>
         </View>
+        <View style={styles.tileRow}>
+          <StatTile
+            icon="account-group"
+            tint={{ fg: colors.primary, soft: colors.primarySoft }}
+            value={employees.length}
+            label={employees.length === 1 ? 'Employee' : 'Employees'}
+            sub="on the cab service"
+          />
+          <StatTile
+            icon="account-clock-outline"
+            tint={{ fg: colors.info, soft: colors.infoSoft }}
+            value={invites.length}
+            label="Invited"
+            sub="not signed in yet"
+          />
+          <StatTile
+            icon={unsetCount ? 'account-alert-outline' : 'check-circle-outline'}
+            tint={
+              unsetCount
+                ? { fg: colors.warning, soft: colors.warningSoft }
+                : { fg: colors.success, soft: colors.successSoft }
+            }
+            value={unsetCount}
+            label="Not set up"
+            sub={unsetCount ? 'no address or route' : 'everyone is routed'}
+            onPress={() => setOnlyUnset((v) => !v)}
+            active={onlyUnset}
+            disabled={!unsetCount && !onlyUnset}
+          />
+        </View>
+
         <View style={styles.searchRow}>
           <TextInput
             value={search}
@@ -502,7 +608,7 @@ export default function EmployeeManagementScreen() {
             }
             style={styles.searchInput}
           />
-          {search ? (
+          {search || onlyUnset ? (
             <Text variant="bodySmall" style={styles.searchCount}>
               {shown.length} of {employees.length}
             </Text>
@@ -599,18 +705,34 @@ export default function EmployeeManagementScreen() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <MaterialCommunityIcons
-                name={search ? 'account-search' : 'account-group'}
+                name={
+                  onlyUnset && !search
+                    ? 'check-circle-outline'
+                    : search
+                    ? 'account-search'
+                    : 'account-group'
+                }
                 size={44}
-                color={colors.muted}
+                color={onlyUnset && !search ? colors.success : colors.muted}
               />
               <Text variant="bodyMedium" style={styles.emptyText}>
-                {search
+                {/* Filtered to "not set up" and finding nobody is the ONE empty
+                    list on this screen that is good news, so it does not get the
+                    same shrug as the others. */}
+                {onlyUnset && !search
+                  ? 'Everybody has an address and a route — a cab can be sent for all of them.'
+                  : search
                   ? `Nobody matches “${search}”.`
                   : 'No employees yet. Tap “Add Employee” to create one.'}
               </Text>
               {search ? (
                 <Button mode="text" onPress={() => setSearch('')}>
                   Clear search
+                </Button>
+              ) : null}
+              {onlyUnset ? (
+                <Button mode="text" onPress={() => setOnlyUnset(false)}>
+                  Show everyone
                 </Button>
               ) : null}
             </View>
@@ -671,6 +793,42 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   hint: { color: colors.muted, flex: 1, minWidth: 200, lineHeight: 19 },
+  // Three across on a desk monitor, wrapping to two then one on a phone. Each
+  // tile keeps a floor of 150 so a number never sits on top of its own label.
+  tileRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    flexWrap: 'wrap',
+  },
+  tile: {
+    flex: 1,
+    minWidth: 150,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow.xs,
+  },
+  tileHover: { borderColor: colors.borderStrong },
+  tilePressed: { backgroundColor: colors.surfaceAlt },
+  // The filter is ON. A border alone is too quiet for a state that is hiding
+  // most of the list, so the whole tile takes the brand tint as well.
+  tileActive: { borderColor: colors.primary, backgroundColor: colors.primarySofter },
+  tileIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
+  },
+  tileValue: { fontFamily: font.bold, fontSize: 27, lineHeight: 33, letterSpacing: -0.5 },
+  tileLabel: { color: colors.text, fontFamily: font.semibold, marginTop: 1 },
+  tileSub: { color: colors.muted, fontSize: 11.5, lineHeight: 16 },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -748,6 +906,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.dangerSoft,
   },
   dupeTagText: { color: colors.danger, fontFamily: font.semibold, fontSize: 11.5 },
+  // Monospace: this is an identifier that gets compared character by character
+  // against another screen, and a proportional font makes 0/O and 1/l a guess.
+  dupeUid: {
+    marginTop: spacing.xs,
+    color: colors.text,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontSize: 11.5,
+  },
+  dupeUidHint: { color: colors.muted, fontSize: 11.5, lineHeight: 16, marginTop: 2 },
   email: { color: colors.muted, marginTop: 2 },
   deleteBtn: { margin: 0 },
   divider: { marginVertical: spacing.md, backgroundColor: colors.border },
