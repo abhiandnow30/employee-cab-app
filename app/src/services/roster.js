@@ -600,6 +600,13 @@ export const ERROR_KINDS = {
   // one this sheet attached a month of shifts to would be a coin toss, and the
   // other copy of the person would keep generating rides nobody is expecting.
   DUPLICATE_ACCOUNT: 'Two accounts share this email',
+  // The sheet has no Email column, or a row's cell is empty. Fatal either way:
+  // email is the only identity this importer trusts.
+  MISSING_EMAIL: 'Email missing',
+  // Matched on email, but the sheet calls them something else. The sheet wins;
+  // this only makes the rename visible.
+  NAME_CHANGED: 'Name differs from the profile',
+  NO_EMAIL_COLUMN: 'No Email column',
   // A warning, never an error: the month still imports, but every ride it
   // produces for this person lands under "No route set" on the coordinator's
   // board until somebody routes them. Silent, this is the gap that made the
@@ -678,45 +685,43 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
   // rows. They are written; this is a "did you mean that?", not a rejection.
   const unknownRoutes = new Set();
 
-  // EMAIL FIRST, then employee id, then name.
+  // EMAIL IS THE IDENTITY. EMPLOYEE ID IS THE ONLY FALLBACK. NAME IS NOT A KEY.
   //
-  // Email is the only identifier in this file that cannot drift. It is what
-  // Microsoft authenticates, what an invite is keyed on, and what
-  // firestore.rules treats as the security boundary — while a NAME is whatever
-  // the sheet's author typed and an EMPLOYEE ID is missing from a self-
-  // provisioned account entirely (the rules pin those documents to token
-  // fields, so there is no empId to match on).
+  // One person is known to this system three different ways — a Firebase uid, an
+  // email address, and a name plus employee id typed into a spreadsheet — and
+  // every import bug worth the name has been two of those disagreeing:
   //
-  // Matching on those two alone had a failure that looked like nothing was
-  // wrong. Somebody already signed in as "NagaLakshmi Mangina" off the company
-  // directory; the sheet called her "Naga Lakshmi" and gave an employee id her
-  // account did not carry. Neither key hit, so the import decided she did not
-  // exist and filed an INVITE for an address that already had an account — and
-  // an invite for someone who already has a profile can never be claimed,
-  // because getOrCreateProfile returns on the existing document before it ever
-  // looks for one. The invite sat there permanently, her profile kept its blank
-  // address and route, so needsCabServiceSetup() held her at the cab-service
-  // form and she surfaced in New Cab Requests as though she were a walk-up. Her
-  // shifts never imported either — rosters/<month>_<uid> needs a uid the import
-  // had not matched.
+  //   • the sheet said "Naga Lakshmi", her Microsoft account said "NagaLakshmi
+  //     Mangina", and her self-provisioned profile carried no employee id at all
+  //     (the rules pin those documents to token fields). Neither name nor id hit,
+  //     so the import decided she did not exist and filed an invite for an
+  //     address that already had an account — unclaimable, because
+  //     getOrCreateProfile returns on the existing document before it ever looks
+  //     for an invite. Her shifts never imported and she was held at the
+  //     cab-service form as though she were a walk-up.
+  //   • two people shared an employee id, and a month of shifts went to the wrong
+  //     one, silently.
   //
-  // Matching her by email writes the sheet's address and route straight onto the
-  // profile she already has, which is what makes all three symptoms go away at
-  // once. The other two keys stay as fallbacks for sheets with no email column.
+  // Email is the only one of the three that cannot drift: it is what Microsoft
+  // authenticates, what an invite is keyed on, and what firestore.rules treats as
+  // the security boundary. So it is now REQUIRED and it is what rows are matched
+  // on. Employee id remains as a fallback for a row whose address is new to the
+  // directory but whose id is already on file.
+  //
+  // NAME IS NO LONGER USED TO FIND ANYBODY — deliberately, at explicit request.
+  // It is still written to the profile (the sheet is authoritative for it, same
+  // as phone and address), it just cannot identify a person any more. A name is
+  // whatever the sheet's author typed; matching on it produced both a false
+  // negative (Naga Lakshmi above) and, on two people with the same name, a false
+  // positive that attached a month of shifts to a stranger.
   const byEmail = new Map();
   const byEmpId = new Map();
-  const byName = new Map();
   (employees || []).forEach((e) => {
     const mail = String(e.email || '').trim().toLowerCase();
     // Two profiles on one email is the duplicate-account bug itself. Flagged,
     // never guessed at — see DUPLICATE_ACCOUNT.
     if (mail) byEmail.set(mail, byEmail.has(mail) ? 'ambiguous' : e);
     if (e.empId) byEmpId.set(String(e.empId).trim().toLowerCase(), e);
-    if (e.name) {
-      const key = String(e.name).trim().toLowerCase();
-      // A duplicated NAME in the directory makes name-matching ambiguous; mark it.
-      byName.set(key, byName.has(key) ? 'ambiguous' : e);
-    }
   });
 
   const seen = new Map(); // uid → first row number that claimed it
@@ -726,12 +731,15 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
     let creatable = false;
 
     // -- identity --
-    // Email, then employee id, then name — see the maps above for why that
-    // order. Each key is only consulted if the one before it found nobody.
+    // Email, then employee id. Nothing else — see the maps above.
     let employee = null;
     let matchedBy = null;
     let duplicateEmail = false;
-    if (row.email) {
+    // A row with no email cannot be matched and cannot be invited, so it is
+    // rejected before anything else is looked at. Reported per row rather than
+    // only at file level, because the fix is a cell, not the file.
+    const hasEmail = !!row.email;
+    if (hasEmail) {
       const hit = byEmail.get(row.email);
       if (hit === 'ambiguous') duplicateEmail = true;
       else if (hit) {
@@ -739,25 +747,23 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
         matchedBy = 'email';
       }
     }
-    if (!employee && !duplicateEmail && row.empId) {
+    if (!employee && !duplicateEmail && hasEmail && row.empId) {
       employee = byEmpId.get(row.empId.toLowerCase()) || null;
       if (employee) matchedBy = 'id';
-    }
-    let ambiguousName = false;
-    if (!employee && !duplicateEmail && row.name) {
-      const hit = byName.get(row.name.toLowerCase());
-      if (hit === 'ambiguous') ambiguousName = true;
-      else if (hit) {
-        employee = hit;
-        matchedBy = 'name';
-      }
     }
 
     if (!employee) {
       // Couldn't resolve the row to anybody. Whether that's fatal depends on
       // whether the sheet gave us enough to create them.
       const emailLooksReal = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(row.email || '');
-      if (duplicateEmail) {
+      if (!hasEmail) {
+        // NO EMAIL, NO IMPORT. There is nothing to match this row to and nothing
+        // to invite, and guessing from the name is exactly what was removed.
+        errors.push(
+          `${ERROR_KINDS.MISSING_EMAIL}${row.name ? ` for "${row.name}"` : ''} — ` +
+            'add their company email to this row'
+        );
+      } else if (duplicateEmail) {
         // Deliberately fatal, and deliberately NOT creatable: inviting an
         // address that already has one account — let alone two — writes an
         // invite nobody can ever claim, which is the state this whole block
@@ -782,29 +788,34 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
         // with no re-upload.
         creatable = true;
         warnings.push(`${ERROR_KINDS.NO_ACCOUNT} (${row.email})`);
+      } else if (!emailLooksReal) {
+        errors.push(`${ERROR_KINDS.MISSING_EMAIL} ("${row.email}" is not an email address)`);
       } else {
-        if (!row.empId) errors.push(ERROR_KINDS.MISSING_ID);
-        errors.push(
-          ambiguousName
-            ? `${ERROR_KINDS.UNKNOWN_EMPLOYEE} (more than one employee is called "${row.name}" — add an Employee ID column)`
-            : row.name
-            ? `${ERROR_KINDS.UNKNOWN_EMPLOYEE} (no account, and no email in the file to create one)`
-            : ERROR_KINDS.UNKNOWN_EMPLOYEE
-        );
+        // A real email, nobody on file, and no name to create them with.
+        errors.push(`${ERROR_KINDS.UNKNOWN_EMPLOYEE} (${row.email} — add their name so they can be invited)`);
       }
     } else {
       // Resolved. A missing id is worth saying, but not worth rejecting them for.
       if (!row.empId) warnings.push(`${ERROR_KINDS.MISSING_ID} (matched on ${matchedBy})`);
-      // A row that carries an id AND matched on name means the two disagree, and
-      // that was passing in complete silence. It is how a serial-number column read
-      // as the ID went unnoticed — "1" matched Vineetha by name and looked fine.
-      // Worse, on a sheet with two people of the same name it could quietly attach a
-      // month of shifts to the wrong person. Not fatal (the name is good evidence),
-      // but never invisible.
-      // Matched on something OTHER than the id, and the id disagrees. Covers the
-      // email match as well as the name one: the sheet naming a different person
-      // is worth seeing whichever key resolved the row. A profile with no empId
-      // at all is a gap the sheet is filling, not a disagreement, so it is quiet.
+      // Matched by EMAIL while the sheet's name differs from the profile's. Not a
+      // problem — the sheet wins and the profile is renamed — but worth seeing,
+      // because it is also what a row pasted against the wrong email looks like.
+      else if (
+        matchedBy === 'email' &&
+        row.name &&
+        employee.name &&
+        String(employee.name).trim().toLowerCase() !== row.name.toLowerCase()
+      ) {
+        warnings.push(
+          `${ERROR_KINDS.NAME_CHANGED} ("${employee.name}" → "${row.name}" for ${row.email})`
+        );
+      }
+      // Matched on EMAIL while the sheet also carries an employee id, and the two
+      // disagree. Never fatal — email decided it, and email is the identity — but
+      // never silent either: it is what a row pasted against the wrong person
+      // looks like, and it is how a serial-number column read as the ID went
+      // unnoticed. A profile with no empId at all is a gap the sheet is filling,
+      // not a disagreement, so that case stays quiet.
       else if (
         matchedBy !== 'id' &&
         employee.empId &&
@@ -887,6 +898,14 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
   // File-level problems apply to the whole upload and are worth saying ONCE,
   // loudly, instead of as the same error repeated on every row.
   const fileErrors = [];
+  // WITHOUT AN EMAIL COLUMN NOTHING IN THE FILE CAN BE IMPORTED, so say it once,
+  // at the top, instead of repeating the same row error two hundred times.
+  if (!parsed.hasEmailColumn) {
+    fileErrors.push(
+      `${ERROR_KINDS.NO_EMAIL_COLUMN}: this sheet has no Email column. Email is how ` +
+        'rows are matched to people — add one (a column headed "Email") and upload again.'
+    );
+  }
   if (parsed.badDateHeaders?.length) {
     fileErrors.push(`${ERROR_KINDS.BAD_DATE}: ${parsed.badDateHeaders.slice(0, 5).join(', ')}`);
   }
@@ -1307,10 +1326,12 @@ export async function addSingleEmployeeRoster(
 // expects, pre-filled with the right number of day columns for the month.
 export function buildTemplate(year, monthIndex, sampleNames = ['Raghu', 'Sriram', 'Vineetha']) {
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-  // Email, Phone, Route and Home Address are optional for matching an employee who
-  // already has an account — but they're the difference between "this person has no
-  // account, sort it out yourself" and being able to create them from the file. The
-  // template asks for them so HR fills them in once rather than being asked later.
+  // EMAIL IS REQUIRED — it is how a row is matched to a person, so a blank cell
+  // means that row cannot import at all (see validateRoster). Phone, Route and
+  // Home Address are optional to MATCH on, but the sheet is authoritative for
+  // them, so a blank cell simply leaves the profile as it was — which is how
+  // somebody ends up rostered with no address and stuck at the cab-service form.
+  // Employee ID is the one fallback when an email is new to the directory.
   const header = ['Employee ID', 'Employee Name', 'Email', 'Phone', 'Route', 'Home Address'];
   for (let d = 1; d <= daysInMonth; d++) {
     // "01-Aug-2026", not "01-Aug". The upload screen no longer asks for a year —

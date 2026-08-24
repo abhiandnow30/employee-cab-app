@@ -45,7 +45,7 @@ const EMPTY_NEW = {
   route: null,
 };
 
-function EmployeeCard({ emp, onSave, onDelete, homeAddressOf, routeOptions }) {
+function EmployeeCard({ emp, onSave, onDelete, homeAddressOf, routeOptions, duplicate }) {
   // Draft over the LIVE profile, so a change made elsewhere (an approved address
   // request, another admin) is picked up while this card is untouched. Seeding
   // once at mount meant a Save could overwrite newer data with a stale copy.
@@ -80,6 +80,18 @@ function EmployeeCard({ emp, onSave, onDelete, homeAddressOf, routeOptions }) {
           <View style={styles.cardHeadText}>
             <Text variant="titleMedium" numberOfLines={1}>{emp.name || emp.email}</Text>
             <Text variant="bodySmall" style={styles.email}>{emp.email}</Text>
+            {duplicate ? (
+              <View style={styles.dupeTag}>
+                <MaterialCommunityIcons
+                  name="account-alert-outline"
+                  size={13}
+                  color={colors.danger}
+                />
+                <Text variant="bodySmall" style={styles.dupeTagText}>
+                  Second profile on this email
+                </Text>
+              </View>
+            ) : null}
           </View>
           <IconButton
             icon="trash-can-outline"
@@ -390,6 +402,34 @@ export default function EmployeeManagementScreen() {
     });
   }, [employees, search]);
 
+  // TWO PROFILES, ONE PERSON — the state the app cannot prevent and must not hide.
+  //
+  // An employees document is keyed by Firebase uid, so two of them for one email
+  // means two AUTH ACCOUNTS. That is created outside this app entirely: with
+  // "Prevent creation of multiple accounts with the same email address" turned
+  // off in the Firebase console, somebody holding a password login gets a SECOND
+  // account the first time they sign in with Microsoft, and a fresh blank profile
+  // with it. Nothing here can stop that — a signed-in user with no profile may
+  // read only their own document (see the employees read rule), so the app cannot
+  // even ask whether that email is already taken at the moment it self-provisions.
+  //
+  // What it CAN do is refuse to let the result go unnoticed. Undetected, the
+  // person signs in to whichever account they authenticate as, finds it empty,
+  // gets held at the cab-service form, and their rides stay attached to the other
+  // uid — which reads as "she is on the roster but the app says she isn't".
+  const duplicateEmails = useMemo(() => {
+    const counts = new Map();
+    (employees || []).forEach((e) => {
+      const key = String(e.email || '').trim().toLowerCase();
+      if (!key) return;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([k]) => k));
+  }, [employees]);
+
+  const isDuplicate = (e) =>
+    duplicateEmails.has(String(e?.email || '').trim().toLowerCase());
+
   // The same search narrows the pending list, so "where is Abhilasha" finds her
   // whether or not she has signed in yet.
   const shownInvites = useMemo(() => {
@@ -479,6 +519,7 @@ export default function EmployeeManagementScreen() {
               onDelete={setDeleteFor}
               homeAddressOf={homeAddressOf}
               routeOptions={routeOptions}
+              duplicate={isDuplicate(item)}
             />
           )}
           contentContainerStyle={styles.list}
@@ -488,7 +529,42 @@ export default function EmployeeManagementScreen() {
              did the person I just uploaded go?" — and they take themselves off
              the list the moment that person signs in for the first time. */
           ListHeaderComponent={
-            shownInvites.length ? (
+            <>
+              {duplicateEmails.size ? (
+                <View style={styles.dupeBox}>
+                  <View style={styles.pendingHead}>
+                    <MaterialCommunityIcons
+                      name="account-alert-outline"
+                      size={17}
+                      color={colors.danger}
+                    />
+                    <Text variant="labelLarge" style={styles.dupeTitle}>
+                      {duplicateEmails.size} email
+                      {duplicateEmails.size === 1 ? ' has' : 's have'} two profiles
+                    </Text>
+                  </View>
+                  <Text variant="bodySmall" style={styles.dupeHint}>
+                    One person, two accounts. They sign in to one of them, find it
+                    empty, and their rides stay attached to the other — so keep the
+                    account they actually sign in with (check the provider in
+                    Firebase Console → Authentication), copy the details onto it,
+                    then delete the other. Turn on “Prevent creation of multiple
+                    accounts with the same email address” in Authentication →
+                    Settings to stop it happening again.
+                  </Text>
+                  {[...duplicateEmails].map((mail) => (
+                    <Text
+                      key={mail}
+                      variant="bodySmall"
+                      style={styles.dupeRow}
+                      numberOfLines={1}
+                    >
+                      {mail}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
+              {shownInvites.length ? (
               <View style={styles.pendingBox}>
                 <View style={styles.pendingHead}>
                   <MaterialCommunityIcons
@@ -517,7 +593,8 @@ export default function EmployeeManagementScreen() {
                   </View>
                 ))}
               </View>
-            ) : null
+              ) : null}
+            </>
           }
           ListEmptyComponent={
             <View style={styles.empty}>
@@ -609,6 +686,21 @@ const styles = StyleSheet.create({
   // tint rather than a warning colour: nobody has done anything wrong and there
   // is nothing to action — it is answering "where did the person I just uploaded
   // go?", and it removes itself as each of them signs in.
+  // Red, not amber: an invite waiting to be claimed is normal, two accounts for
+  // one person is not — somebody is locked out of their own rides right now.
+  dupeBox: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: '#F3C7C3',
+    borderLeftWidth: 4,
+    borderLeftColor: colors.danger,
+    backgroundColor: colors.dangerSoft,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  dupeTitle: { color: colors.danger, fontFamily: font.semibold },
+  dupeHint: { color: colors.textSecondary, marginTop: spacing.xs, lineHeight: 19 },
+  dupeRow: { color: colors.danger, fontFamily: font.semibold, marginTop: spacing.xs },
   pendingBox: {
     borderRadius: radius.lg,
     borderWidth: 1,
@@ -644,6 +736,18 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   cardHeadText: { flex: 1, minWidth: 0 },
+  dupeTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+    paddingVertical: 2,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: colors.dangerSoft,
+  },
+  dupeTagText: { color: colors.danger, fontFamily: font.semibold, fontSize: 11.5 },
   email: { color: colors.muted, marginTop: 2 },
   deleteBtn: { margin: 0 },
   divider: { marginVertical: spacing.md, backgroundColor: colors.border },

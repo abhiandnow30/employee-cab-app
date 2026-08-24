@@ -332,11 +332,30 @@ export function adminUpdateEmployee(uid, fields) {
 // the Firebase console if you also want to revoke their sign-in. Until then the
 // account can still authenticate, but it has no profile, so the app locks it out
 // (see getOrCreateProfile) instead of recreating it.
+// DELETING AN EMPLOYEE MUST TAKE THEIR ROSTER WITH THEM.
+//
+// Rides are DERIVED from rosters/<month>_<uid>, not stored — so a roster
+// document left behind after the profile is gone keeps generating rides, every
+// day, for somebody who no longer exists. That is the "she is deleted and still
+// on the board" report: the profile was removed and the thing that actually
+// produces the rides never was.
+//
+// BOOKINGS ARE DELIBERATELY LEFT ALONE. A booking is the record of a ride that
+// happened — the rules refuse to delete one at all (allow delete: if false), and
+// history is not ours to erase. A roster is a SCHEDULE, an instruction to keep
+// producing rides, and that instruction has to stop.
 export async function adminDeleteEmployee(uid) {
   if (!firestore) throw new Error('Backend not configured.');
   const snap = await getDoc(doc(firestore, 'employees', uid));
   const cabId = snap.exists() ? snap.data().cabId : null;
+  // Every month this person was rostered for. Read BEFORE the batch, because a
+  // batch cannot query — and a handful of documents (one per month) is far
+  // inside the 500-write limit.
+  const rosters = await getDocs(
+    query(collection(firestore, 'rosters'), where('employeeId', '==', uid))
+  );
   const batch = writeBatch(firestore);
+  rosters.forEach((d) => batch.delete(d.ref));
   // A departing driver must not stay linked to a cab — but only detach a cab that
   // still exists. set(merge) on a cab that has already been removed would CREATE
   // it, and the rules reject a cab with no number, so a stale cabId on the profile
