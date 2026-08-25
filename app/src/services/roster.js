@@ -1113,6 +1113,80 @@ export async function importRoster(report, { uploadedBy, uploadedByName, onProgr
   };
 }
 
+// --- Who the sheet no longer mentions ---------------------------------------
+//
+// AN IMPORT ONLY EVER WRITES. It walks the rows the sheet HAS and writes a
+// document for each; a person who has been taken OUT of the sheet is simply
+// never visited, so their rosters/<month>_<uid> document from a previous upload
+// survives untouched and keeps deriving a ride every single day.
+//
+// Which means removing somebody from the spreadsheet does not remove them from
+// the board, and re-uploading cannot fix it — there is no "this person is gone"
+// signal in a file that just doesn't mention them. Until this existed the only
+// remedy was deleting documents by hand in the Firestore console.
+//
+// SO THIS IS A DIFFERENCE, NOT A DELETE. It reports what is stored for the month
+// that the sheet does not claim, and the screen asks before removing any of it.
+// Doing it automatically would be dangerous in a way that is easy to miss: a
+// partial sheet — one route, a correction for three people, the wrong file —
+// would silently wipe everybody else's month in a single click.
+//
+// HAND-ADDED RIDERS ARE HELD BACK, and that is the subtle part. addRiderForDay()
+// writes to this same collection for someone the monthly sheet MISSED, stamping
+// `addedBy` and no `importId`. They are absent from the sheet by definition —
+// that is why the desk added them — so offering them for removal because a sheet
+// doesn't list them would delete the fix along with the problem.
+export function rosterOrphans(report, stored, namesByUid) {
+  if (!report || !stored?.length) return { removable: [], handAdded: [] };
+
+  // Anyone the sheet resolved to a real account, INCLUDING rows that failed
+  // validation: a row with a bad shift code is still the sheet saying "this
+  // person is on the roster", and must never count as an absence.
+  const claimed = new Set(
+    (report.rows || []).map((r) => r.employeeId).filter(Boolean)
+  );
+
+  const missing = (stored || []).filter(
+    (r) => r.employeeId && !claimed.has(r.employeeId)
+  );
+
+  const describe = (r) => ({
+    id: r.id,
+    employeeId: r.employeeId,
+    name: rosterRowName(r, namesByUid) || '(no name on roster row)',
+    empId: r.empId || '',
+    route: r.route || '',
+    days: Object.values(r.days || {}).filter(Boolean).length,
+    importedAt: r.importedAt || null,
+    addedByName: r.addedByName || '',
+  });
+
+  return {
+    removable: missing.filter((r) => r.importId).map(describe),
+    handAdded: missing.filter((r) => !r.importId && r.addedBy).map(describe),
+  };
+}
+
+// Delete roster documents by id. Admin only — `allow delete: if isAdmin()` on
+// the rosters collection. Chunked under Firestore's 500-write batch limit.
+//
+// This removes a month of SHIFTS, never a person: their employee record, their
+// profile and every booking they have ever had are untouched. A booking is what
+// actually happened and the rules refuse to delete one at all; a roster is a
+// standing instruction to keep producing rides, and that is what stops here.
+export async function removeRosterEntries(ids) {
+  if (!firestore || !ids?.length) return 0;
+  const CHUNK = 400;
+  let removed = 0;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = writeBatch(firestore);
+    ids.slice(i, i + CHUNK).forEach((id) => batch.delete(doc(firestore, ROSTERS, id)));
+    await batch.commit();
+    removed += Math.min(CHUNK, ids.length - i);
+  }
+  return removed;
+}
+
 // --- Reads ------------------------------------------------------------------
 
 // Every roster row for a month (coordinator + admin). One query, ~250 docs.

@@ -34,7 +34,7 @@
 // desk. On a phone this screen explains that instead of half-working.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, Platform, ScrollView } from 'react-native';
 import {
   Text, Card, Button, Chip, Divider, DataTable, HelperText, Snackbar,
@@ -45,6 +45,7 @@ import { useApp } from '../../context/AppContext';
 import {
   parseRosterFile, validateRoster, ERROR_KINDS,
   fetchMonthRosters, summariseStoredRoster, downloadStoredRoster,
+  rosterOrphans, removeRosterEntries,
 } from '../../services/roster';
 import { subscribeEmployees, adminInviteEmployees } from '../../services/profile';
 import { ALL_SHIFT_CODES, SHIFT_COLORS, shiftSummary } from '../../data/shifts';
@@ -119,6 +120,16 @@ export default function RosterUploadScreen({ navigation }) {
   // This screen has real hidden rules (rides are never booked directly, a
   // re-upload overwrites profile data) that a new admin has no way to guess.
   const [helpOpen, setHelpOpen] = useState(false);
+  // WHO IS STORED FOR THIS MONTH BUT NOT IN THIS SHEET.
+  //
+  // An import only ever writes, so taking somebody out of the spreadsheet does
+  // not take them off the board — their document from a previous upload keeps
+  // deriving a ride every day, and re-uploading cannot fix it because a file
+  // that simply omits a person carries no "they are gone" signal. Read once per
+  // sheet and compared here, so the difference is visible BEFORE importing.
+  const [storedMonth, setStoredMonth] = useState(null); // { month, rows } | null
+  const [removingOrphans, setRemovingOrphans] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   // Bulk-provisioning the people the sheet names who have no account yet.
   const [inviting, setInviting] = useState(false);
   const [inviteProgress, setInviteProgress] = useState(null); // { done, total, label }
@@ -205,6 +216,27 @@ export default function RosterUploadScreen({ navigation }) {
       return null;
     }
   }, [parsed, employees, employeesLoaded, shiftPolicy, routeOptions]);
+
+  // One read per sheet. Deliberately NOT a live subscription: this is compared
+  // against a file the admin is holding, and a list that shifted under them
+  // mid-decision would be worse than one that is a few seconds old. It is
+  // re-read after a removal so the panel reflects what actually happened.
+  const loadStoredMonth = useCallback(async (month) => {
+    if (!month) {
+      setStoredMonth(null);
+      return;
+    }
+    try {
+      setStoredMonth({ month, rows: await fetchMonthRosters(month) });
+    } catch (e) {
+      console.warn('[roster] could not read the stored month:', e?.message);
+      setStoredMonth(null); // the panel simply does not appear; nothing is claimed
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStoredMonth(parsed?.month || null);
+  }, [parsed?.month, loadStoredMonth]);
 
   // Forget the sheet on screen — including the stashed copy, or it would come
   // straight back on the next reload.
@@ -452,6 +484,36 @@ export default function RosterUploadScreen({ navigation }) {
     () => new Map((employees || []).map((e) => [e.uid, e])),
     [employees]
   );
+
+  // The people this sheet does not mention. Split so a rider the DESK added for a
+  // day the sheet missed is never offered up for deletion — being absent from the
+  // sheet is exactly why they were added by hand.
+  //
+  // Declared HERE, after namesByUid, and not up beside the report it derives
+  // from: namesByUid is a const, so reading it earlier in the component body is a
+  // temporal-dead-zone ReferenceError on the first render — which parses and
+  // builds perfectly and then shows a blank screen.
+  const orphans = useMemo(() => {
+    if (!report || storedMonth?.month !== report.month) return { removable: [], handAdded: [] };
+    return rosterOrphans(report, storedMonth.rows, namesByUid);
+  }, [report, storedMonth, namesByUid]);
+
+  async function doRemoveOrphans() {
+    setConfirmRemove(false);
+    setRemovingOrphans(true);
+    try {
+      const n = await removeRosterEntries(orphans.removable.map((o) => o.id));
+      setSnack(
+        `Removed ${n} ${n === 1 ? 'person' : 'people'} from ${report?.monthLabel || report?.month}. ` +
+          'Their rides stop from now; past bookings are untouched.'
+      );
+      await loadStoredMonth(report?.month || null);
+    } catch (e) {
+      setError(e?.message || 'Could not remove those roster rows.');
+    } finally {
+      setRemovingOrphans(false);
+    }
+  }
 
   // Download a month's roster as a spreadsheet, straight from the history row.
   //
@@ -978,6 +1040,83 @@ export default function RosterUploadScreen({ navigation }) {
             which was left over from the old adminCreateAccount flow and had HR
             waiting on an email that was never sent, and telling new hires to go
             looking for it. See adminInviteEmployees in services/profile.js. */}
+        {/* STORED FOR THIS MONTH, ABSENT FROM THIS SHEET.
+            Placed above the "no account yet" card because it is the one thing on
+            this screen that is true whether or not the admin presses Import —
+            these rides are being generated right now. */}
+        {orphans.removable.length || orphans.handAdded.length ? (
+          <Card mode="elevated" style={styles.card}>
+            <Card.Content>
+              <SectionHeader
+                icon="account-off-outline"
+                title={
+                  orphans.removable.length
+                    ? `${orphans.removable.length} rostered for ${report?.monthLabel || report?.month} but not in this sheet`
+                    : `${orphans.handAdded.length} added by the desk, not from a sheet`
+                }
+                subtitle={
+                  orphans.removable.length
+                    ? 'They keep generating rides every day until they are removed — re-uploading without them does not stop it.'
+                    : 'Nothing here needs doing.'
+                }
+              />
+
+              {orphans.removable.length ? (
+                <>
+                  {orphans.removable.slice(0, 12).map((o) => (
+                    <View key={o.id} style={styles.orphanRow}>
+                      <Text variant="bodyMedium" style={styles.orphanName} numberOfLines={1}>
+                        {o.name}
+                        {o.empId ? ` · ${o.empId}` : ''}
+                      </Text>
+                      <Text variant="bodySmall" style={styles.orphanMeta} numberOfLines={1}>
+                        {o.days} day{o.days === 1 ? '' : 's'} rostered
+                        {o.route ? ` · ${o.route}` : ''}
+                      </Text>
+                    </View>
+                  ))}
+                  {orphans.removable.length > 12 ? (
+                    <Text variant="bodySmall" style={styles.orphanMeta}>
+                      …and {orphans.removable.length - 12} more
+                    </Text>
+                  ) : null}
+
+                  <Button
+                    mode="contained"
+                    icon="calendar-remove"
+                    buttonColor={colors.danger}
+                    onPress={() => setConfirmRemove(true)}
+                    loading={removingOrphans}
+                    disabled={removingOrphans}
+                    style={styles.inviteBtn}
+                  >
+                    Remove {orphans.removable.length} from{' '}
+                    {report?.monthLabel || report?.month}
+                  </Button>
+                  <HelperText type="info" visible>
+                    This deletes only their shifts for this month. Their employee
+                    record, their profile and every booking they have already had
+                    are untouched — check the sheet is the complete one for the
+                    month before pressing it.
+                  </HelperText>
+                </>
+              ) : null}
+
+              {orphans.handAdded.length ? (
+                <View style={styles.handAddedBox}>
+                  <Text variant="bodySmall" style={styles.orphanMeta}>
+                    {orphans.handAdded.length} more{orphans.removable.length ? ' also' : ''} rostered
+                    for this month came from &ldquo;Add a rider&rdquo;, not from a sheet, so
+                    they are left alone:{' '}
+                    {orphans.handAdded.map((o) => o.name).join(', ')}. Remove one of
+                    those from Today&rsquo;s Rides instead.
+                  </Text>
+                </View>
+              ) : null}
+            </Card.Content>
+          </Card>
+        ) : null}
+
         {report && (report.creatableCount > 0 || report.uncreatableCount > 0) ? (
           <Card mode="elevated" style={styles.card}>
             <Card.Content>
@@ -1601,6 +1740,47 @@ export default function RosterUploadScreen({ navigation }) {
         </Dialog>
       </Portal>
 
+      {/* Deleting a month of somebody's shifts is not an undo-able click, and the
+          dangerous input is a PARTIAL sheet — one route, a correction for three
+          people, the wrong file — which would list everybody else as missing. So
+          the confirmation names the count and says what a wrong file would do. */}
+      <Portal>
+        <Dialog
+          visible={confirmRemove}
+          onDismiss={() => setConfirmRemove(false)}
+          style={styles.helpDialog}
+        >
+          <Dialog.Title>
+            Remove {orphans.removable.length} from {report?.monthLabel || report?.month}?
+          </Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium" style={styles.confirmLead}>
+              {orphans.removable.map((o) => o.name).join(', ')}
+            </Text>
+            <Text variant="bodySmall" style={styles.confirmBody}>
+              Their shifts for this month are deleted and they stop appearing on
+              Today&rsquo;s Rides. Employee records, profiles and past bookings are
+              not touched.
+            </Text>
+            <Text variant="bodySmall" style={styles.confirmWarn}>
+              Only do this if the sheet on screen covers the WHOLE month. If it is
+              a partial file, everybody left out of it is on this list.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setConfirmRemove(false)}>Cancel</Button>
+            <Button
+              mode="contained"
+              buttonColor={colors.danger}
+              icon="calendar-remove"
+              onPress={doRemoveOrphans}
+            >
+              Remove {orphans.removable.length}
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
       <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={4000}>
         {snack}
       </Snackbar>
@@ -1798,6 +1978,18 @@ const styles = StyleSheet.create({
   inviteRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   inviteName: { fontFamily: font.semibold, minWidth: 200 },
   inviteEmail: { color: colors.muted, flex: 1 },
+  orphanRow: { marginTop: spacing.md },
+  orphanName: { fontFamily: font.semibold, color: colors.text },
+  orphanMeta: { color: colors.muted, lineHeight: 18 },
+  handAddedBox: {
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  confirmLead: { fontFamily: font.semibold, color: colors.text, lineHeight: 21 },
+  confirmBody: { color: colors.textSecondary, marginTop: spacing.md, lineHeight: 19 },
+  confirmWarn: { color: colors.warning, marginTop: spacing.md, lineHeight: 19 },
   inviteBtn: { marginTop: 14, alignSelf: 'flex-start' },
   colMap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   colChip: { backgroundColor: colors.surfaceAlt },
