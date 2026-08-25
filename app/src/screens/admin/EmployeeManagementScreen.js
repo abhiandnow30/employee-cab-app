@@ -23,6 +23,7 @@ import { useApp } from '../../context/AppContext';
 import { subscribeEmployees, subscribeInvites } from '../../services/profile';
 import { needsCabServiceSetup } from '../../services/cabServiceRequests';
 import useSyncedDraft from '../../utils/useSyncedDraft';
+import { directoryEmail } from '../../utils/directoryEmail';
 import { colors, font, radius, shadow, spacing } from '../../theme';
 
 // One headline number. Three of them across the top of the screen, because the
@@ -399,7 +400,7 @@ function AddEmployeeDialog({ visible, onDismiss, onCreate, routeOptions = [] }) 
 export default function EmployeeManagementScreen() {
   const {
     adminSaveEmployee, adminCreateEmployee, adminRemoveEmployee, homeAddressOf,
-    routeOptions,
+    routeOptions, adminApplyInvite, adminDismissInvite,
   } = useApp();
   const [employees, setEmployees] = useState([]);
   // People HR (or a roster upload) has invited who have never signed in. They
@@ -483,18 +484,24 @@ export default function EmployeeManagementScreen() {
   // person signs in to whichever account they authenticate as, finds it empty,
   // gets held at the cab-service form, and their rides stay attached to the other
   // uid — which reads as "she is on the roster but the app says she isn't".
+  //
+  // Counted on directoryEmail() so the guest form and the real address count as
+  // the SAME person — which is the version of this that actually happens to
+  // somebody invited into the tenant from outside: an older password login on
+  // their real address, and a guest account signed in as
+  // <them>_<their domain>#EXT#@<ours>.onmicrosoft.com. Two literal strings, one
+  // colleague, and comparing them raw is what let that pair go unreported.
   const duplicateEmails = useMemo(() => {
     const counts = new Map();
     (employees || []).forEach((e) => {
-      const key = String(e.email || '').trim().toLowerCase();
+      const key = directoryEmail(e.email);
       if (!key) return;
       counts.set(key, (counts.get(key) || 0) + 1);
     });
     return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([k]) => k));
   }, [employees]);
 
-  const isDuplicate = (e) =>
-    duplicateEmails.has(String(e?.email || '').trim().toLowerCase());
+  const isDuplicate = (e) => duplicateEmails.has(directoryEmail(e?.email));
 
   // Nobody can be sent a cab without BOTH a home address and a pickup route —
   // the same test that decides whether they are held at the cab-service form,
@@ -505,20 +512,96 @@ export default function EmployeeManagementScreen() {
     [employees]
   );
 
-  // The same search narrows the pending list, so "where is Abhilasha" finds her
+  // AN INVITE IS ONLY "WAITING" IF NOBODY HAS SIGNED IN ON THAT ADDRESS.
+  //
+  // subscribeInvites hands back the whole employeeInvites collection on the
+  // assumption that claiming deletes each one — true only while the claim path
+  // actually runs. It does not once a profile already exists: getOrCreateProfile
+  // returns on employees/<uid> before it ever looks for an invite, so an invite
+  // filed for somebody who had already signed in is never consumed and never
+  // will be. Trusting the collection alone is what showed a person who has been
+  // using the app for weeks as "yet to do their first sign-in", while the
+  // address and route sitting in that invite were what they were being asked to
+  // type into the cab-service form.
+  //
+  // So the two are separated here rather than anywhere else, because this screen
+  // is the only place that holds both halves at once — and separating them is
+  // also what makes the split self-healing: whichever way somebody ends up with
+  // a profile, their invite drops out of the waiting list the moment it appears.
+  // Keyed on directoryEmail(), not the raw field: a B2B guest's profile stores
+  // the mangled #EXT# name Entra signs them in as, while their invite is keyed
+  // on their real address, and matching those two strings literally is precisely
+  // how somebody ends up signed in for weeks while this screen still lists them
+  // as never having arrived. See utils/directoryEmail.js.
+  const { openInvites, staleInvites } = useMemo(() => {
+    const byEmail = new Map();
+    (employees || []).forEach((e) => {
+      const mail = directoryEmail(e.email);
+      if (mail) byEmail.set(mail, e);
+    });
+    const open = [];
+    const stale = [];
+    (invites || []).forEach((i) => {
+      const emp = byEmail.get(directoryEmail(i.email));
+      if (emp) stale.push({ ...i, employee: emp });
+      else open.push(i);
+    });
+    return { openInvites: open, staleInvites: stale };
+  }, [invites, employees]);
+
+  // The same search narrows both invite lists, so "where is Abhilasha" finds her
   // whether or not she has signed in yet.
-  const shownInvites = useMemo(() => {
+  const matchesSearch = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return invites;
-    const words = q.split(/\s+/);
-    return invites.filter((i) => {
-      const haystack = [i.name, i.email, i.empId, i.phone, i.route, i.address]
+    const words = q ? q.split(/\s+/) : [];
+    return (i) => {
+      if (!words.length) return true;
+      const haystack = [i.name, i.email, i.empId, i.phone, i.roster?.route, i.address]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
       return words.every((w) => haystack.includes(w));
-    });
-  }, [invites, search]);
+    };
+  }, [search]);
+
+  const shownInvites = useMemo(
+    () => openInvites.filter(matchesSearch),
+    [openInvites, matchesSearch]
+  );
+  const shownStale = useMemo(
+    () => staleInvites.filter(matchesSearch),
+    [staleInvites, matchesSearch]
+  );
+
+  // Applying one is two writes (the profile, then the invite), so the row it was
+  // fired from has to say so — otherwise a slow network reads as a dead button
+  // and gets clicked again.
+  const [busyInvite, setBusyInvite] = useState('');
+
+  async function applyInvite(invite) {
+    setError('');
+    setBusyInvite(invite.email);
+    const res = await adminApplyInvite(invite);
+    setBusyInvite('');
+    if (res?.ok) {
+      setSnack(
+        res.filled?.length
+          ? `${res.name}: ${res.filled.join(', ')} filled in from their invite.`
+          : `${res.name} already had these details — invite cleared.`
+      );
+    } else {
+      setError(res?.message || 'Could not apply those details.');
+    }
+  }
+
+  async function dismissInvite(invite) {
+    setError('');
+    setBusyInvite(invite.email);
+    const res = await adminDismissInvite(invite.email);
+    setBusyInvite('');
+    if (res?.ok) setSnack(`Invite for ${invite.name || invite.email} cleared.`);
+    else setError(res?.message || 'Could not remove that invite.');
+  }
 
   async function handleSave(uid, fields) {
     setError('');
@@ -573,7 +656,10 @@ export default function EmployeeManagementScreen() {
           <StatTile
             icon="account-clock-outline"
             tint={{ fg: colors.info, soft: colors.infoSoft }}
-            value={invites.length}
+            /* openInvites, not invites: an invite for somebody who has already
+               signed in is not a person the desk is still waiting on, and
+               counting it here is what made this tile disagree with the app. */
+            value={openInvites.length}
             label="Invited"
             sub="not signed in yet"
           />
@@ -667,6 +753,66 @@ export default function EmployeeManagementScreen() {
                     >
                       {mail}
                     </Text>
+                  ))}
+                </View>
+              ) : null}
+              {/* STALE INVITES — the ones holding somebody's details hostage.
+                  Amber, above the blue "waiting" block and below the red
+                  duplicate one, because that is the order of how much harm each
+                  is doing: two accounts locks someone out today, a stale invite
+                  is a person stuck at the cab-service form, and a genuine invite
+                  is nothing wrong at all. */}
+              {shownStale.length ? (
+                <View style={styles.staleBox}>
+                  <View style={styles.pendingHead}>
+                    <MaterialCommunityIcons
+                      name="account-convert-outline"
+                      size={17}
+                      color={colors.warning}
+                    />
+                    <Text variant="labelLarge" style={styles.staleTitle}>
+                      {shownStale.length} invite{shownStale.length === 1 ? '' : 's'} for people
+                      who have already signed in
+                    </Text>
+                  </View>
+                  <Text variant="bodySmall" style={styles.dupeHint}>
+                    They signed in before this invite was filed, so it was never
+                    claimed — and the employee ID, phone, address and route in it
+                    never reached their profile. Until they do, the app keeps asking
+                    them for those details and they land under “No route set” every
+                    day. Apply fills in only what their profile is missing; it never
+                    overwrites anything already there.
+                  </Text>
+                  {shownStale.map((i) => (
+                    <View key={i.email} style={styles.staleRow}>
+                      <View style={styles.staleText}>
+                        <Text variant="bodySmall" style={styles.pendingName} numberOfLines={1}>
+                          {i.name || i.email}
+                          {i.empId ? ` · ${i.empId}` : ''}
+                        </Text>
+                        <Text variant="bodySmall" style={styles.pendingEmail} numberOfLines={1}>
+                          {i.email}
+                          {i.roster?.route ? ` · ${i.roster.route}` : ''}
+                        </Text>
+                      </View>
+                      <Button
+                        mode="contained"
+                        compact
+                        loading={busyInvite === i.email}
+                        disabled={!!busyInvite}
+                        onPress={() => applyInvite(i)}
+                      >
+                        Apply details
+                      </Button>
+                      <Button
+                        mode="text"
+                        compact
+                        disabled={!!busyInvite}
+                        onPress={() => dismissInvite(i)}
+                      >
+                        Dismiss
+                      </Button>
+                    </View>
                   ))}
                 </View>
               ) : null}
@@ -859,6 +1005,27 @@ const styles = StyleSheet.create({
   dupeTitle: { color: colors.danger, fontFamily: font.semibold },
   dupeHint: { color: colors.textSecondary, marginTop: spacing.xs, lineHeight: 19 },
   dupeRow: { color: colors.danger, fontFamily: font.semibold, marginTop: spacing.xs },
+  // Amber, not red and not brand blue: nothing is broken and nobody is locked
+  // out, but somebody IS being asked for details the desk already has — it needs
+  // one click, unlike the block below it, which needs nothing at all.
+  staleBox: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: '#F2DFB8',
+    borderLeftWidth: 4,
+    borderLeftColor: colors.warning,
+    backgroundColor: colors.warningSoft,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  staleTitle: { color: colors.warning, fontFamily: font.semibold, flex: 1 },
+  staleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingTop: spacing.sm,
+  },
+  staleText: { flex: 1, minWidth: 0 },
   pendingBox: {
     borderRadius: radius.lg,
     borderWidth: 1,

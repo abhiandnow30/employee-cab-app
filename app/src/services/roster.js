@@ -37,6 +37,7 @@ import {
 import * as XLSX from 'xlsx';
 import { firestore } from './firebase';
 import { ALL_SHIFT_CODES, toShiftCode, isWeekdayRow } from '../data/shifts';
+import { directoryEmail, isGuestDirectoryEmail } from '../utils/directoryEmail';
 
 const ROSTERS = 'rosters';
 const IMPORTS = 'rosterImports';
@@ -714,10 +715,15 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
   // whatever the sheet's author typed; matching on it produced both a false
   // negative (Naga Lakshmi above) and, on two people with the same name, a false
   // positive that attached a month of shifts to a stranger.
+  // Indexed on directoryEmail(), so a sheet row carrying somebody's real
+  // address still finds them when Entra signs them in as a B2B guest and their
+  // profile therefore stores the mangled #EXT# name. Without it a guest is
+  // unmatchable by the one key that "cannot drift", falls through to an invite
+  // nobody can claim, and their shifts never import — see utils/directoryEmail.js.
   const byEmail = new Map();
   const byEmpId = new Map();
   (employees || []).forEach((e) => {
-    const mail = String(e.email || '').trim().toLowerCase();
+    const mail = directoryEmail(e.email);
     // Two profiles on one email is the duplicate-account bug itself. Flagged,
     // never guessed at — see DUPLICATE_ACCOUNT.
     if (mail) byEmail.set(mail, byEmail.has(mail) ? 'ambiguous' : e);
@@ -740,7 +746,7 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
     // only at file level, because the fix is a cell, not the file.
     const hasEmail = !!row.email;
     if (hasEmail) {
-      const hit = byEmail.get(row.email);
+      const hit = byEmail.get(directoryEmail(row.email));
       if (hit === 'ambiguous') duplicateEmail = true;
       else if (hit) {
         employee = hit;
@@ -876,6 +882,11 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
       employeeId: employee?.uid || null,
       matchedName: employee?.name || null,
       matchedEmpId: employee?.empId || null,
+      // What the PROFILE stores as their address, which is not always a real
+      // one — a B2B guest's profile carries the mangled #EXT# name Entra signs
+      // them in as. Carried through so the import can tell that apart from the
+      // address in the sheet and correct it. See importRoster.
+      matchedEmail: employee?.email || null,
       matchedBy,
       route,
       // What the PROFILE says, kept separately from `route` so the import can tell
@@ -1068,6 +1079,29 @@ export async function importRoster(report, { uploadedBy, uploadedByName, onProgr
     if (row.phone) profileUpdates.phone = String(row.phone).trim();
     if (row.sheetAddress) profileUpdates.address = String(row.sheetAddress).trim();
     if (row.sheetRoute) profileUpdates['roster.route'] = row.sheetRoute;
+    // EMAIL IS THE ONE FIELD THE SHEET DOES NOT OWN — WITH ONE EXCEPTION.
+    //
+    // It is deliberately absent from the block above. `employees/<uid>.email`
+    // mirrors the account the person actually authenticates as; letting a
+    // spreadsheet cell overwrite it means one typo detaches a profile from its
+    // own login, and every match after that — this import included — starts
+    // looking for the wrong person.
+    //
+    // The exception is the case where the two are PROVABLY the same person and
+    // the stored one is provably wrong: a B2B guest whose profile carries the
+    // mangled #EXT# sign-in name Entra minted from this very address. That is
+    // not the sheet asserting an identity — the row only matched at all because
+    // un-mangling the stored value produced the sheet's address, so correcting
+    // it can't point the profile at anybody new. It is worth doing because
+    // nothing delivers mail to an #EXT# address, so the cab-assigned email for
+    // every external employee fails until this is fixed.
+    if (
+      row.email
+      && isGuestDirectoryEmail(row.matchedEmail)
+      && directoryEmail(row.matchedEmail) === directoryEmail(row.email)
+    ) {
+      profileUpdates.email = directoryEmail(row.email);
+    }
     const hasProfileUpdate = Object.keys(profileUpdates).length > 0;
 
     if (writes + (hasProfileUpdate ? 2 : 1) > BATCH_LIMIT) await flush();

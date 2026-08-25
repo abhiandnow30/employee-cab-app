@@ -28,13 +28,14 @@ import {
 import {
   getOrCreateProfile, subscribeProfile, adminUpdateEmployee,
   adminDeleteEmployee, subscribeEmployees,
-  updateEmployeeRoute, adminCreateInvite, adminCreateDriver,
+  updateEmployeeRoute, adminCreateInvite, adminRevokeInvite, adminCreateDriver,
   rotateDriverLoginCode, adminCreateCoordinator, rotateCoordinatorPasscode,
 } from '../services/profile';
 import {
   driverLoginCode, driverPhone, isDriverLoginCode, cabCodePart, unassignedLoginCode,
 } from '../utils/driverLogin';
 import { coordinatorPhone, isPasscode, PASSCODE_LENGTH } from '../utils/coordinatorLogin';
+import { directoryEmail, isGuestDirectoryEmail } from '../utils/directoryEmail';
 import {
   createAddressChangeRequest, subscribeMyAddressRequests,
   subscribeAllAddressRequests, REQUEST_STATUS as ADDRESS_STATUS,
@@ -2324,8 +2325,11 @@ export function AppProvider({ children }) {
     // for ever, showing them as "yet to do their first login" when they have
     // already signed in. The roster import refuses the same thing; this is the
     // other door into adminCreateInvite.
+    // directoryEmail() on both sides: a guest's profile stores the mangled
+    // #EXT# sign-in name, so comparing raw strings would miss them and file the
+    // unclaimable invite this check exists to prevent.
     const already = (employees || []).find(
-      (e) => String(e.email || '').trim().toLowerCase() === email.toLowerCase()
+      (e) => directoryEmail(e.email) === directoryEmail(email)
     );
     if (already) {
       return {
@@ -2347,6 +2351,124 @@ export function AppProvider({ children }) {
       return { ok: true };
     } catch (e) {
       return { ok: false, message: friendlyAuthError(e) };
+    }
+  }
+
+  // AN INVITE FOR SOMEBODY WHO HAS ALREADY SIGNED IN — the repair, not the guard.
+  //
+  // adminCreateEmployee (above) and importRoster both refuse to file one. But an
+  // invite can go STALE after it was filed, and nothing ever cleared it:
+  // getOrCreateProfile returns on the existing employees/<uid> before it ever
+  // looks for an invite, so the claim that would have deleted it never runs. It
+  // happens whenever the profile came first — someone who self-provisioned off
+  // the directory before HR uploaded the sheet, or whose Microsoft address
+  // differs from the one the invite was keyed on.
+  //
+  // The cost is not a stale row on a list. The invite is holding their empId,
+  // phone, ADDRESS and ROUTE, and needsCabServiceSetup() keys on exactly those
+  // last two — so the person is held at the cab-service form being asked to type
+  // in details the desk already has, and lands under "No route set" on the
+  // coordinator's board every day until somebody notices. This is what moves
+  // them across.
+  //
+  // FILL-ONLY, NEVER OVERWRITE. A blank field on the profile takes the invite's
+  // value; a field that already has one keeps it. Whenever HR has edited the
+  // card since, the profile is the newer of the two, and an invite is not
+  // evidence about anything that was filled in after it was written.
+  async function adminApplyInvite(invite) {
+    const key = String(invite?.email || '').trim().toLowerCase();
+    if (!key) return { ok: false, message: 'Missing invite.' };
+
+    // directoryEmail() on BOTH sides, because a guest signs in under a mangled
+    // address and their profile stores that — so a straight comparison against
+    // the invite's real address is exactly the miss that stranded them in the
+    // first place. See utils/directoryEmail.js.
+    const matches = (employees || []).filter((e) => directoryEmail(e.email) === key);
+    // Two profiles on one address is the duplicate-account bug itself. Picking
+    // one of them at random is how a month of rides ends up on the account
+    // nobody actually signs in to — so refuse, and say which problem to fix.
+    if (matches.length > 1) {
+      return {
+        ok: false,
+        message:
+          `${key} has two employee profiles. Keep the one they sign in with, ` +
+          'delete the other, then apply this.',
+      };
+    }
+    const emp = matches[0];
+    if (!emp) {
+      return {
+        ok: false,
+        message: 'Nobody with that address has signed in yet — this invite is still waiting.',
+      };
+    }
+
+    const blank = (v) => !String(v || '').trim();
+    const fields = {};
+    if (blank(emp.empId) && !blank(invite.empId)) fields.empId = invite.empId.trim();
+    if (blank(emp.phone) && !blank(invite.phone)) fields.phone = invite.phone.trim();
+    if (blank(emp.address) && !blank(invite.address)) fields.address = invite.address.trim();
+    // adminSaveEmployee takes `route` flat and snaps it onto the configured list
+    // on the way in — so a sheet's "jntu cab" lands on the same "JNTU Cab" their
+    // neighbours are grouped under rather than creating a one-person carpool.
+    if (blank(emp.roster?.route) && !blank(invite.roster?.route)) {
+      fields.route = invite.roster.route.trim();
+    }
+    // A self-provisioned profile falls back to the email address as a name when
+    // Microsoft asserted no display name, which is not a name. HR's spelling
+    // beats that — and nothing else.
+    const name = String(emp.name || '').trim();
+    if ((!name || name.toLowerCase() === key) && !blank(invite.name)) {
+      fields.name = invite.name.trim();
+    }
+    // A GUEST'S STORED ADDRESS IS WORTH CORRECTING, AND THIS IS THE ONLY MOMENT
+    // WE MAY. The profile was born carrying the mangled #EXT# sign-in name
+    // because the rules pin a self-provisioned document's email to the token —
+    // but an admin update has no such pin, and the invite is HR's own record of
+    // what the real address is. Writing it costs one field and fixes three
+    // things at once: importRoster matches the sheet directly instead of
+    // falling back to employee id, the cab-assigned email goes somewhere that
+    // accepts mail (nothing delivers to an #EXT# address), and the desk stops
+    // reading a 60-character sign-in name where a colleague's address belongs.
+    //
+    // Only ever mangled → real. An address that is already a real one is left
+    // exactly as it is; the token stays the security boundary either way, since
+    // firestore.rules reads myEmail() off the token and never off this field.
+    if (isGuestDirectoryEmail(emp.email) && directoryEmail(emp.email) === key) {
+      fields.email = key;
+    }
+
+    try {
+      if (Object.keys(fields).length) {
+        const res = await adminSaveEmployee(emp.uid, {
+          ...fields,
+          // They arrived off the directory unvetted; an invite HR filed for this
+          // exact address IS the desk's record of having checked them — the same
+          // thing approving a cab-service request clears.
+          selfProvisioned: false,
+        });
+        if (!res?.ok) return res;
+      }
+      // Consumed either way. An invite with nothing left to give is still an
+      // invite showing somebody who signed in weeks ago as "yet to arrive".
+      await adminRevokeInvite(key);
+      return { ok: true, name: emp.name || key, filled: Object.keys(fields) };
+    } catch (e) {
+      return failure(e, 'Could not apply those details.');
+    }
+  }
+
+  // HR clears an invite by hand: the wrong address, someone who never joined, or
+  // a stale one whose details are already on the profile. Deleting it is enough —
+  // there is no account behind an unclaimed invite to disable.
+  async function adminDismissInvite(email) {
+    const key = String(email || '').trim().toLowerCase();
+    if (!key) return { ok: false, message: 'Missing invite.' };
+    try {
+      await adminRevokeInvite(key);
+      return { ok: true };
+    } catch (e) {
+      return failure(e, 'Could not remove that invite.');
     }
   }
 
@@ -2975,6 +3097,8 @@ export function AppProvider({ children }) {
     sendMessage,
     adminSaveEmployee,
     adminCreateEmployee,
+    adminApplyInvite,
+    adminDismissInvite,
     adminRemoveEmployee,
     getCabById,
     myBookings,
