@@ -35,7 +35,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, View, Platform, ScrollView } from 'react-native';
+import { StyleSheet, View, Platform, ScrollView, useWindowDimensions } from 'react-native';
 import {
   Text, Card, Button, Chip, Divider, DataTable, HelperText, Snackbar,
   ActivityIndicator, IconButton, Portal, Dialog, Tooltip, ProgressBar,
@@ -71,6 +71,18 @@ export default function RosterUploadScreen({ navigation }) {
   const {
     shiftPolicy, importRoster, subscribeImportHistory, routeOptions, deleteImportHistory,
   } = useApp();
+
+  // The "what's stored" dialog holds a table that can run to hundreds of rows —
+  // a dialog fixed at 640px reads as broken on anything wider than a laptop, and
+  // on a phone-width browser window 640px overflows the viewport instead of
+  // shrinking to fit. Both directions are sized off the actual window instead.
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const verifyDialogStyle = {
+    width: '100%',
+    maxWidth: Math.min(winWidth - 32, 1000),
+    maxHeight: winHeight - 64,
+    alignSelf: 'center',
+  };
 
   const [employees, setEmployees] = useState([]);
   // Validation is meaningless until the employee directory has arrived — against
@@ -665,6 +677,25 @@ export default function RosterUploadScreen({ navigation }) {
       : report.rows.slice(0, 15)
     : [];
   const shownHistory = showAllHistory ? history : history.slice(0, 5);
+
+  // Which history row is the CURRENT one for its month. Download always reads
+  // rosters/<month>_<uid> as it stands right now — there is no per-upload
+  // snapshot — so every row sharing a month gives back byte-for-byte the same
+  // file. Offered on every row that looked like separate exports of separate
+  // uploads; clicking an older one and getting today's data back read as the
+  // button being broken / hardcoded to one file. Restricting Download to the
+  // most recent row per month makes what's actually happening honest, and the
+  // "what's stored" (eye) button — which says outright that it reads live
+  // state — stays available on every row to explain why.
+  const latestHistoryIdByMonth = useMemo(() => {
+    const latest = new Map(); // month -> { id, seconds }
+    for (const h of history) {
+      const seconds = h.uploadedAt?.seconds || 0;
+      const current = latest.get(h.month);
+      if (!current || seconds > current.seconds) latest.set(h.month, { id: h.id, seconds });
+    }
+    return new Map(Array.from(latest, ([month, v]) => [month, v.id]));
+  }, [history]);
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.scroll}>
@@ -1523,10 +1554,15 @@ export default function RosterUploadScreen({ navigation }) {
                                   re-upload. Built from what's STORED, not from
                                   the file that was uploaded — the original bytes
                                   are never kept, and after an edit the two are
-                                  different documents anyway. */}
+                                  different documents anyway. Every row for the
+                                  same month reads the same current documents, so
+                                  only the most recent row offers it — otherwise
+                                  an older row's button silently hands back
+                                  today's data under its own upload's name, which
+                                  looks like the button is stuck on one file. */}
                               {downloadingId === h.id ? (
                                 <ActivityIndicator size={16} style={styles.histSpinner} />
-                              ) : (
+                              ) : latestHistoryIdByMonth.get(h.month) === h.id ? (
                                 <IconButton
                                   icon="download"
                                   size={18}
@@ -1535,6 +1571,16 @@ export default function RosterUploadScreen({ navigation }) {
                                   onPress={() => downloadMonth(h)}
                                   accessibilityLabel="Download this month's roster to edit and re-upload"
                                 />
+                              ) : (
+                                <Tooltip title="Superseded by a later upload for this month — use the eye icon to see what's stored now, or download from that row instead.">
+                                  <IconButton
+                                    icon="download"
+                                    size={18}
+                                    iconColor={colors.muted}
+                                    disabled
+                                    accessibilityLabel="Superseded by a later upload for this month"
+                                  />
+                                </Tooltip>
                               )}
                               <IconButton
                                 icon="delete"
@@ -1603,12 +1649,12 @@ export default function RosterUploadScreen({ navigation }) {
         <Dialog
           visible={!!verifyFor}
           onDismiss={closeVerify}
-          style={styles.verifyDialog}
+          style={verifyDialogStyle}
         >
           <Dialog.Title>
             What's stored for {verifyFor?.monthLabel || verifyFor?.month}
           </Dialog.Title>
-          <Dialog.ScrollArea>
+          <Dialog.ScrollArea style={styles.verifyScrollArea}>
             <ScrollView contentContainerStyle={styles.verifyBody}>
               <Text variant="bodySmall" style={styles.verifyIntro}>
                 Read straight from the roster documents the coordinator's board
@@ -1639,6 +1685,29 @@ export default function RosterUploadScreen({ navigation }) {
                     {verifyRows.length} employee row(s) stored ·{' '}
                     {verifyRows.filter((r) => r.rideDays > 0).length} generate rides
                   </Text>
+                  {/* This total is EVERYONE currently stored for the month, not
+                      what this one upload wrote — an import only ever adds/
+                      overwrites rows, it never removes someone missing from a
+                      later sheet (see importRoster/rosterOrphans). So a row
+                      logged as "14 employees" can show 15 stored here whenever
+                      an earlier upload this month covered someone this one
+                      didn't mention. Silent otherwise, this reads as the count
+                      simply being wrong — say why instead. */}
+                  {typeof verifyFor?.importedCount === 'number'
+                  && verifyFor.importedCount !== verifyRows.length ? (
+                    <View style={styles.warnBox}>
+                      <MaterialCommunityIcons name="information" size={15} color="#B26A00" />
+                      <Text variant="bodySmall" style={styles.warnText}>
+                        This upload itself imported {verifyFor.importedCount}. The other{' '}
+                        {Math.abs(verifyRows.length - verifyFor.importedCount)} row
+                        {Math.abs(verifyRows.length - verifyFor.importedCount) === 1 ? '' : 's'} came
+                        from an earlier upload this month and weren&rsquo;t removed — imports
+                        never delete anyone, only add or overwrite. Open Upload Roster and
+                        choose this month&rsquo;s current sheet to see exactly who&rsquo;s stored but
+                        missing from it.
+                      </Text>
+                    </View>
+                  ) : null}
                   {/* Two numbers, because they fail differently: a row can import
                       with every cell blank (codedDays 0), and a row can be full of
                       Evening/Week Off codes that legitimately produce no cab
@@ -2072,7 +2141,11 @@ const styles = StyleSheet.create({
   progressBar: { height: 8, borderRadius: radius.pill },
   progressText: { color: colors.muted, textAlign: 'center' },
 
-  verifyDialog: { width: '100%', maxWidth: 640, alignSelf: 'center' },
+  // Sizing itself is computed at render time from the actual window (see
+  // verifyDialogStyle) — this only bounds how tall the scroll area inside the
+  // dialog is allowed to grow, which Paper otherwise caps low enough that a
+  // roster of any real size shows two rows and then hides the rest.
+  verifyScrollArea: { maxHeight: '100%' },
   verifyBody: { paddingBottom: 8 },
   verifyIntro: { color: colors.muted, marginBottom: 8, lineHeight: 18 },
   verifyCount: { fontFamily: font.bold, marginBottom: 4 },

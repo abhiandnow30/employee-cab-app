@@ -797,7 +797,7 @@ function RootNavigator() {
                 <Stack.Screen
                   name="Requests"
                   component={ChangeRequestQueueScreen}
-                  options={{ title: 'Ride Change Requests' }}
+                  options={{ title: 'Ride Cancel Requests' }}
                 />
                 <Stack.Screen
                   name="FeedbackInbox"

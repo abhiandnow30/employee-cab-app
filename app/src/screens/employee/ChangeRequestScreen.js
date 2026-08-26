@@ -27,7 +27,7 @@ import {
   OFFERED_REQUESTS, REASONS, STATUS_STYLE, REQUEST_STATUS, requestMeta,
 } from '../../data/changeRequests';
 import { WORKING_CODES, shiftSummary } from '../../data/shifts';
-import { todayKey, shiftDateKey } from '../../utils/datetime';
+import { todayKey, shiftDateKey, isBookingPast } from '../../utils/datetime';
 import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -61,13 +61,43 @@ export default function ChangeRequestScreen({ navigation }) {
   const meta = type ? requestMeta(type) : null;
   const needs = (field) => !!meta?.form.includes(field);
 
+  // YESTERDAY IS OFFERED WHEN A RIDE DATED YESTERDAY HAS STILL NOT LEFT.
+  //
+  // A ride is filed under the day of the SHIFT that earned it, and a late shift's
+  // drop leaves after midnight — an E2 worked on the 26th is a 2:30 AM cab on the
+  // 27th, but its booking is dated the 26th (see `departDate` in services/rides.js).
+  // So at 11 PM on the 26th, and again at 1 AM on the 27th, the ride somebody
+  // wants to cancel is dated a day that "today onwards" cannot reach: the picker
+  // opened on the 27th and the ride was on the 26th, with no way to select it.
+  //
+  // Only ONE day back is ever needed — a drop can be at most one calendar day
+  // after its shift.
+  //
+  // Gated on there actually being something to act on, and gated with
+  // isBookingPast (which reads departDate) rather than a plain date compare, so
+  // the extra row appears only while that cab has genuinely still not departed
+  // and disappears by itself once it has. Without the gate, "yesterday" would sit
+  // in the list every day of the year inviting people to cancel rides that
+  // already happened.
+  const yesterdayHasRide = useMemo(() => {
+    const yesterday = shiftDateKey(todayKey(), -1);
+    return myBookings().some(
+      (b) =>
+        b.date === yesterday &&
+        b.status !== 'Cancelled' &&
+        b.status !== 'Completed' &&
+        !isBookingPast(b)
+    );
+  }, [myBookings]);
+
   // The next two weeks — a request is about a specific day, and there's no point
   // raising one about last month.
   const dateOptions = useMemo(() => {
     const out = [];
+    if (yesterdayHasRide) out.push(shiftDateKey(todayKey(), -1));
     for (let i = 0; i <= 14; i++) out.push(shiftDateKey(todayKey(), i));
     return out;
-  }, []);
+  }, [yesterdayHasRide]);
 
   // The employee's own rides on the chosen date, for the types that act on one.
   // These are real bookings; a ride with no cab yet has nothing to change.
@@ -176,7 +206,14 @@ export default function ChangeRequestScreen({ navigation }) {
                     setDate(d);
                     setRideKey(null);
                   }}
-                  format={prettyDate}
+                  // Yesterday is only ever in this list because a shift worked
+                  // then has a cab that leaves after midnight, so the row says
+                  // so — an unexplained past date reads as a bug.
+                  format={(d) =>
+                    d === shiftDateKey(todayKey(), -1)
+                      ? `${prettyDate(d)} · last night's shift`
+                      : prettyDate(d)
+                  }
                   compact={false}
                   leadingIcon="calendar"
                 />

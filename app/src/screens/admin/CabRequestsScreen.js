@@ -19,7 +19,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import {
-  Text, Card, Button, Chip, Divider, Portal, Dialog, TextInput,
+  Text, Card, Button, Chip, Divider, TextInput,
   HelperText, Snackbar, SegmentedButtons,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -45,16 +45,11 @@ export default function CabRequestsScreen() {
   const [filter, setFilter] = useState('Pending');
   const [snack, setSnack] = useState('');
 
-  // Approve dialog state. The admin can correct anything the employee typed
-  // before it lands on the profile — a half-typed employee ID is easier to fix
-  // here than to chase afterwards.
-  const [approving, setApproving] = useState(null);
-  const [edits, setEdits] = useState({});
-  const [dialogError, setDialogError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const [rejecting, setRejecting] = useState(null);
-  const [reason, setReason] = useState('');
+  // WHICH ROW IS MID-WRITE, by id — not one screen-wide flag. Several requests
+  // can be on screen and only the one being acted on should show a spinner or
+  // refuse a second click; a shared boolean would grey out every other card's
+  // buttons for the duration.
+  const [busyId, setBusyId] = useState(null);
 
   const rows = useMemo(() => {
     const list = cabServiceRequests || [];
@@ -64,47 +59,54 @@ export default function CabRequestsScreen() {
 
   const pendingCount = (cabServiceRequests || []).filter((r) => r.status === 'Pending').length;
 
+  // APPROVE AND REJECT ACT ON THE CARD, WITH NO CONFIRMATION DIALOG.
+  //
+  // There used to be one of each, and the Approve one in particular was a
+  // second copy of the card: it re-asked for name, employee ID, phone, address
+  // and route — all five already displayed on the card behind it, with the
+  // route already an editable, already-saved field there. So the desk read the
+  // details, pressed Approve, and was shown the same details again with the
+  // same button on them. Removed at request; the card IS the review step.
+  //
+  // What that gives up, stated plainly: the desk can no longer correct a
+  // half-typed employee ID or a mangled phone on its way onto the profile —
+  // whatever the employee submitted is what gets written. Fixing one now means
+  // approving and then editing them in Employee Management. And a rejection no
+  // longer carries a reason (the field was optional anyway), so the employee is
+  // told they were rejected and nothing more.
+  //
   // `typedRoute` is what is in the card's route box this instant, which is not
-  // always what is on the server: clicking Approve blurs the box and starts the
-  // save, but the dialog opens before that round trip lands. Seeding from the
-  // saved value alone would show an empty route to someone who had just typed
-  // one, and they would type it again.
-  function openApprove(req, typedRoute) {
-    setDialogError('');
-    setEdits({
+  // always what has reached the server: pressing Approve blurs the box and
+  // starts that save, and this write would otherwise race it. Taking the typed
+  // value directly means the route the desk can see is the route that lands,
+  // whichever request wins.
+  async function doApprove(req, typedRoute) {
+    if (busyId) return;
+    setBusyId(req.id);
+    const res = await approveCabService(req, {
       name: req.name || '',
       empId: req.empId || '',
       phone: req.phone || '',
       address: req.address || '',
       route: (typedRoute || '').trim() || req.proposedRoute || '',
     });
-    setApproving(req);
+    setBusyId(null);
+    // The service throws a sentence, not a code, for each of the three things
+    // that can be missing (name, address, route) — so the snackbar is a usable
+    // error channel now that there is no dialog to hold one.
+    setSnack(
+      res.ok
+        ? `${req.name || 'Employee'} is set up on the ${res.route} route.`
+        : res.message
+    );
   }
 
-  async function confirmApprove() {
-    setDialogError('');
-    setBusy(true);
-    const res = await approveCabService(approving, edits);
-    setBusy(false);
-    if (!res.ok) {
-      setDialogError(res.message);
-      return;
-    }
-    setApproving(null);
-    setSnack(`${edits.name || 'Employee'} is set up on the ${res.route} route.`);
-  }
-
-  async function confirmReject() {
-    setBusy(true);
-    const res = await rejectCabService(rejecting, reason);
-    setBusy(false);
-    if (!res.ok) {
-      setDialogError(res.message);
-      return;
-    }
-    setRejecting(null);
-    setReason('');
-    setSnack('Request rejected.');
+  async function doReject(req) {
+    if (busyId) return;
+    setBusyId(req.id);
+    const res = await rejectCabService(req, '');
+    setBusyId(null);
+    setSnack(res.ok ? 'Request rejected.' : res.message);
   }
 
   // The coordinator's one write. Saved immediately rather than behind a dialog:
@@ -176,148 +178,20 @@ export default function CabRequestsScreen() {
               req={item}
               isAdmin={isAdmin}
               routeOptions={routeOptions}
+              busy={busyId === item.id}
+              anyBusy={!!busyId}
               onSetRoute={(route) => setRoute(item, route)}
-              onApprove={(typedRoute) => openApprove(item, typedRoute)}
-              onReject={() => {
-                setReason('');
-                setDialogError('');
-                setRejecting(item);
-              }}
+              onApprove={(typedRoute) => doApprove(item, typedRoute)}
+              onReject={() => doReject(item)}
             />
           )}
         />
       </View>
 
-      {/* --- Approve (admin) --- */}
-      <Portal>
-        <Dialog
-          visible={!!approving}
-          onDismiss={() => !busy && setApproving(null)}
-          style={styles.dialog}
-        >
-          <Dialog.Title>Set up cab service</Dialog.Title>
-          <Dialog.ScrollArea>
-            <View style={styles.dialogBody}>
-              <Text variant="bodySmall" style={styles.dialogHint}>
-                This writes onto {approving?.name || 'their'} profile. Correct
-                anything that looks wrong before approving.
-              </Text>
-              <TextInput
-                label="Full name"
-                value={edits.name}
-                onChangeText={(t) => setEdits((e) => ({ ...e, name: t }))}
-                mode="outlined"
-                style={styles.input}
-              />
-              <TextInput
-                label="Employee ID"
-                value={edits.empId}
-                onChangeText={(t) => setEdits((e) => ({ ...e, empId: t }))}
-                mode="outlined"
-                autoCapitalize="characters"
-                style={styles.input}
-              />
-              <TextInput
-                label="Phone"
-                value={edits.phone}
-                onChangeText={(t) => setEdits((e) => ({ ...e, phone: t.replace(/[^0-9]/g, '') }))}
-                mode="outlined"
-                keyboardType="phone-pad"
-                maxLength={10}
-                style={styles.input}
-              />
-              <TextInput
-                label="Home address"
-                value={edits.address}
-                onChangeText={(t) => setEdits((e) => ({ ...e, address: t }))}
-                mode="outlined"
-                multiline
-                numberOfLines={3}
-                style={styles.input}
-              />
-              <TextInput
-                label="Pickup route"
-                value={edits.route}
-                onChangeText={(t) => setEdits((e) => ({ ...e, route: t }))}
-                mode="outlined"
-                placeholder="e.g. JNTU Cab"
-                style={styles.input}
-              />
-              {/* Approving without a route would leave them under "No route
-                  set" on the board every single day — the exact problem this
-                  screen exists to end. */}
-              <HelperText type="info" visible style={styles.hint}>
-                Required. Without a route they land under "No route set" every day.
-              </HelperText>
-              <NewRouteHint value={edits.route} options={routeOptions} />
-              {dialogError ? (
-                <HelperText type="error" visible>
-                  {dialogError}
-                </HelperText>
-              ) : null}
-            </View>
-          </Dialog.ScrollArea>
-          <Dialog.Actions>
-            <Button onPress={() => setApproving(null)} disabled={busy}>
-              Cancel
-            </Button>
-            <Button
-              mode="contained"
-              icon="check"
-              onPress={confirmApprove}
-              loading={busy}
-              disabled={busy}
-            >
-              Approve
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-
-        {/* --- Reject (admin) --- */}
-        <Dialog
-          visible={!!rejecting}
-          onDismiss={() => !busy && setRejecting(null)}
-          style={styles.dialog}
-        >
-          <Dialog.Title>Reject request</Dialog.Title>
-          <Dialog.Content>
-            <Text variant="bodySmall" style={styles.dialogHint}>
-              They stay signed in but still can't be sent a cab, so a reason is
-              the only useful thing they get — but it is optional, and leaving it
-              blank still rejects the request.
-            </Text>
-            <TextInput
-              label="Reason (optional)"
-              value={reason}
-              onChangeText={setReason}
-              mode="outlined"
-              multiline
-              numberOfLines={3}
-              placeholder="e.g. Address is outside our pickup area — call the desk."
-            />
-            {dialogError ? (
-              <HelperText type="error" visible>
-                {dialogError}
-              </HelperText>
-            ) : null}
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setRejecting(null)} disabled={busy}>
-              Cancel
-            </Button>
-            <Button
-              mode="contained"
-              buttonColor={colors.danger}
-              icon="close"
-              onPress={confirmReject}
-              loading={busy}
-              disabled={busy}
-            >
-              Reject
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
+      {/* No Approve or Reject dialog. Both used to open one; the Approve
+          dialog re-asked for the five fields the card already shows, so the
+          desk reviewed the details, pressed Approve, and got the same details
+          again. See doApprove/doReject above for what that trade gives up. */}
 
       <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={3000}>
         {snack}
@@ -326,7 +200,9 @@ export default function CabRequestsScreen() {
   );
 }
 
-function RequestCard({ req, isAdmin, routeOptions, onSetRoute, onApprove, onReject }) {
+function RequestCard({
+  req, isAdmin, routeOptions, busy, anyBusy, onSetRoute, onApprove, onReject,
+}) {
   const tint = STATUS_TINT[req.status] || STATUS_TINT.Pending;
   const isPending = req.status === 'Pending';
 
@@ -414,11 +290,25 @@ function RequestCard({ req, isAdmin, routeOptions, onSetRoute, onApprove, onReje
             />
             <NewRouteHint value={route} options={routeOptions} />
             {isAdmin ? (
+              /* Both act immediately — no confirmation step. Disabled while any
+                 row is mid-write so a double click can't approve twice, and the
+                 spinner is on the row actually being written. */
               <View style={styles.actions}>
-                <Button mode="text" textColor={colors.danger} onPress={onReject}>
+                <Button
+                  mode="text"
+                  textColor={colors.danger}
+                  onPress={onReject}
+                  disabled={anyBusy}
+                >
                   Reject
                 </Button>
-                <Button mode="contained" icon="check" onPress={() => onApprove(route)}>
+                <Button
+                  mode="contained"
+                  icon="check"
+                  onPress={() => onApprove(route)}
+                  loading={busy}
+                  disabled={anyBusy}
+                >
                   Approve
                 </Button>
               </View>
@@ -539,9 +429,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   routeInput: { backgroundColor: colors.surface },
-  dialog: { width: '100%', maxWidth: 540, alignSelf: 'center' },
-  dialogBody: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
-  dialogHint: { color: colors.muted, marginBottom: spacing.md, lineHeight: 19 },
-  input: { marginBottom: spacing.md, backgroundColor: colors.surface },
+  // dialog / dialogBody / dialogHint / input went with the two confirmation
+  // dialogs — nothing else on this screen used them.
   hint: { marginTop: 0, color: colors.muted },
 });

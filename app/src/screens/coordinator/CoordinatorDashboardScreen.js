@@ -49,8 +49,11 @@ import {
 } from '../../services/rides';
 import { routeKey } from '../../services/roster';
 import { cabCapacity } from '../../services/cabs';
+import { STATUS } from '../../data/mockData';
 import { todayKey, shiftDateKey } from '../../utils/datetime';
-import { SHIFT_COLORS, legsForShift, shiftSummary } from '../../data/shifts';
+import {
+  SHIFT_COLORS, WORKING_CODES, legsForShift, isWorkingCode, shiftSummary,
+} from '../../data/shifts';
 import { statusColors, colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -67,7 +70,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   const {
     ridesOn, assignCabToRides, cabs, rosterMonth, setRosterMonth, monthRosters,
     routeOptions, setEmployeeRoute, employeeCancellationsOn, getCabById,
-    employees, shiftPolicy, addRiderToDay, deskCancelRide, deskCancellationsOn,
+    employees, shiftPolicy, addRiderToDay, deskCancelRide,
     restoreDeskCancelledRide, deskCancelState,
   } = useApp();
 
@@ -106,6 +109,13 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   //   waiting  — no cab yet (the default: this is the work still to do)
   //   assigned — already in a cab (who is covered, and by which vehicle)
   const [rideFilter, setRideFilter] = useState('waiting');
+  // Which CAB the board is narrowed to — a cab id, or null for every cab (and
+  // unassigned rides too). Sits beside the search box rather than replacing it:
+  // typing a cab number already worked through search, but that also matches a
+  // ride whose ADDRESS happens to contain the same digits. This is the precise
+  // version — "show me exactly this vehicle's manifest, nothing else" — for
+  // checking a cab isn't overloaded or confirming who's actually riding in it.
+  const [cabFilter, setCabFilter] = useState(null);
   // Which DIRECTION the board is showing: 'in' | 'out'. One or the other, always —
   // there is deliberately no "both" any more (it was removed at explicit request).
   //
@@ -167,25 +177,113 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   );
 
   const visible = useMemo(() => {
+    // A CANCELLED RIDE IS SHOWN WHATEVER THE COARSE FILTER SAYS.
+    //
+    // The point of keeping it on the board is that the desk can see what they
+    // just stood down and put it back. Run through the filter normally it would
+    // disappear the instant it was cancelled — it is neither Waiting (no cab
+    // needed) nor Assigned — which is the same "where did it go?" the banner
+    // above the board used to cause. It is excluded from every COUNT instead
+    // (see rideStats), so the tiles still only measure real work.
+    //
+    // The bypass is deliberately limited to the two COARSE buckets. Picking an
+    // exact status from the dropdown means "only this status", so letting
+    // cancelled rides through there would make "On the way" show cancelled rows.
+    const isCancelled = (r) => r.status === STATUS.CANCELLED;
     const byStatus =
-      rideFilter === 'waiting'
-        ? legRides.filter((r) => !r.assignedCabId)
+      rideFilter === 'all'
+        ? legRides
+        : rideFilter === 'waiting'
+        ? legRides.filter((r) => !r.assignedCabId || isCancelled(r))
         : rideFilter === 'assigned'
-        ? legRides.filter((r) => r.assignedCabId)
-        : legRides;
-    return searchWords.length ? byStatus.filter(matches) : byStatus;
-  }, [legRides, rideFilter, searchWords, matches]);
+        ? legRides.filter((r) => r.assignedCabId || isCancelled(r))
+        : // 'cancelled' — the one tile that shows cancelled rides ALONE, with no
+          // bypass, so it is the place to review what has been stood down.
+          legRides.filter(isCancelled);
+    const byCab = cabFilter ? byStatus.filter((r) => r.assignedCabId === cabFilter) : byStatus;
+    return searchWords.length ? byCab.filter(matches) : byCab;
+  }, [legRides, rideFilter, cabFilter, searchWords, matches]);
 
-  // Nothing here, but something the OTHER way? The board only ever shows one of
-  // the day's two runs, so a search that finds nobody is ambiguous — "she isn't
-  // travelling today" and "she's on the other leg" look identical. The existing
-  // empty state already extends this courtesy for a whole empty direction; a
-  // search that comes back empty deserves it more, because the coordinator has a
-  // name in their hand and is about to conclude it's wrong.
-  const otherLegHits = useMemo(() => {
-    if (!searchWords.length) return 0;
-    return rides.filter((r) => r.leg !== legFilter && matches(r)).length;
-  }, [rides, legFilter, searchWords, matches]);
+  // How to name the active status filter in prose — used by the search empty
+  // state ("showing Waiting for a cab only"). The dropdown that once needed a
+  // full option list is gone; the four tiles are the control now, so this only
+  // has to label those four.
+  const statusFilterLabel = useCallback((v) => {
+    if (v === 'all') return 'All rides';
+    if (v === 'waiting') return 'Waiting for a cab';
+    if (v === 'assigned') return 'Has a cab';
+    return 'Cancelled';
+  }, []);
+
+  // Same hazard as the direction, search and cab controls: narrowing by status
+  // can take a ticked row off screen, and a tick on a row the coordinator cannot
+  // see is a cab about to be assigned to somebody they are not looking at.
+  function changeRideFilter(next) {
+    setRideFilter(next);
+    setSelected((prev) =>
+      prev.filter((key) => {
+        const r = rides.find((x) => x.key === key);
+        if (!r) return false;
+        if (next === 'all') return true;
+        if (next === 'waiting') return !r.assignedCabId;
+        if (next === 'assigned') return !!r.assignedCabId;
+        return r.status === next;
+      })
+    );
+  }
+
+  // EVERY MATCH ON THE DAY, ignoring all three narrowing controls — direction,
+  // status and cab.
+  //
+  // The direction segment was the only one of the three the empty state used to
+  // account for, but all three hide matches the same way, and the status one
+  // hides them by DEFAULT: the board opens on "Waiting", so searching for
+  // anybody whose cab is already assigned came back "Nothing matches", which
+  // reads as "they are not travelling today". The coordinator has a name in
+  // their hand at that moment and no reason to doubt the answer.
+  //
+  // So this counts the honest total, and the empty state below reports where the
+  // matches actually are with one tap to go and see them. Nothing about which
+  // rides the filters show has changed — only whether an empty result can lie.
+  const searchHits = useMemo(() => {
+    if (!searchWords.length) return [];
+    return rides.filter(matches);
+  }, [rides, searchWords, matches]);
+
+  // Which of the three controls is what's hiding them, so the wording can name
+  // it rather than saying "a filter" and leaving the desk to hunt.
+  const hiddenBy = useMemo(() => {
+    if (!searchWords.length || !searchHits.length) return null;
+    // Would this ride survive the status filter as it currently stands? Written
+    // once here rather than mirrored per branch, so an exact status from the
+    // dropdown is accounted for the same way the coarse buckets are.
+    const passesStatus = (r) => {
+      if (rideFilter === 'all') return true;
+      if (rideFilter === 'waiting') return !r.assignedCabId;
+      if (rideFilter === 'assigned') return !!r.assignedCabId;
+      return r.status === rideFilter;
+    };
+    return {
+      leg: searchHits.some((r) => r.leg !== legFilter),
+      status:
+        rideFilter !== 'all' &&
+        searchHits.some((r) => r.leg === legFilter && !passesStatus(r)),
+      cab: !!cabFilter && searchHits.some((r) => r.assignedCabId !== cabFilter),
+    };
+  }, [searchWords, searchHits, legFilter, rideFilter, cabFilter]);
+
+  // Drop every narrowing control so the matches on screen are all of them, and
+  // move to the leg that actually holds one if this one doesn't.
+  function showAllSearchHits() {
+    setRideFilter('all');
+    setCabFilter(null);
+    if (searchHits.length && !searchHits.some((r) => r.leg === legFilter)) {
+      // changeLegFilter would clear the selection; do that here too, for the
+      // same reason — a tick on a row about to leave the screen.
+      setSelected([]);
+      setLegFilter(searchHits[0].leg);
+    }
+  }
   const sections = useMemo(
     () => groupByRoute(visible),
     [visible]
@@ -202,28 +300,10 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     [employeeCancellationsOn, date]
   );
 
-  // Rides the DESK stood down — usually HR, acting on a message the rider sent them.
-  // The coordinator has to see these: they are the person assigning cabs, and a row
-  // disappearing off the board with nothing said is indistinguishable from having
-  // mis-read it. Separate from the rider's own cancellations above because they are
-  // different news: one is a rider dropping out, the other is a decision already
-  // taken at the desk.
-  const deskCancellations = useMemo(
-    () => deskCancellationsOn(date),
-    [deskCancellationsOn, date]
-  );
-
-  // FOLDED AWAY, NOT DISMISSED. The desk asked for a way to get this notice out of
-  // the way once they had read it, and a close button was the obvious answer — but a
-  // close button has to decide what "closed" means for a cancellation that arrives an
-  // hour later, and every answer to that is a way to hide one. Collapsing has no such
-  // question in it: the count in the header is always live, so an afternoon
-  // cancellation changes the header whether the panel is open or shut.
-  //
-  // Starts closed. The thing the coordinator must not miss is that a ride WAS
-  // cancelled, and the header says that on its own — the names are what they open it
-  // for. Either way the rides are already off the board below.
-  const [deskCancelOpen, setDeskCancelOpen] = useState(false);
+  // deskCancellations / deskCancelOpen went with the panel they fed: a
+  // desk-cancelled ride is a card on the board now, derived by ridesOn() itself,
+  // so there is nothing for this screen to fetch separately. deskCancellationsOn
+  // is still on the context for anything else that wants the list.
 
   // Switching direction drops the current selection, the same way moving to another
   // day does. A cab cannot run both legs at once — cabAssignmentProblem() refuses it
@@ -255,6 +335,18 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     setLegFilter(next);
   }
 
+  // Same hazard as changeSearch/changeLegFilter above: narrowing to one cab can
+  // take rows off screen that were ticked under "all cabs".
+  function changeCabFilter(next) {
+    setCabFilter(next);
+    setSelected((prev) =>
+      prev.filter((key) => {
+        const r = rides.find((x) => x.key === key);
+        return !!r && (!next || r.assignedCabId === next);
+      })
+    );
+  }
+
   // Moving off the loaded month has to move the subscription too, or the day
   // would come back empty for a month that hasn't been fetched.
   function goToDate(next) {
@@ -270,8 +362,13 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     setSelected((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
 
   // Tick every still-unassigned ride in a group — the fast path to a carpool.
+  // Cancelled rides are excluded: they are on the board to be seen and undone,
+  // not to be given a cab, and a batch containing one would be assigning a cab
+  // to somebody the desk has already stood down.
   function selectGroup(data) {
-    const keys = data.filter((r) => !r.assignedCabId).map((r) => r.key);
+    const keys = data
+      .filter((r) => !r.assignedCabId && r.status !== STATUS.CANCELLED)
+      .map((r) => r.key);
     setSelected((prev) => Array.from(new Set([...prev, ...keys])));
   }
 
@@ -292,21 +389,57 @@ export default function CoordinatorDashboardScreen({ navigation }) {
         .map((e) => e.uid),
     [employees, ridersToday]
   );
-  // Only codes that put a cab on the road ON THE DAY BEING VIEWED. Three things
-  // get filtered out, and all three would otherwise look like the button did
-  // nothing: a Week Off (writes a day, generates no ride), an Evening shift
-  // ("working" but outside the 20:00–06:00 service window, so no leg), and — if
-  // HR ever configures one — a shift whose only cab is a drop the NEXT morning,
-  // which would correctly appear on tomorrow's board rather than this one.
-  // Mirrors the leg/date logic in ridesForDate(); keep them in step.
+  // EVERY WORKING SHIFT IN THE POLICY, in the order Shift Timings lists them.
+  //
+  // This used to offer only the codes that put a cab on the road on the day
+  // being viewed, which as configured today is two of the five: A and N. The
+  // other three were filtered out for three different reasons — E provides
+  // neither leg, and A2/E2 provide a drop that (ending at or past midnight)
+  // lands on the FOLLOWING day's board. Defensible, but it made the picker
+  // disagree with Shift Timings, and a coordinator who has just been told
+  // somebody is on E2 tonight found no E2 to pick. So all of them are offered
+  // and the ones that put no cab on THIS day say so on their own row (see
+  // addRiderCabNote) — visible and explained beats absent and unexplained.
+  //
+  // WO / H / L are still not here: they are absence markers, not shifts, which
+  // is why Shift Timings lists them apart from the shifts too. Adding a rider
+  // on Week Off would write a roster day that generates nothing.
   const addRiderCodes = useMemo(() => {
     const policy = shiftPolicy || {};
-    return Object.keys(policy).filter((code) => {
-      const legs = legsForShift(policy, code);
-      if (!legs) return false;
-      return legs.providePickup || (legs.provideDrop && !legs.dropNextDay);
-    });
+    // WORKING_CODES first so the order matches Shift Timings, then anything the
+    // policy has that the constant doesn't — a code added to config/shifts
+    // without a matching entry in data/shifts.js still shows up.
+    const known = WORKING_CODES.filter((code) => isWorkingCode(policy, code));
+    const extra = Object.keys(policy).filter(
+      (code) => isWorkingCode(policy, code) && !known.includes(code)
+    );
+    return [...known, ...extra];
   }, [shiftPolicy]);
+
+  // What cab this shift actually produces — '' for the ordinary case (a ride on
+  // this board, at a time on this board's own clock day).
+  //
+  // Rewritten when overnight drops moved onto their shift's day: it used to say
+  // "Drop at 02:30 AM shows on Thu 27 Aug", pointing at the next board. Every
+  // shift's ride now lands on the day being added to, so the only thing left
+  // worth saying about a late drop is that its CLOCK time is tomorrow's — the
+  // ride is right here.
+  const addRiderCabNote = useCallback(
+    (code) => {
+      const legs = legsForShift(shiftPolicy || {}, code);
+      if (!legs) return '';
+      if (!legs.providePickup && !legs.provideDrop) {
+        // E as configured today: a working shift the company runs no cab for.
+        return 'No cab for this shift — they make their own way';
+      }
+      if (legs.provideDrop && legs.dropNextDay) {
+        // A2 and E2: on this board, but after midnight by the clock.
+        return `Drop at ${legs.drop} — after midnight, ${prettyDate(shiftDateKey(date, 1))}`;
+      }
+      return '';
+    },
+    [shiftPolicy, date]
+  );
 
   const addRiderEmployee = useMemo(
     () => (employees || []).find((e) => e.uid === addRiderUid) || null,
@@ -333,11 +466,16 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     }
     const name = addRiderEmployee?.name || 'Rider';
     const label = shiftPolicy?.[addRiderCode]?.label || addRiderCode;
+    // Now that every working shift can be picked, the confirmation has to say
+    // where the cab went — three of the five put nothing on THIS board, and
+    // "added to Wed 26 Aug" alone would read as a ride that never appears.
+    const note = addRiderCabNote(addRiderCode);
     setAddRiderOpen(false);
     setAddRiderUid(null);
     setAddRiderCode(null);
     setSnack(
       `${name} added to ${prettyDate(date)} on ${label}.` +
+        (note ? ` ${note}.` : '') +
         (addRiderEmployee?.roster?.route ? '' : ' No route set — group them by hand.')
     );
   }
@@ -473,29 +611,97 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     );
   }
 
-  function renderRide({ item }) {
-    const assigned = !!item.assignedCabId;
+  function renderRide({ item, index, section }) {
+    const cancelled = item.status === STATUS.CANCELLED;
+    // A cancelled ride keeps its assignedCabId on purpose (that is what lets the
+    // desk be told which cab has the seat back), so `assigned` must not treat one
+    // as a covered ride — it would show a cab chip and hide the Put back action.
+    const assigned = !cancelled && !!item.assignedCabId;
     const cab = assigned ? cabs.find((c) => c.id === item.assignedCabId) : null;
     const ticked = isSelected(item.key);
+    // Only a PENDING ride is a candidate for the carpool selection — a ride
+    // that already has a cab is a decision already made, and giving it a
+    // checkbox too reads as "you could reassign this" when in fact nothing
+    // downstream treats a re-tick of an assigned ride any differently:
+    // selectGroup() already only ticks the unassigned ones, and
+    // confirmAssign() would just hand the SAME cab a second assignment call
+    // for someone who already has one. So the checkbox — and the tap-to-toggle
+    // — only exist where there is actually a decision left to make.
+    //
+    // A cancelled ride is not one either: nobody is travelling, so there is no
+    // cab to give it. Put back is its only action.
+    const selectable = !assigned && !cancelled;
+    const Wrapper = selectable ? Pressable : View;
     const code = SHIFT_COLORS[item.shiftCode] || { bg: colors.surfaceAlt, fg: colors.text };
     // The DESK's window (30 minutes), not the rider's (4 hours) — same helper, its own
     // cutoff. Reads the booking when there is one and the derived ride when there
     // isn't; both carry date, shift and status.
     const deskCancel = deskCancelState(item.booking || item);
+
+    // A ROUTE CAN RUN AT MORE THAN ONE TIME. "Madhapur" is a pickup area, not a
+    // departure — it can hold a 10 PM Afternoon drop and a 1 AM Evening drop in
+    // the same list, and a coordinator scanning names has no way to see where
+    // one group ends and the next begins. Section.data is already sorted
+    // chronologically (ridesForDate sorts before grouping; groupByRoute only
+    // buckets it, never reorders), so "does this ride start a new time?" is just
+    // "does its time differ from the one before it in this same route" — no
+    // second sort, no new grouping function, nothing that could disagree with
+    // what's actually on screen.
+    // A board can now hold two rides at the same clock time on DIFFERENT days
+    // (an overnight drop is listed with its shift), so the group is keyed on
+    // depart date as well as time — otherwise a 12:00 AM drop belonging to
+    // tomorrow and one belonging to today would merge into a single heading.
+    const groupKeyOf = (r) => `${r?.departDate || r?.date}|${r?.shift}`;
+    const prev = index > 0 ? section.data[index - 1] : null;
+    const isNewTimeGroup = !prev || groupKeyOf(prev) !== groupKeyOf(item);
+    const rideCount = section.data.filter((r) => groupKeyOf(r) === groupKeyOf(item)).length;
+    // Same reason as the card's own note: "12:00 AM" on the 26th board is the
+    // 27th's clock, and the heading is what the desk reads first.
+    const groupNextDay = !!item.departDate && item.departDate !== item.date;
+
     return (
-      <Pressable onPress={() => toggle(item.key)}>
+      <>
+        {isNewTimeGroup ? (
+          <View style={[styles.timeSubhead, !prev && styles.timeSubheadFirst]}>
+            <MaterialCommunityIcons
+              name={item.leg === 'in' ? 'home-export-outline' : 'home-import-outline'}
+              size={13}
+              color={colors.primaryDark}
+            />
+            <Text variant="labelLarge" style={styles.timeSubheadText}>
+              {item.direction} · {item.shift}
+              {groupNextDay ? ` · ${prettyDate(item.departDate)}` : ''}
+            </Text>
+            <Text variant="bodySmall" style={styles.timeSubheadCount}>
+              {rideCount} rider{rideCount === 1 ? '' : 's'}
+            </Text>
+          </View>
+        ) : null}
+      <Wrapper {...(selectable ? { onPress: () => toggle(item.key) } : {})}>
         <Card style={[styles.card, ticked && styles.cardSelected]} mode="elevated">
           <Card.Content style={styles.cardRow}>
             {/* The tick is a picture of the card's state, not a target of its own —
                 the whole card is the Pressable, which is already far past 44px in
                 both directions. Bigger on a phone simply so it reads at arm's
-                length. */}
-            <MaterialCommunityIcons
-              name={ticked ? 'checkbox-marked' : 'checkbox-blank-outline'}
-              size={isMobile ? 26 : 22}
-              color={ticked ? colors.primary : colors.muted}
-              style={[styles.check, isMobile && styles.checkMobile]}
-            />
+                length.
+
+                ONLY A PENDING RIDE GETS ONE. A ride that already has a cab is a
+                decision already made, and a tick-box on it reads as "you could
+                add this to the selection" when nothing downstream would act on
+                it. But the SLOT is kept either way — an empty box of the same
+                width — because a mixed group (one Pending, one assigned) would
+                otherwise start its names at two different left edges, and a
+                column of names that doesn't line up is harder to scan than the
+                checkbox was to ignore. */}
+            <View style={[styles.check, isMobile && styles.checkMobile]}>
+              {selectable ? (
+                <MaterialCommunityIcons
+                  name={ticked ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                  size={isMobile ? 26 : 22}
+                  color={ticked ? colors.primary : colors.muted}
+                />
+              ) : null}
+            </View>
             <View style={styles.cardBody}>
               {/* NAME AND BADGES: side by side with room, stacked without. On a
                   phone the two badges take most of a narrow row, squeezing the
@@ -521,17 +727,57 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   <Chip
                     compact
                     style={{
-                      backgroundColor: assigned
+                      backgroundColor: cancelled
+                        ? colors.dangerSoft
+                        : assigned
                         ? statusColors[item.status] || colors.success
                         : colors.warningSoft,
                     }}
                     textStyle={{
-                      color: assigned ? '#FFFFFF' : '#B26A00',
+                      color: cancelled ? colors.danger : assigned ? '#FFFFFF' : '#B26A00',
                       fontSize: 11,
                     }}
                   >
-                    {assigned ? item.status : 'Pending'}
+                    {cancelled ? 'Cancelled' : assigned ? item.status : 'Pending'}
                   </Chip>
+                  {/* THE RIDE'S ONE ACTION, at the top right beside its status —
+                      Cancel while it stands, Put back once it doesn't. It used to
+                      be a text button on its own row at the BOTTOM of the card,
+                      and a desk cancellation then moved the whole ride into a
+                      banner above the board, so the row the coordinator had just
+                      acted on disappeared from under them. Now the card stays
+                      exactly where it is and only its chip and this button change.
+
+                      The responder is claimed so pressing either one cannot also
+                      tick the rider for assignment — the whole card is a
+                      Pressable. Same trick as RideStartCode below. */}
+                  <View onStartShouldSetResponder={() => true}>
+                    {cancelled ? (
+                      <Button
+                        compact
+                        mode="text"
+                        icon="undo-variant"
+                        textColor={colors.primary}
+                        onPress={() => setRestoreFor(item.booking || item)}
+                        disabled={busy}
+                        labelStyle={styles.cardActionLabel}
+                      >
+                        Put back
+                      </Button>
+                    ) : deskCancel.canCancel ? (
+                      <Button
+                        compact
+                        mode="text"
+                        icon="calendar-remove"
+                        textColor={colors.danger}
+                        onPress={() => openDeskCancel(item)}
+                        disabled={busy}
+                        labelStyle={styles.cardActionLabel}
+                      >
+                        Cancel
+                      </Button>
+                    ) : null}
+                  </View>
                 </View>
               </View>
 
@@ -591,50 +837,26 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   </Button>
                 </View>
               ) : null}
-              {/* STAND THIS CAB DOWN. The employee messaged the desk on Teams,
-                  WhatsApp or the phone — an emergency, they aren't travelling — and
-                  will never open the app to cancel it themselves. Nothing else on
-                  this board could act on that: approving a cancellation needs a
-                  request the rider never made, and the rider's own button is shut
-                  inside the 4-hour cutoff, which is exactly when this happens.
-                  Text button, not a filled one: it is the exception, and assigning
-                  cabs is what this screen is for.
-                  The responder is claimed so cancelling can't also tick the rider
-                  for assignment — the whole card is a Pressable. Same trick as
-                  RideStartCode above. */}
-              <View onStartShouldSetResponder={() => true} style={styles.deskCancelRow}>
-                {deskCancel.canCancel ? (
-                  <Button
-                    compact
-                    mode="text"
-                    icon="calendar-remove"
-                    textColor={colors.danger}
-                    onPress={() => openDeskCancel(item)}
-                    disabled={busy}
-                  >
-                    Cancel ride
-                  </Button>
-                ) : (
-                  /* THE REASON, NOT A DEAD BUTTON. Only shows in the last 30 minutes
-                     before a pickup, or once the trip is under way — rare, unlike the
-                     4-hour version this replaced, which closed the whole evening board
-                     by 6 PM. A greyed button repeated down every card would read as
-                     "you can do this" fifteen times over. */
-                  <Text variant="bodySmall" style={styles.cancelClosed}>
-                    {deskCancel.reason}
-                  </Text>
-                )}
-              </View>
+              {/* The Cancel / Put back button that used to sit here has moved
+                  to the TOP RIGHT of the card, beside the status chip — see the
+                  chips row above. It was a text button at the bottom of every
+                  card, furthest from the status it changes, and a cancellation
+                  then moved the ride off the board into a banner. */}
 
               {/* Every ride on this board comes from the roster. There is no
                   "approved extra ride" badge because there are no extra rides —
                   the company runs the 8 PM pickup and the 10 PM drop, full stop. */}
 
-              {/* An overnight shift's drop runs the morning after the shift date —
-                  say so, or the desk reads it as the wrong day. */}
-              {item.leg === 'out' && item.shiftDate !== item.date ? (
+              {/* THE CAB LEAVES AFTER MIDNIGHT, so its clock time belongs to the
+                  next calendar day even though it is worked from this board.
+                  Keyed on departDate vs date — it used to compare shiftDate with
+                  date, which stopped being able to fire at all when overnight
+                  drops moved onto their shift's own day (those two are now always
+                  equal). Without this the desk reads "02:30 AM" on the 26th board
+                  and books a cab for the wrong night. */}
+              {item.departDate && item.departDate !== item.date ? (
                 <Text variant="bodySmall" style={styles.overnight}>
-                  Overnight — {item.shiftCode} shift of {prettyDate(item.shiftDate)}
+                  After midnight — {item.shift} on {prettyDate(item.departDate)}
                 </Text>
               ) : null}
               {cab ? (
@@ -645,15 +867,37 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             </View>
           </Card.Content>
         </Card>
-      </Pressable>
+      </Wrapper>
+      </>
     );
   }
 
   const noRoster = monthRosters.length === 0;
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.col}>
+  // Everything above the ride list, as the SectionList's OWN header rather than
+  // a sibling above it. It used to be a sibling — a plain View wrapping the day
+  // navigator, the stat tiles, the cancellation cards and the search row, sat
+  // next to <SectionList> inside a flex:1 column. On web that pins it: the
+  // column takes the full viewport height, the header claims whatever it
+  // needs, and the SectionList — a virtualized list, which manages its own
+  // scrolling — is left the remainder to scroll ALONE. The visible result was
+  // a header nothing could move and a second, separate scrollbar squeezed into
+  // the leftover space below it, instead of the one full-page scroll every
+  // other screen in the app has. Handing this whole block to the list as
+  // ListHeaderComponent makes it the list's first (non-sticky) row, so it
+  // scrolls away with everything else — one scroll region, the ordinary way.
+  //
+  // CALL THIS AND PASS THE ELEMENT — never pass the function itself. Virtualized
+  // List does `isValidElement(ListHeaderComponent) ? it : <ListHeaderComponent/>`,
+  // so handing it a function makes the header a COMPONENT TYPE — and this
+  // function is re-declared on every render, so that type is a new identity
+  // every time. React can't reconcile a changed type: it unmounts the whole
+  // header and mounts a fresh one on each render, which blurs the search box
+  // after every single keystroke. That was the "search doesn't work" bug.
+  // As an element its type is View, which is stable, so it updates in place.
+  function renderListHeader() {
+    return (
+      <View style={styles.listHeader}>
         {/* Day navigator */}
         <View style={styles.dateBar}>
           <IconButton
@@ -678,22 +922,102 @@ export default function CoordinatorDashboardScreen({ navigation }) {
           />
         </View>
 
-        {/* Headline numbers — and the board's filter. Each of the first three is
-            a count of a slice of the day, so tapping one shows exactly the rides
-            it counted. "In / Out" is a ratio across both slices rather than a
-            subset of them, so it stays a read-only figure.
+        {/* DIRECTION, DIRECTLY UNDER THE DATE AND CENTRED. It decides WHICH of the
+            day's two runs everything below describes — the tiles, their counts and
+            the list — so it belongs above them and read first, not beside a button
+            halfway down. It used to share a row with "Add a rider", which put the
+            board's most consequential control next to an occasional one. */}
+        <View style={[styles.legRow, isMobile && styles.legRowMobile]}>
+          {/* Empty cell mirroring the one on the right, so the toggle is centred
+              on the ROW rather than on the space left over beside the button.
+              Pointless once the row stacks, and with flex:1 in a COLUMN it would
+              claim vertical space instead of horizontal — so it is not rendered
+              on a phone at all. */}
+          {isMobile ? null : <View style={styles.legRowSide} />}
+          <SegmentedButtons
+          value={legFilter}
+          onValueChange={changeLegFilter}
+          density="small"
+          style={[styles.segmentedLeg, isMobile && styles.segmentedLegMobile]}
+          buttons={[
+            {
+              value: 'in',
+              // SHIFT VOCABULARY, NOT DIRECTIONAL. "IN" and "OUT" describe the
+              // cab's direction; "Login" and "Logout" describe the employee's
+              // shift, which is how the desk and the roster already talk about
+              // these two rides. Same filter either way.
+              label: 'Login',
+              icon: 'home-export-outline',
+              accessibilityLabel: 'Login — the ride to work, Home to Office',
+              // Colours the ICON as well as the text; the weight comes from
+              // labelStyle below.
+              checkedColor: '#FFFFFF',
+              uncheckedColor: colors.muted,
+              style: legFilter === 'in' ? styles.legSegOn : styles.legSegOff,
+              labelStyle: legFilter === 'in' ? styles.legLabelOn : styles.legLabelOff,
+              // Grows the touch target without growing the row — the control keeps
+              // its small density, so the header's height is unchanged.
+              hitSlop: { top: 8, bottom: 8 },
+            },
+            {
+              value: 'out',
+              label: 'Logout',
+              icon: 'home-import-outline',
+              accessibilityLabel: 'Logout — the ride home, Office to Home',
+              checkedColor: '#FFFFFF',
+              uncheckedColor: colors.muted,
+              style: legFilter === 'out' ? styles.legSegOn : styles.legSegOff,
+              labelStyle: legFilter === 'out' ? styles.legLabelOn : styles.legLabelOff,
+              hitSlop: { top: 8, bottom: 8 },
+            },
+          ]}
+          />
+          {/* Someone needs a cab tonight who the month's roster doesn't have
+              working today — a mid-month joiner, or somebody who turns out to
+              need one. Up here with the toggle at request; it is the only thing
+              on the header that ADDS a ride, so it sits away from the controls
+              that merely narrow the list. */}
+          <View
+            style={[
+              styles.legRowSide,
+              styles.legRowRight,
+              isMobile && styles.legRowRightMobile,
+            ]}
+          >
+            <Button
+              compact
+              mode="text"
+              icon="account-plus"
+              onPress={openAddRider}
+              style={styles.addRider}
+            >
+              Add a rider
+            </Button>
+          </View>
+        </View>
 
-            On a phone the four wrap into a 2×2 grid. Four across a 360px screen
-            leaves each about 80px, which is where "In / Out" starts ellipsising
-            and a two-digit count sits directly against its neighbour — and these
-            are the figures the whole board is read from. Two rows of two keeps
-            every number at full size and every tap a comfortable one. */}
+        {/* THE BOARD'S STATUS FILTER, and its headline counts — one control, four
+            slices of the chosen direction. Tapping one shows exactly the rides it
+            counted, so a figure can always be opened rather than just read.
+            Cancelled is one of them now, which is what let the separate status
+            dropdown beside the search box go: with all four states on tiles the
+            dropdown was a second way to say the same thing.
+
+            "In / Out" used to be a fifth, a read-only inbound/outbound ratio. It
+            was removed at request — with the direction toggle now sitting directly
+            above, the split it described is the control you are already looking at.
+            dayStats is still computed, because the empty state uses it to say how
+            many rides are waiting on the OTHER direction.
+
+            On a phone the four wrap into a 2×2 grid: four across a 360px screen
+            leaves each about 80px, where a two-digit count sits against its
+            neighbour — and these are the figures the whole board is read from. */}
         <View style={[styles.stats, isMobile && styles.statsGrid]}>
           <Stat
             label="Rides"
             value={stats.total}
             active={rideFilter === 'all'}
-            onPress={() => setRideFilter('all')}
+            onPress={() => changeRideFilter('all')}
             showsLabel="every ride"
             half={isMobile}
           />
@@ -702,7 +1026,7 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             value={stats.pending}
             tone={stats.pending ? 'warn' : 'muted'}
             active={rideFilter === 'waiting'}
-            onPress={() => setRideFilter('waiting')}
+            onPress={() => changeRideFilter('waiting')}
             showsLabel="only rides with no cab yet"
             half={isMobile}
           />
@@ -711,17 +1035,22 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             value={stats.assigned}
             tone="good"
             active={rideFilter === 'assigned'}
-            onPress={() => setRideFilter('assigned')}
+            onPress={() => changeRideFilter('assigned')}
             showsLabel="only rides that already have a cab"
             half={isMobile}
           />
-          {/* Off the WHOLE day (dayStats), not the current direction — this is the
-              figure that says how the day splits, and it stays the same as you flip
-              between IN and OUT so it can be read as a total. */}
+          {/* Counted apart from the other three on purpose — a cancelled ride is
+              neither work to do nor work covered (see rideStats), so it is in
+              none of their totals. Tapping it is the one place that shows ONLY
+              cancelled rides; they also stay visible under Waiting and Assigned
+              so a card does not vanish the moment the desk stands it down. */}
           <Stat
-            label="In / Out"
-            value={`${dayStats.inbound}/${dayStats.outbound}`}
-            tone="muted"
+            label="Cancelled"
+            value={stats.cancelled}
+            tone={stats.cancelled ? 'bad' : 'muted'}
+            active={rideFilter === 'cancelled'}
+            onPress={() => changeRideFilter('cancelled')}
+            showsLabel="only rides that have been cancelled"
             half={isMobile}
           />
         </View>
@@ -766,185 +1095,93 @@ export default function CoordinatorDashboardScreen({ navigation }) {
           </Card>
         ) : null}
 
-        {/* WHAT THE DESK CANCELLED. Amber, not red: this is not a problem, it is a
-            decision someone already made and the coordinator needs to know about —
-            these riders are off the board and their seats are free. Who cancelled it
-            is named, because "why has this rider gone?" is answered by a person. */}
-        {deskCancellations.length ? (
-          <Card mode="outlined" style={styles.deskCancelCard}>
-            <Card.Content>
-              <Pressable
-                onPress={() => setDeskCancelOpen((open) => !open)}
-                accessibilityRole="button"
-                accessibilityState={{ expanded: deskCancelOpen }}
-                accessibilityLabel={
-                  `${deskCancellations.length} ride${
-                    deskCancellations.length === 1 ? '' : 's'
-                  } cancelled by the desk. ${deskCancelOpen ? 'Hide' : 'Show'} who.`
-                }
-                style={({ pressed }) => [styles.cancelHead, pressed && styles.headPressed]}
-              >
-                <MaterialCommunityIcons name="headset" size={18} color={colors.warning} />
-                <Text variant="titleSmall" style={[styles.deskCancelTitle, styles.growTitle]}>
-                  {deskCancellations.length} ride
-                  {deskCancellations.length === 1 ? '' : 's'} cancelled by the desk
-                </Text>
-                <MaterialCommunityIcons
-                  name={deskCancelOpen ? 'chevron-up' : 'chevron-down'}
-                  size={22}
-                  color={colors.warning}
-                />
-              </Pressable>
-              {deskCancelOpen ? (
-                <Text variant="bodySmall" style={styles.cancelIntro}>
-                  Already off the board below — do not assign a cab for these.
-                </Text>
-              ) : null}
-              {deskCancelOpen &&
-                deskCancellations.map((b) => {
-                  const cab = b.assignedCabId ? getCabById(b.assignedCabId) : null;
-                  return (
-                    <View key={b.id} style={styles.cancelRow}>
-                      <View style={styles.cancelRowText}>
-                        <Text variant="bodyMedium" style={styles.cancelName}>
-                          {b.employeeName || 'Employee'}
-                          {b.empId ? ` · ${b.empId}` : ''}
-                        </Text>
-                        <Text variant="bodySmall" style={styles.cancelMeta}>
-                          {b.direction} · {b.shift}
-                          {cab ? ` · seat free on ${cab.cabNumber}` : ''}
-                        </Text>
-                        <Text variant="bodySmall" style={styles.deskCancelWho}>
-                          Cancelled by the transport desk
-                          {b.cancelledByRole ? ` (${b.cancelledByRole})` : ''}
-                          {b.cancellationReason ? ` — ${b.cancellationReason}` : ''}
-                        </Text>
-                      </View>
-                      <Button
-                        mode="contained-tonal"
-                        icon="undo-variant"
-                        textColor={colors.primary}
-                        onPress={() => setRestoreFor(b)}
-                        style={styles.restoreBtn}
-                        labelStyle={styles.restoreBtnLabel}
-                        contentStyle={styles.restoreBtnContent}
-                      >
-                        Put back
-                      </Button>
-                    </View>
-                  );
-                })}
-            </Card.Content>
-          </Card>
-        ) : null}
+        {/* The "N rides cancelled by the desk" panel that used to sit here is
+            gone. A desk-cancelled ride now stays on the board as its own card,
+            showing Cancelled with a Put back button at the top right, so the row
+            the coordinator just acted on never moves. The panel existed only
+            because ridesOn() dropped cancelled rides entirely; it now keeps the
+            desk's own (keepDeskCancelled in AppContext).
 
-        <View style={[styles.controls, isMobile && styles.controlsMobile]}>
-          {/* DIRECTION — one of the two, never both. The "By route / By shift" control
-              used to sit to the left of this; grouping is fixed to route now, so this
-              is the board's only view control.
-              The icons are the same pair each ride card carries on its direction
-              line, so the segment and the rows underneath it read as the same thing.
-              Labels are IN / OUT rather than the full "Home → Office", which will not
-              fit a segment — the accessibility labels spell it out.
-
-              THE SELECTED HALF IS FILLED, not tinted. Paper's own checked state is a
-              pale lavender wash that reads as "slightly different from its neighbour",
-              and on this board the two halves are two different runs of the fleet —
-              mistaking one for the other means working the wrong list of riders. So
-              the active segment takes the brand blue with a white icon and label; the
-              inactive one stays on the surface in muted grey.
-              Three cues, not just colour: the fill, a heavier label, and the screen
-              reader's own selected state (Paper emits accessibilityState.checked). */}
-          <SegmentedButtons
-            value={legFilter}
-            onValueChange={changeLegFilter}
-            density="small"
-            style={[styles.segmentedLeg, isMobile && styles.segmentedLegMobile]}
-            buttons={[
-              {
-                value: 'in',
-                // SHIFT VOCABULARY, NOT DIRECTIONAL. "IN" and "OUT" describe the
-                // cab's direction; "Login" and "Logout" describe the employee's
-                // shift, which is how the desk and the roster already talk about
-                // these two rides. Same filter either way.
-                label: 'Login',
-                icon: 'home-export-outline',
-                accessibilityLabel: 'Login — the ride to work, Home to Office',
-                // Colours the ICON as well as the text; the weight comes from
-                // labelStyle below.
-                checkedColor: '#FFFFFF',
-                uncheckedColor: colors.muted,
-                style: legFilter === 'in' ? styles.legSegOn : styles.legSegOff,
-                labelStyle: legFilter === 'in' ? styles.legLabelOn : styles.legLabelOff,
-                // Grows the touch target without growing the row — the control keeps
-                // its small density, so the header's height is unchanged.
-                hitSlop: { top: 8, bottom: 8 },
-              },
-              {
-                value: 'out',
-                label: 'Logout',
-                icon: 'home-import-outline',
-                accessibilityLabel: 'Logout — the ride home, Office to Home',
-                checkedColor: '#FFFFFF',
-                uncheckedColor: colors.muted,
-                style: legFilter === 'out' ? styles.legSegOn : styles.legSegOff,
-                labelStyle: legFilter === 'out' ? styles.legLabelOn : styles.legLabelOff,
-                hitSlop: { top: 8, bottom: 8 },
-              },
-            ]}
-          />
-          {/* Someone needs a cab tonight who the month's roster doesn't have
-              working today. Without this the coordinator could see that and not
-              fix it — Roster Upload is HR's screen and they may well have gone
-              home. HR reaches this same button from their own drawer, which is the
-              other half of the problem: they are often the one told about a new
-              joiner. One day only; a stretch of days is still Roster Upload. */}
-          <Button
-            compact
-            mode="text"
-            icon="account-plus"
-            onPress={openAddRider}
-            style={styles.addRider}
-          >
-            Add a rider
-          </Button>
-        </View>
+            The RIDER-cancellation card above is deliberately still there: a
+            rider's cancellation cannot be put back (restoreDeskCancelledRide
+            refuses one), so it has no card action to offer, and the reason they
+            gave is worth reading in one place. */}
 
         {/* Its own row rather than squeezed in beside IN/OUT: that row already
             wraps on a phone with just the segments and "Add a rider" in it, and
             a search box is not something to hunt for on a board of sixteen. */}
         <View style={styles.searchRow}>
-          <TextInput
-            mode="outlined"
-            dense
-            value={search}
-            onChangeText={changeSearch}
-            placeholder="Search name, ID, route, address or cab"
-            accessibilityLabel="Search today's rides"
-            left={<TextInput.Icon icon="magnify" />}
-            right={
-              search ? (
-                <TextInput.Icon
-                  icon="close"
-                  onPress={() => changeSearch('')}
-                  accessibilityLabel="Clear the search"
-                />
-              ) : undefined
-            }
-            style={styles.search}
-          />
-          {searchWords.length ? (
+          <View style={styles.searchRowMain}>
+            <TextInput
+              mode="outlined"
+              dense
+              value={search}
+              onChangeText={changeSearch}
+              placeholder="Search name, ID, route, address, shift or cab"
+              accessibilityLabel="Search today's rides"
+              left={<TextInput.Icon icon="magnify" />}
+              right={
+                search ? (
+                  <TextInput.Icon
+                    icon="close"
+                    onPress={() => changeSearch('')}
+                    accessibilityLabel="Clear the search"
+                  />
+                ) : undefined
+              }
+              style={[styles.search, styles.searchInput]}
+            />
+            {/* Narrow the board to one vehicle's manifest — separate from typing
+                the cab number into search above, which also matches a ride whose
+                address happens to contain the same digits. This is exact: pick a
+                cab, see exactly who's in it (or, combined with the Waiting
+                filter, confirm nobody has been double-booked onto it). */}
+            <View style={styles.cabFilterWrap}>
+              <Dropdown
+                compact={false}
+                value={cabFilter}
+                onSelect={changeCabFilter}
+                options={[null, ...cabs.map((c) => c.id)]}
+                format={(v) => {
+                  if (!v) return 'All cabs';
+                  const c = cabs.find((x) => x.id === v);
+                  return c ? c.cabNumber : 'Cab';
+                }}
+                placeholder="All cabs"
+                leadingIcon="car"
+              />
+            </View>
+          </View>
+          {searchWords.length || cabFilter ? (
             <Text variant="bodySmall" style={styles.searchCount}>
               {visible.length} of {stats.total} shown
+              {/* Said here as well as in the empty state, because a search can
+                  hide matches while still showing some — "2 of 9 shown" gives no
+                  hint that a third match is one tab away. */}
+              {searchWords.length && searchHits.length > visible.length
+                ? ` · ${searchHits.length - visible.length} more match${
+                    searchHits.length - visible.length === 1 ? '' : 'es'
+                  } hidden by the filters`
+                : ''}
+              {cabFilter
+                ? ` · cab ${cabs.find((c) => c.id === cabFilter)?.cabNumber || ''}`
+                : ''}
             </Text>
           ) : null}
         </View>
+      </View>
+    );
+  }
 
+  return (
+    <View style={styles.container}>
+      <View style={styles.col}>
         <SectionList
           sections={sections}
           keyExtractor={(item) => item.key}
           renderItem={renderRide}
           renderSectionHeader={renderSectionHeader}
+          ListHeaderComponent={renderListHeader()}
           stickySectionHeadersEnabled={false}
           contentContainerStyle={styles.list}
           ListEmptyComponent={
@@ -955,20 +1192,46 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                  question nobody asked, and the one that matters ("no match") is
                  not among them. */
               <View style={styles.empty}>
-                <MaterialCommunityIcons name="magnify-close" size={44} color={colors.muted} />
+                <MaterialCommunityIcons
+                  name={searchHits.length ? 'filter-remove-outline' : 'magnify-close'}
+                  size={44}
+                  color={colors.muted}
+                />
+                {/* TWO GENUINELY DIFFERENT ANSWERS, told apart rather than
+                    sharing one sentence: nobody on this day matches at all, or
+                    somebody does and a filter is hiding them. The second used to
+                    read identically to the first, which is how a rider with a cab
+                    already assigned came back as "no match" on the default
+                    Waiting tab. */}
                 <Text variant="bodyMedium" style={styles.emptyText}>
-                  Nothing here matches “{search.trim()}”.
+                  {searchHits.length
+                    ? `${searchHits.length} ride${
+                        searchHits.length === 1 ? '' : 's'
+                      } match “${search.trim()}”, hidden by the filters.`
+                    : `Nothing on this day matches “${search.trim()}”.`}
                 </Text>
                 <Text variant="bodySmall" style={styles.emptyHint}>
-                  {otherLegHits
-                    ? `${otherLegHits} match${otherLegHits === 1 ? '' : 'es'} on ${
-                        legFilter === 'in' ? 'Logout' : 'Login'
-                      } — switch direction above.`
-                    : `Searching ${legFilter === 'in' ? 'Login' : 'Logout'} rides on this day only.`}
+                  {searchHits.length
+                    ? [
+                        hiddenBy?.status &&
+                          `showing ${statusFilterLabel(rideFilter)} only`,
+                        hiddenBy?.leg && `on ${legFilter === 'in' ? 'Logout' : 'Login'}`,
+                        hiddenBy?.cab && 'on another cab',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')
+                    : 'Searched every ride on this day — name, ID, route, address, shift and cab.'}
                 </Text>
-                <Button mode="text" onPress={() => changeSearch('')}>
-                  Clear search
-                </Button>
+                <View style={styles.emptyActions}>
+                  {searchHits.length ? (
+                    <Button mode="contained" icon="filter-remove" onPress={showAllSearchHits}>
+                      Show {searchHits.length === 1 ? 'it' : 'all ' + searchHits.length}
+                    </Button>
+                  ) : null}
+                  <Button mode="text" onPress={() => changeSearch('')}>
+                    Clear search
+                  </Button>
+                </View>
               </View>
             ) : (
             <View style={styles.empty}>
@@ -1166,17 +1429,29 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                   </Text>
                   {addRiderCodes.length === 0 ? (
                     <Text variant="bodyMedium">
-                      No shift currently runs a cab. HR sets that on Shift Policy.
+                      No working shift is configured. HR sets these on Shift Timings.
                     </Text>
                   ) : (
                     <RadioButton.Group onValueChange={setAddRiderCode} value={addRiderCode}>
-                      {addRiderCodes.map((code) => (
-                        <RadioButton.Item
-                          key={code}
-                          label={shiftSummary(shiftPolicy, code)}
-                          value={code}
-                        />
-                      ))}
+                      {addRiderCodes.map((code) => {
+                        // Every working shift is offered; this says what each one
+                        // actually puts on a board, for the ones where that isn't
+                        // "a ride today".
+                        const note = addRiderCabNote(code);
+                        return (
+                          <View key={code}>
+                            <RadioButton.Item
+                              label={shiftSummary(shiftPolicy, code)}
+                              value={code}
+                            />
+                            {note ? (
+                              <Text variant="bodySmall" style={styles.shiftNote}>
+                                {note}
+                              </Text>
+                            ) : null}
+                          </View>
+                        );
+                      })}
                     </RadioButton.Group>
                   )}
                 </>
@@ -1386,62 +1661,11 @@ const styles = StyleSheet.create({
     borderLeftColor: colors.danger,
     backgroundColor: colors.dangerSoft,
   },
-  deskCancelCard: {
-    marginHorizontal: spacing.sm,
-    marginBottom: spacing.md,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: '#F2E3C4',
-    borderLeftWidth: 4,
-    borderLeftColor: colors.warning,
-    backgroundColor: colors.warningSoft,
-  },
-  deskCancelTitle: { color: colors.warning, fontFamily: font.semibold },
-  deskCancelWho: { color: colors.warning, marginTop: 2 },
-  // Solid enough to read as a control on an amber panel, quiet enough not to
-  // compete with "Add a rider" or the assign button below it — this undoes a
-  // decision somebody already made, it isn't the day's main action. White fill
-  // rather than the tonal default, which lands as a muddy grey-lilac here.
-  restoreBtn: {
-    flexShrink: 0,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: '#E7D2A6',
-    ...shadow.xs,
-  },
-  // THE LABEL'S LEFT MARGIN IS NOT PADDING — IT IS THE GAP AFTER THE ICON.
-  //
-  // Paper's md3Icon gives the icon `marginRight: -16`, deliberately, because it
-  // expects the label to arrive carrying md3Label's `marginHorizontal: 24`; the
-  // two cancel out to an 8px gap. Override the label margin without accounting
-  // for that pull and the difference goes NEGATIVE — at marginHorizontal: 4 the
-  // label sat 12px on top of the icon and the undo arrow was drawn through the
-  // "P" of "Put back".
-  //
-  // So marginLeft is written as 16 (the pull) + 8 (the gap we want), and any
-  // future tightening has to keep clearing that 16.
-  restoreBtnLabel: {
-    fontFamily: font.semibold,
-    fontSize: 13,
-    letterSpacing: 0.2,
-    marginVertical: 0,
-    marginLeft: 24,
-    marginRight: 16,
-  },
-  // No horizontal padding here: the insets are the icon's own marginLeft (16)
-  // and the label's marginRight (16), so putting padding on the content as well
-  // would count the same space twice.
-  restoreBtnContent: { height: 34, paddingHorizontal: 0 },
   restoreDialog: { width: '100%', maxWidth: 460, alignSelf: 'center' },
   restoreWho: { fontFamily: font.semibold, color: colors.text },
   restoreMeta: { color: colors.textSecondary, marginTop: 2 },
   restoreNote: { color: colors.muted, marginTop: spacing.md, lineHeight: 19 },
   cancelHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  // The title takes the slack so the chevron sits hard right, and minWidth:0 lets a
-  // long line ellipsize rather than shove the chevron off the card.
-  growTitle: { flex: 1, minWidth: 0 },
-  headPressed: { opacity: 0.65 },
   cancelTitle: { color: colors.danger, fontFamily: font.semibold },
   cancelIntro: { color: colors.textSecondary, marginTop: 2 },
   // Text on the left taking the slack, action on the right. alignItems
@@ -1516,18 +1740,6 @@ const styles = StyleSheet.create({
   statValue: { fontFamily: font.bold, color: colors.text },
   statLabel: { color: colors.muted, letterSpacing: 0.3 },
 
-  controls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
-    flexWrap: 'wrap',
-  },
-  // Tighter gutters so IN/OUT and "Add a rider" still share one row on a 360px
-  // screen. flexWrap above is the safety net for anything narrower.
-  controlsMobile: { gap: spacing.sm, paddingHorizontal: spacing.sm },
   // Two segments, sized to their WORDS. The labels used to be "IN" and "OUT" and
   // 200px was already the floor — at 170 a bold "OUT" beside its icon ellipsised
   // to "O…". "Login"/"Logout" are far wider, so the minimum moved with them.
@@ -1538,8 +1750,8 @@ const styles = StyleSheet.create({
   // spare. Do not tighten these without re-measuring — that is the exact bug
   // the paragraph above records, and now with a longer word to lose.
   segmentedLeg: { flexGrow: 0, flexShrink: 0, minWidth: 290 },
-  // The phone floor. Below this the row wraps — which it is already set up to do
-  // (`controls` has flexWrap) — rather than the labels breaking.
+  // The phone floor. `legRow` centres it on its own line now, so there is no
+  // neighbour to be squeezed by — this is purely the width the two labels need.
   segmentedLegMobile: { minWidth: 250 },
   // Pushed to the far right of the row, away from IN/OUT. Those two decide which
   // list is on screen; this one opens a dialog and changes the day's roster — sat
@@ -1550,13 +1762,51 @@ const styles = StyleSheet.create({
   // on a very narrow screen: 'space-between' would drop the button to a second
   // line and then align it LEFT again, whereas auto margin keeps it right
   // wherever it lands.
-  addRider: { marginLeft: 'auto', borderRadius: radius.md },
+  addRider: { borderRadius: radius.md },
   searchRow: {
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.sm,
     gap: spacing.xs,
   },
+  // TWO CONTROLS, ONE LINE, SAME HEIGHT. alignItems 'stretch' rather than
+  // 'center' is what does the work: the dropdown is a View that sizes to its own
+  // padding, so centred it sat as a short pill against a taller input. Stretched,
+  // it takes the row's height from the text field beside it and the two read as a
+  // matched pair.
+  searchRowMain: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
   search: { backgroundColor: colors.surface },
+  // The search box takes whatever room the cab dropdown doesn't. minWidth keeps
+  // it from being squeezed to nothing before the row wraps on a narrow screen.
+  searchInput: { flex: 1, minWidth: 220 },
+  // A real field, not a pill: wide enough for a full cab number ("TS 08 TR 3456")
+  // without ellipsising, and fixed so the search box's width doesn't jump as the
+  // selection changes. flexGrow 0 / flexShrink 0 so it keeps that width instead
+  // of absorbing the row.
+  cabFilterWrap: { width: 200, flexGrow: 0, flexShrink: 0, justifyContent: 'center' },
+  // THE TOGGLE, CENTRED ON THE ROW, with "Add a rider" pinned right. The two side
+  // cells are equal-width flex so the toggle sits at the row's true centre — with
+  // only a right-hand cell it would be pushed left by exactly that button's width.
+  legRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    gap: spacing.sm,
+  },
+  // On a phone the segments alone want 250px, so the three cells cannot share a
+  // line. Stacking centres the toggle and puts the button under it rather than
+  // letting either be crushed.
+  legRowMobile: { flexDirection: 'column', gap: spacing.xs },
+  legRowSide: { flex: 1, minWidth: 0 },
+  legRowRight: { alignItems: 'flex-end' },
+  // Stacked: the cell is a full-width row of its own, so flex:1 would stretch it
+  // down the column and the button would drift away from the toggle.
+  legRowRightMobile: { flex: 0, alignSelf: 'stretch', alignItems: 'center' },
   searchCount: { color: colors.muted, marginLeft: spacing.xs },
   // THE ACTIVE HALF. Filled with the brand blue — the same colour the sidebar and
   // primary buttons use, so this reads as part of the app rather than a new idea.
@@ -1573,6 +1823,13 @@ const styles = StyleSheet.create({
   legLabelOff: { color: colors.textSecondary, fontFamily: font.medium },
 
   list: { padding: spacing.md, paddingBottom: 96 },
+  // ListHeaderComponent renders INSIDE the list's contentContainerStyle (`list`
+  // above), which now wraps padding: spacing.md around the header too — extra
+  // inset it never had as a sibling of the list. Every element inside the
+  // header already carries its own paddingHorizontal/paddingTop (dateBar,
+  // stats, searchRow…), so that padding is simply cancelled here rather than
+  // rewritten through half a dozen styles that are correct on their own.
+  listHeader: { marginHorizontal: -spacing.md, marginTop: -spacing.md },
   // A route heading: tinted band with a brand left rule, so the board reads as
   // groups of riders rather than one long undifferentiated list.
   sectionHeader: {
@@ -1595,6 +1852,26 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     marginBottom: spacing.sm,
   },
+  // One route, more than one departure — a lighter, unboxed rule so it reads as
+  // a division INSIDE the route's group rather than a group of its own (that
+  // weight is reserved for sectionHeader above, which is the thing a cab is
+  // actually filled from). No left rule, no tint: two visual languages this
+  // close together would compete rather than nest.
+  timeSubhead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
+    marginTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  // The first time-group in a section sits directly under sectionHeader's own
+  // bottom margin — a second rule there would double up against it.
+  timeSubheadFirst: { borderTopWidth: 0, marginTop: 0, paddingTop: 0 },
+  timeSubheadText: { color: colors.text, fontFamily: font.semibold },
+  timeSubheadCount: { color: colors.muted, marginLeft: 'auto' },
   sectionTitleWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1616,16 +1893,31 @@ const styles = StyleSheet.create({
   },
   cardSelected: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.primarySofter },
   cardRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  check: { marginRight: spacing.md, marginTop: 2 },
+  // A fixed-width SLOT, not the icon itself — an assigned ride leaves it empty
+  // (see renderRide) and every card in a group still starts its name at the
+  // same left edge. The widths match the icon sizes rendered inside them.
+  check: { width: 22, marginRight: spacing.md, marginTop: 2 },
   // Clear air between the tick and the name it belongs to, so a thumb aiming at
   // one doesn't obscure the other.
-  checkMobile: { marginRight: spacing.lg, marginTop: 1 },
+  checkMobile: { width: 26, marginRight: spacing.lg, marginTop: 1 },
   // EVERYTHING RIGHT OF THE TICK, and it must fill the card. Without flex: 1 this
   // View sizes to its own widest line — the address — so the card looks full width
   // while its contents end early, and the badges pinned "right" land against the
   // address instead of the card's edge. minWidth: 0 lets it shrink below that
   // content width too, so a long address wraps rather than widening the card.
   cardBody: { flex: 1, minWidth: 0 },
+  // The Cancel / Put back button now lives in the chips row at the top right of
+  // a card, so it has to read as a compact control beside two small chips rather
+  // than as a full-size button. Paper pulls the icon left by 16 (md3Icon's
+  // negative marginRight) expecting md3Label's 24, so marginLeft has to stay
+  // >= 16 or the icon is drawn through the first letter.
+  cardActionLabel: {
+    fontFamily: font.semibold,
+    fontSize: 12,
+    marginVertical: 0,
+    marginLeft: 22,
+    marginRight: 8,
+  },
   rowBetween: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1673,7 +1965,6 @@ const styles = StyleSheet.create({
   // card's full width.
   // Sits under the meta lines, pulled left so the text button lines up with them
   // rather than floating in the middle of the card.
-  deskCancelRow: { alignSelf: 'flex-start', marginTop: 2, marginLeft: -8 },
   cancelClosed: { color: colors.muted, marginLeft: spacing.sm, marginTop: spacing.xs },
   noRouteRow: {
     flexDirection: 'row',
@@ -1693,6 +1984,16 @@ const styles = StyleSheet.create({
   },
   emptyText: { color: colors.text, textAlign: 'center', fontFamily: font.semibold },
   emptyHint: { color: colors.muted, textAlign: 'center', lineHeight: 20 },
+  // "Show all N" beside "Clear search" — a row, so the escape from a filtered
+  // search and the escape from the search itself sit together.
+  emptyActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
 
   // Floats over the list, so it needs to read as a bar in front of the page and
   // not as the last row of it.
@@ -1715,6 +2016,15 @@ const styles = StyleSheet.create({
   dialog: { width: '100%', maxWidth: 500, alignSelf: 'center' },
   dialogBody: { paddingVertical: spacing.sm },
   dialogHint: { color: colors.muted, marginTop: spacing.md, lineHeight: 19 },
+  // Sits under a shift's radio row, indented past the radio itself so it reads
+  // as belonging to that shift rather than to the next one down.
+  shiftNote: {
+    color: colors.muted,
+    marginLeft: 52,
+    marginTop: -spacing.sm,
+    marginBottom: spacing.sm,
+    lineHeight: 17,
+  },
   dialogLabel: {
     marginTop: spacing.lg,
     marginBottom: spacing.xs,

@@ -19,14 +19,14 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
 import {
-  Text, Card, Button, Chip, Portal, Dialog, TextInput, Snackbar, Divider,
-  SegmentedButtons,
+  Text, Card, Button, Chip, Snackbar, Divider, SegmentedButtons,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import {
-  STATUS_STYLE, REQUEST_STATUS, REQUEST_TYPES, requestMeta,
+  STATUS_STYLE, REQUEST_STATUS, REQUEST_TYPES,
 } from '../../data/changeRequests';
+import { todayKey } from '../../utils/datetime';
 import { colors, font, radius, shadow, spacing } from '../../theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -43,82 +43,104 @@ function formatWhen(ts) {
 
 export default function ChangeRequestQueueScreen() {
   const {
-    changeRequests, myQueue, resolveChangeRequest, declineChangeRequest,
+    changeRequests, myQueue, resolveChangeRequest, declineChangeRequest, currentUser,
   } = useApp();
 
-  const [tab, setTab] = useState('pending'); // pending | all
-  const [acting, setActing] = useState(null); // { request, mode }
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  // HR/ADMIN DOES NOT GET REJECT — they approve, or they leave it for the
+  // coordinator. Hidden rather than disabled: a greyed button on every card
+  // reads as "you could do this", which is the opposite of what is meant.
+  //
+  // This is a UI decision only. `firestore.rules` still allows either desk role
+  // to reject (isDesk), and declineChangeRequest() still refuses anyone who
+  // isn't a desk role — so nothing here is a security boundary, and the
+  // coordinator's own Reject is untouched.
+  const canReject = currentUser?.role !== 'admin';
+
+  const [tab, setTab] = useState('today'); // today | upcoming | history
+  // WHICH ROW IS MID-WRITE, by id — not one screen-wide flag, so acting on one
+  // request doesn't grey out the buttons on every other card in the queue.
+  const [busyId, setBusyId] = useState(null);
   const [snack, setSnack] = useState('');
 
   const pending = useMemo(() => myQueue(), [myQueue]);
-  const data = tab === 'pending' ? pending : changeRequests;
 
-  function open(request, mode) {
-    setNote('');
-    setError('');
-    setActing({ request, mode });
-  }
+  // TODAY = the pending requests that need settling now. Anything still pending
+  // from an EARLIER date is in here too, not filed away as history — an overdue
+  // request is the most urgent thing on this screen, and a date-equality check
+  // would have hidden it the moment midnight passed.
+  const todayKeyStr = todayKey();
+  const todayPending = useMemo(
+    () => pending.filter((r) => String(r.date || '') <= todayKeyStr),
+    [pending, todayKeyStr]
+  );
 
-  async function confirm() {
-    const { request, mode } = acting;
-    setBusy(true);
+  // Pending, but for a day that hasn't arrived — leave booked a week out. These
+  // are NOT actionable today and would clutter the working list, but they must
+  // not become unreachable either: History only holds settled requests, so
+  // without this segment a future-dated request could be filed nowhere and
+  // silently never seen. The segment only appears when there is something in it.
+  const upcomingPending = useMemo(
+    () => pending.filter((r) => String(r.date || '') > todayKeyStr),
+    [pending, todayKeyStr]
+  );
+
+  // HISTORY = settled only (Resolved / Rejected). Deliberately excludes anything
+  // still pending, so it reads as a record of decisions rather than a second
+  // to-do list.
+  const history = useMemo(
+    () => (changeRequests || []).filter((r) => r.status !== REQUEST_STATUS.PENDING),
+    [changeRequests]
+  );
+
+  const data = tab === 'today' ? todayPending : tab === 'upcoming' ? upcomingPending : history;
+
+  // BOTH BUTTONS ACT IMMEDIATELY — no confirmation step and no note.
+  //
+  // There used to be one dialog serving both, and for a rejection it REQUIRED a
+  // typed reason before the confirm button would enable. Removed at request.
+  //
+  // What that gives up, said plainly rather than discovered later: the employee
+  // is still notified either way, but a rejection now reaches them with no
+  // reason attached, and neither action gets a second look before it commits —
+  // resolving a Leave cancels every cab that person has that day and recodes the
+  // roster to L. Both are reversible by other means (the roster can be re-coded,
+  // a desk-cancelled ride has Put back on the day board), which is what makes
+  // one-tap defensible here. `resolveChangeRequest` and `declineChangeRequest`
+  // both still accept a note, so restoring the prompt is a UI change only.
+  async function act(request, mode) {
+    if (busyId) return;
+    setBusyId(request.id);
     const res =
       mode === 'resolve'
-        ? await resolveChangeRequest(request, { note })
-        : await declineChangeRequest(request, note);
-    setBusy(false);
+        ? await resolveChangeRequest(request, {})
+        : await declineChangeRequest(request, '');
+    setBusyId(null);
     if (res?.ok) {
-      setActing(null);
       setSnack(
         mode === 'resolve'
           ? `${res.outcome || 'Resolved'} — the employee has been notified.`
           : 'Rejected — the employee has been notified.'
       );
     } else {
-      setError(res?.message || 'Could not update that request.');
+      // The snackbar is the only error channel now that there is no dialog to
+      // hold one, so a refusal still gets said out loud.
+      setSnack(res?.message || 'Could not update that request.');
     }
   }
 
-  // What the primary button does for this type, in the desk's language.
+  // THE BUTTON'S LABEL — one word.
   //
-  // The ABSENT branches here and in consequence() below are for a RETIRED type —
-  // employees can't raise it any more, but requests already in Firestore (including
-  // any still Pending when it was retired) come through this queue and must still
-  // read correctly. Don't tidy them away.
-  function actionLabel(request) {
-    const meta = requestMeta(request.type);
-    switch (request.type) {
-      case REQUEST_TYPES.LEAVE:
-        return 'Cancel day & mark Leave';
-      case REQUEST_TYPES.ABSENT:
-        return "Cancel today's cabs";
-      case REQUEST_TYPES.CANCEL_RIDE:
-        return 'Release the seat';
-      case REQUEST_TYPES.SHIFT_CHANGED:
-        return `Set roster to ${request.requestedShiftCode || 'the new shift'}`;
-      default:
-        return meta?.label || 'Resolve';
-    }
+  // The card used to carry the full sentence ("Cancel day & mark Leave"), which
+  // made a full-width button out of a one-word decision and pushed Reject onto
+  // its own line. The long forms (actionLabel/consequence) were only ever read
+  // by the confirmation dialog and went with it.
+  //
+  // SHIFT_CHANGED keeps its own word. It re-codes the roster day rather than
+  // cancelling anything, so labelling it "Cancel" would be plainly wrong.
+  function actionLabelShort(request) {
+    return request.type === REQUEST_TYPES.SHIFT_CHANGED ? 'Approve' : 'Cancel';
   }
 
-  // What resolving actually does, spelled out so nobody clicks it blind.
-  function consequence(request) {
-    switch (request.type) {
-      case REQUEST_TYPES.LEAVE:
-        return `Every cab for ${request.employeeName} on ${prettyDate(request.date)} is cancelled, and the roster day becomes L (Leave) so it stops generating rides.`;
-      case REQUEST_TYPES.ABSENT:
-        return `Every cab for ${request.employeeName} on ${prettyDate(request.date)} is cancelled. The roster is left as it is.`;
-      case REQUEST_TYPES.CANCEL_RIDE:
-        return 'That one ride is cancelled and the seat is released for someone else.';
-      case REQUEST_TYPES.SHIFT_CHANGED:
-        return `The roster day becomes ${request.requestedShiftCode}, so the rides regenerate at that shift's times. Any cab already assigned at the old time is cancelled.`;
-      default:
-        return '';
-    }
-  }
 
   function renderRequest({ item }) {
     const st = STATUS_STYLE[item.status] || STATUS_STYLE[REQUEST_STATUS.PENDING];
@@ -180,20 +202,25 @@ export default function ChangeRequestQueueScreen() {
                   mode="contained"
                   compact
                   icon="check"
-                  onPress={() => open(item, 'resolve')}
+                  onPress={() => act(item, 'resolve')}
+                  loading={busyId === item.id}
+                  disabled={!!busyId}
                   style={styles.primaryAction}
                 >
-                  {actionLabel(item)}
+                  {actionLabelShort(item)}
                 </Button>
-                <Button
-                  mode="outlined"
-                  compact
-                  textColor={colors.danger}
-                  onPress={() => open(item, 'reject')}
-                  style={styles.rejectBtn}
-                >
-                  Reject
-                </Button>
+                {canReject ? (
+                  <Button
+                    mode="outlined"
+                    compact
+                    textColor={colors.danger}
+                    onPress={() => act(item, 'reject')}
+                    disabled={!!busyId}
+                    style={styles.rejectBtn}
+                  >
+                    Reject
+                  </Button>
+                ) : null}
               </View>
             </>
           ) : null}
@@ -215,14 +242,21 @@ export default function ChangeRequestQueueScreen() {
           coordinator share this queue, so whoever gets to it first settles it.
         </Text>
 
+        {/* Today = what to settle now. History = decisions already made, not a
+            second to-do list. "Upcoming" only appears when a pending request is
+            dated in the future — without it those would belong to no tab at all,
+            since History holds settled requests only. */}
         <SegmentedButtons
           value={tab}
           onValueChange={setTab}
           density="small"
           style={styles.tabs}
           buttons={[
-            { value: 'pending', label: `For me (${pending.length})` },
-            { value: 'all', label: 'All requests' },
+            { value: 'today', label: `Today (${todayPending.length})` },
+            ...(upcomingPending.length
+              ? [{ value: 'upcoming', label: `Upcoming (${upcomingPending.length})` }]
+              : []),
+            { value: 'history', label: 'History' },
           ]}
         />
 
@@ -235,60 +269,22 @@ export default function ChangeRequestQueueScreen() {
             <View style={styles.empty}>
               <MaterialCommunityIcons name="check-circle-outline" size={44} color={colors.muted} />
               <Text variant="bodyMedium" style={styles.emptyText}>
-                {tab === 'pending' ? 'Nothing waiting on you.' : 'No requests yet.'}
+                {tab === 'today'
+                  ? 'Nothing to settle today.'
+                  : tab === 'upcoming'
+                  ? 'Nothing raised for a later date.'
+                  : 'No request has been settled yet.'}
               </Text>
             </View>
           }
         />
       </View>
 
-      <Portal>
-        <Dialog visible={!!acting} onDismiss={() => !busy && setActing(null)} style={styles.dialog}>
-          <Dialog.Title>
-            {acting?.mode === 'resolve' ? actionLabel(acting.request) : 'Reject this request?'}
-          </Dialog.Title>
-          <Dialog.Content>
-            {acting?.mode === 'resolve' ? (
-              <Text variant="bodyMedium" style={styles.dialogText}>
-                {consequence(acting.request)}
-              </Text>
-            ) : (
-              <Text variant="bodyMedium" style={styles.dialogText}>
-                Nothing changes on the roster or the rides. {acting?.request?.employeeName} is
-                notified, so give them a reason.
-              </Text>
-            )}
-            <TextInput
-              label={acting?.mode === 'reject' ? 'Reason (shown to the employee)' : 'Note (optional)'}
-              value={note}
-              onChangeText={setNote}
-              mode="outlined"
-              multiline
-              numberOfLines={2}
-              style={styles.noteInput}
-            />
-            {error ? (
-              <Text variant="bodySmall" style={styles.dialogError}>
-                {error}
-              </Text>
-            ) : null}
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setActing(null)} disabled={busy}>
-              Cancel
-            </Button>
-            <Button
-              mode="contained"
-              buttonColor={acting?.mode === 'reject' ? colors.danger : undefined}
-              onPress={confirm}
-              loading={busy}
-              disabled={busy || (acting?.mode === 'reject' && !note.trim())}
-            >
-              Confirm
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
+      {/* No confirmation dialog. It served both buttons and made a rejection
+          type a reason first; both act on the tap now — see act() above for what
+          that trades away. actionLabel()/consequence() were only ever read by
+          that dialog and went with it; the button's own short label lives in
+          actionLabelShort(). */}
 
       <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={4000}>
         {snack}
@@ -347,12 +343,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     alignItems: 'center',
   },
-  primaryAction: { borderRadius: radius.md, flexGrow: 1 },
+  // flexGrow: 0 — it holds one short word now, so it sizes to that instead of
+  // stretching across the card. With the long label it had to grow, which is
+  // what shoved Reject onto a line of its own; the two now sit side by side.
+  primaryAction: { borderRadius: radius.md, flexGrow: 0 },
   rejectBtn: { borderRadius: radius.md, borderColor: colors.danger },
   empty: { alignItems: 'center', marginTop: 56, gap: spacing.sm },
   emptyText: { color: colors.muted },
-  dialog: { width: '100%', maxWidth: 500, alignSelf: 'center' },
-  dialogText: { lineHeight: 21, marginBottom: spacing.md, color: colors.textSecondary },
-  noteInput: { marginTop: spacing.xs, backgroundColor: colors.surface },
-  dialogError: { color: colors.danger, marginTop: spacing.sm },
 });

@@ -105,13 +105,30 @@ export function hoursUntil(dateKey, timeStr) {
   return (rideAt.getTime() - Date.now()) / (1000 * 60 * 60);
 }
 
+// THE CALENDAR DAY A RIDE'S CAB ACTUALLY MOVES — the only date to pair with
+// `shift` when turning a ride into an instant.
+//
+// `date` is the OPERATIONAL day (the board the ride is worked from) and since
+// Aug 2026 an overnight drop is listed with its own shift, so the two differ:
+// an E2 worked on the 26th has date 2026-08-26 and departs 02:30 on the 27th.
+// Parsing "02:30 AM" against the 26th lands 24 hours early, which reads as long
+// past — cancellation would close before it opened and the row would show
+// Overdue the moment it appeared.
+//
+// Falls back to `date` so bookings written before the field existed keep
+// working: under the old rule `date` WAS the depart date, so the fallback is
+// exactly right for them.
+export function departDateOf(booking) {
+  return booking?.departDate || booking?.date || null;
+}
+
 // True if a booking's full scheduled date+time is in the past (device-local
 // time). This marks a ride as OVERDUE — it does NOT close assignment. The desk
 // may give a cab to a ride whose slot has passed (that is the case they are most
 // often racing), so callers use this to flag and sort, never to disable.
 export function isBookingPast(booking) {
   if (!booking) return false;
-  return isPastDateTime(booking.date, booking.shift);
+  return isPastDateTime(departDateOf(booking), booking.shift);
 }
 
 // True if a ride is far enough away to still be cancellable (default: at least

@@ -114,7 +114,7 @@ import { firestore } from '../services/firebase';
 import { SUPPORT_HELPLINE } from '../branding';
 import {
   toDateTime, canRequestCancel, todayKey, shiftDateKey,
-  cancelDeadline,
+  cancelDeadline, departDateOf,
 } from '../utils/datetime';
 
 const AppContext = createContext(null);
@@ -1192,7 +1192,10 @@ export function AppProvider({ children }) {
     // stored `date`/`shift` strings can't be compared there. It no longer gates the
     // desk's cab assignment: that check was removed so a late ride can still be
     // covered (see assignCab below and `validDeskBooking` in firestore.rules).
-    const departAt = toDateTime(data.date, data.shift); // Date → Firestore Timestamp
+    // departDateOf, not data.date: identical for an ad-hoc booking (the employee
+    // picks the date the cab runs, so there is no second date) but it keeps every
+    // departAt in the app derived the same way.
+    const departAt = toDateTime(departDateOf(data), data.shift); // Date → Firestore Timestamp
     return {
       employeeId: currentUser.uid,
       employeeName: currentUser.name,
@@ -1376,7 +1379,7 @@ export function AppProvider({ children }) {
     if (b.assignedCabId) {
       return 'A cab has already been assigned to this ride. Use Trip Cancel to request a cancellation.';
     }
-    if (!canRequestCancel(b.date, b.shift, CANCEL_CUTOFF_HOURS)) {
+    if (!canRequestCancel(departDateOf(b), b.shift, CANCEL_CUTOFF_HOURS)) {
       return `Rides can only be changed here up to ${CANCEL_CUTOFF_HOURS} hours before pickup. Use Trip Cancel to request a cancellation.`;
     }
     return null;
@@ -1386,7 +1389,7 @@ export function AppProvider({ children }) {
   // the Trip Cancel screen enforces). The ride stays active until the admin acts.
   async function requestCancel(bookingId, reason) {
     const b = bookings.find((x) => x.id === bookingId);
-    if (b && !canRequestCancel(b.date, b.shift, CANCEL_CUTOFF_HOURS)) {
+    if (b && !canRequestCancel(departDateOf(b), b.shift, CANCEL_CUTOFF_HOURS)) {
       return {
         ok: false,
         message: `Cancellation closed — requests must be raised at least ${CANCEL_CUTOFF_HOURS} hours before pickup. Please call the transport desk.`,
@@ -1417,7 +1420,9 @@ export function AppProvider({ children }) {
   // Parameterised rather than duplicated: one definition of "already under way",
   // "already cancelled" and "deadline passed", with only the number differing.
   function rideCancelState(booking, cutoffHours = CANCEL_CUTOFF_HOURS) {
-    const deadline = booking ? cancelDeadline(booking.date, booking.shift, cutoffHours) : null;
+    const deadline = booking
+      ? cancelDeadline(departDateOf(booking), booking.shift, cutoffHours)
+      : null;
     const base = { canCancel: false, deadline, reason: '' };
     if (!booking) return { ...base, reason: 'That ride no longer exists.' };
     if (booking.status === STATUS.CANCELLED) {
@@ -1430,7 +1435,7 @@ export function AppProvider({ children }) {
     ].includes(booking.status)) {
       return { ...base, reason: 'This ride is already under way, so it can no longer be cancelled.' };
     }
-    if (!canRequestCancel(booking.date, booking.shift, cutoffHours)) {
+    if (!canRequestCancel(departDateOf(booking), booking.shift, cutoffHours)) {
       return {
         ...base,
         reason: 'Cancellation is no longer available. The cancellation deadline has passed.',
@@ -1543,7 +1548,7 @@ export function AppProvider({ children }) {
     // SERVER's clock, which is the only check a wound-back device can't get past.
     // `target` is a booking when one exists and the derived ride when it doesn't —
     // both carry `date` and `shift`, which is all the deadline needs.
-    if (!canRequestCancel(target.date, target.shift, DESK_CANCEL_CUTOFF_HOURS)) {
+    if (!canRequestCancel(departDateOf(target), target.shift, DESK_CANCEL_CUTOFF_HOURS)) {
       return {
         ok: false,
         message:
@@ -1567,7 +1572,7 @@ export function AppProvider({ children }) {
         // Same departAt as the assign path uses (line ~2344), so a desk-cancelled
         // ride carries the same absolute timestamp the rules and reports read.
         await createDeskCancelledBooking(
-          bookingFromRide(ride, toDateTime(ride.date, ride.shift)),
+          bookingFromRide(ride, toDateTime(ride.departDate || ride.date, ride.shift)),
           audit
         );
       }
@@ -2691,7 +2696,12 @@ export function AppProvider({ children }) {
         dateKey,
         [...monthRosters, ...prevMonthRosters],
         shiftPolicy,
-        bookings
+        bookings,
+        // A ride the DESK cancelled stays on the board, as a card showing
+        // Cancelled with a Put back button, rather than vanishing into a banner
+        // above it. A rider's own cancellation is still dropped — it cannot be
+        // put back, and employeeCancellationsOn() reports it with their reason.
+        { keepDeskCancelled: true }
       ),
       changeRequests
     );
@@ -2758,7 +2768,7 @@ export function AppProvider({ children }) {
       // the cab's seat count already spent on the ones that landed.
       const created = await createAssignedBookings(
         fresh.map((ride) => ({
-          ...bookingFromRide(ride, toDateTime(ride.date, ride.shift)),
+          ...bookingFromRide(ride, toDateTime(ride.departDate || ride.date, ride.shift)),
           assignedCabId: cabId,
           status: STATUS.ASSIGNED,
         })),
@@ -2848,6 +2858,30 @@ export function AppProvider({ children }) {
     const { note, code } = opts;
     const actor = { uid: currentUser.uid, name: currentUser.name, email: currentUser.email };
     const meta = requestMeta(req.type);
+
+    // WHICH RIDES THIS IS ABOUT — captured BEFORE resolving, because resolving is
+    // what destroys the answer: a Leave recodes the roster day to `L`, and from
+    // that instant the deriver produces nothing for this person and there is no
+    // way to ask what they were down to travel on.
+    //
+    // Needed because most requests are settled before any cab is assigned, so
+    // there is no booking document to mark cancelled — and with the roster
+    // recoded, nothing is left anywhere saying the ride existed. The board's
+    // count just dropped by one. So a cancelled booking is created per affected
+    // ride, exactly as the desk's own Cancel does for an unassigned ride
+    // (createDeskCancelledBooking, used in deskCancelRide above).
+    const cancelsRides =
+      meta?.effect === EFFECT.CANCEL_DAY || meta?.effect === EFFECT.CANCEL_RIDE;
+    const affectedRides = cancelsRides
+      ? ridesOn(req.date).filter(
+          (r) =>
+            r.employeeId === req.employeeId &&
+            r.status !== STATUS.CANCELLED &&
+            // CANCEL_RIDE is one leg; CANCEL_DAY is everything that day.
+            (meta.effect === EFFECT.CANCEL_DAY || !req.rideKey || r.key === req.rideKey)
+        )
+      : [];
+
     try {
       // Three effects, all of which either stop a ride or move the day to another
       // shift code. Nothing here can create a ride.
@@ -2868,6 +2902,33 @@ export function AppProvider({ children }) {
         // it in the queue for ever.
         await resolveNoop(req, { actor, note, status: REQUEST_STATUS.RESOLVED });
       }
+
+      // AFTER the resolution has committed, and only for rides that had no
+      // document of their own — the ones the service could not mark, because
+      // there was nothing to mark. This is what leaves the ride on the board as
+      // Cancelled instead of removing it from the day.
+      //
+      // BEST EFFORT, deliberately: the request is already resolved and the
+      // employee is about to be told so. `validDeskCancelledCreate()` in the
+      // rules applies its own 30-minute window, so a ride inside that window is
+      // refused here — which must not turn a settled request into an error. A
+      // failure costs the board a row, not correctness.
+      await Promise.all(
+        affectedRides
+          .filter((r) => !r.bookingId)
+          .map((r) =>
+            createDeskCancelledBooking(
+              bookingFromRide(r, toDateTime(r.departDate || r.date, r.shift)),
+              {
+                reason: req.reason || req.typeLabel || '',
+                uid: currentUser.uid,
+                role: currentUser.role,
+              }
+            ).catch((e) =>
+              console.warn('[requests] could not record the cancelled ride:', e?.message)
+            )
+          )
+      );
 
       const msg = requestResolvedMessage(req, outcome, note);
       notify({

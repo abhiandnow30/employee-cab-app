@@ -96,7 +96,7 @@ export const ADMIN_DRAWER_ITEMS = [
   // The coordinator keeps the same queue on their own menu; both roles read one
   // shared list (pendingForDesk) rather than two half-lists, so a request can't be
   // decided twice or sit unseen because each desk assumed the other had it.
-  { label: 'Ride Change Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
+  { label: 'Ride Cancel Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
   { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
   // People who signed in with their company account but were never entered by
   // HR, so they have no address or route and no cab can be sent for them. HR
@@ -134,7 +134,7 @@ export const ADMIN_DRAWER_ITEMS = [
 // records.
 export const COORDINATOR_DRAWER_ITEMS = [
   { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
-  { label: 'Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
+  { label: 'Ride Cancel Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
   // The coordinator is who knows which route an address is on, so they triage
   // these even though HR does the approving.
   { label: 'New Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
