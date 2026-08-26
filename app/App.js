@@ -56,6 +56,7 @@ import ShiftPolicyScreen from './src/screens/admin/ShiftPolicyScreen';
 import ReportsScreen from './src/screens/admin/ReportsScreen';
 import CoordinatorDashboardScreen from './src/screens/coordinator/CoordinatorDashboardScreen';
 import RequestsScreen from './src/screens/coordinator/RequestsScreen';
+import ChangeRequestQueueScreen from './src/screens/coordinator/ChangeRequestQueueScreen';
 import ChangeRequestScreen from './src/screens/employee/ChangeRequestScreen';
 import NotificationsScreen from './src/screens/employee/NotificationsScreen';
 import CabServiceRequestScreen from './src/screens/employee/CabServiceRequestScreen';
@@ -777,6 +778,26 @@ function RootNavigator() {
                   name="AddressRequests"
                   component={AddressChangeRequestsScreen}
                   options={{ title: 'Address Change Requests' }}
+                />
+                {/* RIDE CHANGE REQUESTS, NOW ON HR'S DESK TOO (requested Aug 2026).
+                    Leave / cancel one ride / shift changed used to be the
+                    coordinator's alone. HR asked for the plain approval flow —
+                    employee requests, admin approves or rejects, the cab is
+                    cancelled — so the same queue is registered here.
+
+                    ChangeRequestQueueScreen directly, NOT the coordinator's
+                    RequestsScreen: that one is a tab shell pairing this queue
+                    with Cancelled Rides, and HR already has Cancelled Rides as
+                    its own menu entry. Same route name as the coordinator's, so
+                    /requests and the menu badge work for both without a second
+                    linking entry. Routing is untouched — every request is still
+                    written routedTo 'coordinator'; both desks simply read one
+                    queue now (see pendingForDesk), and the rules already allowed
+                    either of them to resolve it. */}
+                <Stack.Screen
+                  name="Requests"
+                  component={ChangeRequestQueueScreen}
+                  options={{ title: 'Ride Change Requests' }}
                 />
                 <Stack.Screen
                   name="FeedbackInbox"

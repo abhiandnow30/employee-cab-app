@@ -273,4 +273,22 @@ export function pendingFor(requests, role) {
   );
 }
 
+// EVERY OPEN REQUEST, FOR EITHER DESK ROLE.
+//
+// pendingFor() above matches `routedTo` exactly, which is correct for "is this
+// addressed to me" and wrong for "what is outstanding". Every request is written
+// with routedTo 'coordinator' — the client sets it and correctlyRouted() in
+// firestore.rules pins it — so an exact match returns NOTHING for an admin, and
+// HR opening the queue would see an empty screen with requests sitting in it.
+//
+// Requested change (Aug 2026): HR wants to receive and decide these too, so both
+// desk roles now work the same queue. Nothing about ROUTING changed — the field
+// stays 'coordinator' and the rules stay as they are; this widens who LOOKS at
+// it, which the rules already allowed (`allow update: if isDesk()`). The two
+// roles seeing one list, rather than two half-lists, is also what stops a
+// request being resolved twice.
+export function pendingForDesk(requests) {
+  return (requests || []).filter((r) => r.status === REQUEST_STATUS.PENDING);
+}
+
 export { requestLabel, REQUEST_TYPES, REQUEST_STATUS, EFFECT, ROUTE_TO };

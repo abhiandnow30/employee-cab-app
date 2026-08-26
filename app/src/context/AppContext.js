@@ -98,7 +98,7 @@ import { groupRuns, activeRun, idsToMarkOnTheWay } from '../services/driverRun';
 import {
   createChangeRequest, subscribeMyChangeRequests, subscribeAllChangeRequests,
   resolveCancelDay, resolveCancelRide, resolveRecode, resolveNoop,
-  rejectRequest, findOpenRequest, pendingFor,
+  rejectRequest, findOpenRequest, pendingForDesk,
 } from '../services/changeRequests';
 import {
   notify, notifyMany, subscribeMyNotifications, markRead, markAllRead,
@@ -2828,10 +2828,15 @@ export function AppProvider({ children }) {
     }
   }
 
-  // The queue for whichever desk the signed-in user is.
+  // The open queue, shared by BOTH desk roles.
+  //
+  // It used to be pendingFor(changeRequests, currentUser.role) — an exact match
+  // on routedTo, which is 'coordinator' on every request there is. Correct while
+  // the coordinator was the only one looking; it returned an empty list the
+  // moment HR was given the screen. See pendingForDesk().
   function myQueue() {
     if (!isDeskRole(currentUser?.role)) return [];
-    return pendingFor(changeRequests, currentUser.role);
+    return pendingForDesk(changeRequests);
   }
 
   // Resolve a request: carry out its effect AND stamp it, in one batch. Tells the
@@ -2910,7 +2915,7 @@ export function AppProvider({ children }) {
     ? {
         AddressRequests: addressRequests.filter((r) => r.status === ADDRESS_STATUS.PENDING)
           .length,
-        Requests: pendingFor(changeRequests, currentUser.role).length,
+        Requests: pendingForDesk(changeRequests).length,
         // Somebody is signed in and cannot be sent a cab until this is dealt
         // with, so it badges for both desk roles.
         CabRequests: cabServiceRequests.filter(

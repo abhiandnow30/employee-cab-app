@@ -83,11 +83,20 @@ export const ADMIN_DRAWER_ITEMS = [
   // Add Employee: a coordinator is an account but not a rider, so none of the
   // rider fields on that form apply to them.
   { label: 'Coordinators', icon: 'headset', screen: 'ManageCoordinators' },
-  // No "Exception Approvals" here. Nothing routes to HR any more: the company runs
-  // two scheduled rides and nothing else, so the requests that needed HR's
-  // sign-off (a cab after an extended shift, an emergency ride) no longer exist.
-  // What remains — leave, absent, drop a ride, shift changed — only ever cancels or
-  // re-codes a ride, which is the coordinator's job as they run the day.
+  // RIDE CHANGE REQUESTS — leave, drop one ride, shift changed. On HR's menu at
+  // explicit request (Aug 2026): the desired flow is the plain one, employee asks
+  // to cancel a cab → admin approves or rejects → the cab is cancelled.
+  //
+  // This reverses "nothing routes to HR any more", which is why that note used to
+  // sit here. That reasoning still holds for what was REMOVED — there is no cab
+  // after an extended shift and no emergency ride, because nothing outside the
+  // roster can be granted — but it never applied to these three, which only ever
+  // cancel or re-code a ride the roster already produces.
+  //
+  // The coordinator keeps the same queue on their own menu; both roles read one
+  // shared list (pendingForDesk) rather than two half-lists, so a request can't be
+  // decided twice or sit unseen because each desk assumed the other had it.
+  { label: 'Ride Change Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
   { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
   // People who signed in with their company account but were never entered by
   // HR, so they have no address or route and no cab can be sent for them. HR

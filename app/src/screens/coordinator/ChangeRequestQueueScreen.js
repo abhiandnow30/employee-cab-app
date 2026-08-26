@@ -205,8 +205,14 @@ export default function ChangeRequestQueueScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.col}>
+        {/* Wording is role-neutral on purpose: HR and the coordinator both work
+            this queue now, and the old line ("you resolve these yourself — no
+            approval needed") described a division of labour that no longer
+            holds. Saying the list is shared is the part that matters — either
+            desk deciding a request settles it for both. */}
         <Text variant="bodySmall" style={styles.hint}>
-          Exceptions to today's roster. You resolve these yourself — no approval needed.
+          Exceptions to today's roster — approve or reject each one. HR and the
+          coordinator share this queue, so whoever gets to it first settles it.
         </Text>
 
         <SegmentedButtons
