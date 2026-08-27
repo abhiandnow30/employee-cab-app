@@ -1,14 +1,17 @@
 // ---------------------------------------------------------------------------
 // FEEDBACK SERVICE
-// Writes employee feedback and ratings to Firestore ("feedback" / "ratings").
+// Writes employee ratings to Firestore ("ratings"), and reads both the ratings
+// and the older "feedback" collection back for the admin inbox.
+//
+// THERE IS NO addFeedbackDoc ANY MORE. The employee-side feedback form (category
+// + free-text message) was removed in Aug 2026, so nothing writes to "feedback"
+// — Rate Us, which writes "ratings", is the one employees have. The subscription
+// below stays because the documents already in "feedback" are real submissions
+// and the admin inbox is the only way anyone can still read them.
 // ---------------------------------------------------------------------------
 
 import { collection, addDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { firestore } from './firebase';
-
-export async function addFeedbackDoc(data) {
-  return addDoc(collection(firestore, 'feedback'), { ...data, createdAt: serverTimestamp() });
-}
 
 export async function addRatingDoc(data) {
   return addDoc(collection(firestore, 'ratings'), { ...data, createdAt: serverTimestamp() });

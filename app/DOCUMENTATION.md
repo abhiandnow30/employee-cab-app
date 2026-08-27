@@ -42,7 +42,7 @@ Role is stored on the user's Firestore profile (`employees/<uid>.role`).
 
 | Role | Who | What they do |
 |---|---|---|
-| **employee** | Staff who need rides | Book weekly (roster) or one-time (adhoc) rides, track their cab, request cancellations, give feedback |
+| **employee** | Staff who need rides | View the rides their roster generates, track their cab, raise change requests (leave / cancel one ride / shift changed), rate the service |
 | **admin** | Transport desk | See all bookings, assign cabs (carpool), manage cabs/drivers, set employee shift rosters |
 | **driver** | Cab drivers | See assigned trips, advance trip status, flag no-shows, share live GPS |
 
@@ -119,7 +119,7 @@ Which screens each role sees is decided in [App.js](App.js) (`RootNavigator`).
 
 ### Other collections
 - **`cabs/<id>`** — fleet: `{ cabNumber, driverName, driverPhone }`
-- **`feedback/<id>`** — `{ employeeId, employeeName, category, message, createdAt }`
+- **`feedback/<id>`** — `{ employeeId, employeeName, category, message, createdAt }` — **history only.** The employee form that wrote these was removed Aug 2026; nothing creates new ones. Existing docs are still read by the admin inbox.
 - **`ratings/<id>`** — `{ employeeId, employeeName, stars, comment, createdAt }`
 - **Realtime DB `cabs/<id>/location`** — `{ latitude, longitude, ts }` (live cab GPS)
 
@@ -144,15 +144,13 @@ Status colors are defined in [src/theme.js](src/theme.js) (`statusColors`).
 ### Employee
 | Screen | File | Purpose |
 |---|---|---|
-| Home | [EmployeeHomeScreen.js](src/screens/employee/EmployeeHomeScreen.js) | Tiles (Weekly Schedule / Book a Ride / Feedback) + lists of scheduled & one-time rides |
+| Home | [EmployeeHomeScreen.js](src/screens/employee/EmployeeHomeScreen.js) | Tiles only (My Shift Calendar / Cancel a Ride / Shift Changed). The two exception tiles open [ChangeRequestScreen.js](src/screens/employee/ChangeRequestScreen.js) with that type preselected. No ride list — My Rides covers it |
 | Weekly Schedule | [SelfRosterScreen.js](src/screens/employee/SelfRosterScreen.js) | Book cabs for a whole week (Mon–Sun). **Only rostered working days are bookable**; non-working days show "Not a working day" |
 | Book a Ride (Adhoc) | [BookCabScreen.js](src/screens/employee/BookCabScreen.js) | One-time request; enforces the booking lead-time rule |
-| My Rides | [MyRidesScreen.js](src/screens/employee/MyRidesScreen.js) | The employee's bookings with status + assigned cab |
-| Ride History | [RosterHistoryScreen.js](src/screens/employee/RosterHistoryScreen.js) | Read-only list of all bookings (incl. cancelled) |
+| My Rides | [MyRidesScreen.js](src/screens/employee/MyRidesScreen.js) | Every booking, split Upcoming / Past: status, assigned cab + driver, ride start code, cancel (within the cutoff) and why it can't be cancelled. Absorbed the old Ride History screen (Aug 2026) — it read the same `myBookings()` with strictly less on it |
 | Trip Cancel | [TripCancelScreen.js](src/screens/employee/TripCancelScreen.js) | Request a cancellation (subject to the cancel cutoff); admin approves |
 | Track Cab | [TrackCabScreen.js](src/screens/employee/TrackCabScreen.js) | Live map of the assigned cab, ETA + distance |
 | Profile | [ProfileScreen.js](src/screens/employee/ProfileScreen.js) | Edit name/ID/phone; set pickup location on a map |
-| Feedback | [FeedbackScreen.js](src/screens/employee/FeedbackScreen.js) | Category + message |
 | Rate Us | [RateUsScreen.js](src/screens/employee/RateUsScreen.js) | 1–5 stars + comment |
 | Contact Us | [ContactUsScreen.js](src/screens/employee/ContactUsScreen.js) | Transport-desk phone; tap to call |
 
@@ -227,7 +225,7 @@ menu on phones, a permanent sidebar on wide screens.
   `updateBookingStatus`, `markNoShow`, `myBookings`, `myActiveBookings`
 - **Cabs:** `createCab`, `editCab`, `deleteCab`, `loadDefaultCabs`, `getCabById`
 - **Profile:** `saveHomeLocation`, `saveProfileDetails`
-- **Feedback:** `addFeedback`, `addRating`
+- **Ratings:** `addRating`  (the employee feedback form was removed Aug 2026; the `feedback` collection is now read-only history in the admin inbox)
 
 ### Services
 | File | Responsibility |
@@ -236,7 +234,7 @@ menu on phones, a permanent sidebar on wide screens.
 | [profile.js](src/services/profile.js) | Firestore profiles: get/create, live profile, subscribe drivers/employees, assign cab to driver, **update employee roster** |
 | [bookings.js](src/services/bookings.js) | Firestore bookings: create, subscribe (mine/all/by-cab), assign cab(s), set status, **mark no-show**, cancel request/resolve |
 | [cabs.js](src/services/cabs.js) | Firestore cabs CRUD + seed starter fleet |
-| [feedback.js](src/services/feedback.js) | Write feedback & ratings docs |
+| [feedback.js](src/services/feedback.js) | Write rating docs; subscribe to ratings + the historical feedback collection for the admin inbox |
 | [tracking.js](src/services/tracking.js) | Realtime DB: push/subscribe cab location |
 | [directions.js](src/services/directions.js) | Distance, route, ETA (OSRM + fallback) |
 | [geocode.js](src/services/geocode.js) | Address search + reverse geocode (Nominatim) |

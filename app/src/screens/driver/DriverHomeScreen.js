@@ -28,7 +28,7 @@
 // leaves the rider watching a map with no cab on it.
 //
 // WHAT THIS SCREEN CANNOT DO, BY DESIGN: reach "On board" without the rider's
-// six-digit code. That check lives in firestore.rules against a document this
+// rider’s code. That check lives in firestore.rules against a document this
 // app cannot read, so there is nothing here to work around — and "Completed" is
 // only reachable from "On board", which is what stops a trip being marked
 // finished for someone who never got in.

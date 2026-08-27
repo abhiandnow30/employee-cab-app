@@ -62,7 +62,7 @@ import {
   cancelAssignedBooking,
   deskCancelBooking,
   createDeskCancelledBooking,
-  restoreDeskCancelledBooking,
+  restoreDeskCancelledBooking, hideCancelledFromLog, unhideCancelledFromLog,
   subscribeMyBookings,
   subscribeAllBookings,
   subscribeCabBookings,
@@ -71,7 +71,7 @@ import {
   syncEmployeeAddress,
   stampBookingEmpIds,
 } from '../services/bookings';
-import { addFeedbackDoc, addRatingDoc } from '../services/feedback';
+import { addRatingDoc } from '../services/feedback';
 import {
   updateMyLocation, clearMyLocation, claimLocationNode, releaseLocationNode,
   LIVE_WINDOW_MS,
@@ -1689,6 +1689,62 @@ export function AppProvider({ children }) {
     return { ok: true };
   }
 
+  // Hide cancelled rows from the Cancelled Rides list. HR-only, because it is
+  // housekeeping on an HR screen — the coordinator's copy of the same list is
+  // part of running the day and should not be tidied out from under them.
+  //
+  // A DISPLAY FLAG, NOT A DELETE. Nothing about the ride changes: it stays
+  // Cancelled, stays off the board, keeps its audit trail and still counts in
+  // Reports. See hideCancelledFromLog in services/bookings.js for why deleting
+  // the bookings instead would put every one of these riders back on the
+  // coordinator's board as an active ride.
+  //
+  // No notification: nothing happened to the rider's ride, so telling them
+  // would be announcing an event that does not exist.
+  async function hideCancelledRides(ids) {
+    if (currentUser?.role !== 'admin') {
+      return { ok: false, message: 'Only HR/Admin can tidy this list.' };
+    }
+    const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+    if (!list.length) return { ok: false, message: 'Nothing to clear.' };
+    // One at a time rather than a batch: a single row that refuses must not take
+    // the other eleven down with it, and the count reported back is then the
+    // number that actually moved.
+    let hidden = 0;
+    let lastError = null;
+    for (const id of list) {
+      try {
+        await hideCancelledFromLog(id, { uid: currentUser.uid });
+        hidden += 1;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (!hidden) return failure(lastError, 'Could not clear those rows.');
+    return { ok: true, hidden, failed: list.length - hidden };
+  }
+
+  // Put every hidden row back — the undo for the above.
+  async function unhideCancelledRides(ids) {
+    if (currentUser?.role !== 'admin') {
+      return { ok: false, message: 'Only HR/Admin can restore this list.' };
+    }
+    const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+    if (!list.length) return { ok: false, message: 'Nothing to restore.' };
+    let shown = 0;
+    let lastError = null;
+    for (const id of list) {
+      try {
+        await unhideCancelledFromLog(id);
+        shown += 1;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (!shown) return failure(lastError, 'Could not restore those rows.');
+    return { ok: true, shown };
+  }
+
   function deskCancellationsOn(date) {
     return bookings.filter(
       (b) => b.date === date && b.status === STATUS.CANCELLED && b.cancellationSource === 'desk'
@@ -1765,7 +1821,7 @@ export function AppProvider({ children }) {
     }
   }
 
-  // The driver types in the six digits the rider reads off their own screen, and
+  // The driver types in the digits the rider reads off their own screen, and
   // the trip becomes "On board". This is the ONLY way into that status: the check
   // is in firestore.rules against a document the driver cannot read, so a wrong
   // code comes back as a permission error rather than a polite refusal we chose
@@ -1827,22 +1883,6 @@ export function AppProvider({ children }) {
       return { ok: true };
     } catch (e) {
       return failure(e, 'Could not flag the no-show.');
-    }
-  }
-
-  // Employee feedback → Firestore. Returns { ok, message? }.
-  async function addFeedback({ category, message }) {
-    if (!currentUser) return { ok: false, message: 'Not signed in.' };
-    try {
-      await addFeedbackDoc({
-        employeeId: currentUser.uid,
-        employeeName: currentUser.name,
-        category,
-        message,
-      });
-      return { ok: true };
-    } catch (e) {
-      return failure(e, 'Could not send your feedback.');
     }
   }
 
@@ -2514,7 +2554,11 @@ export function AppProvider({ children }) {
   // --- Monthly roster import (admin) --------------------------------------
   // `report` is the validated result from validateRoster(). Only the clean rows
   // are written; the rejects come back to HR to fix and re-upload.
-  async function importRoster(report, { onProgress } = {}) {
+  // `fileBytes` is the uploaded spreadsheet, base64, so the import can keep the
+  // actual file rather than only the roster rows read out of it. Optional: an
+  // import whose bytes are no longer in hand still writes every row, and simply
+  // reports that the original wasn't kept.
+  async function importRoster(report, { onProgress, fileBytes, fileName } = {}) {
     if (currentUser?.role !== 'admin') {
       return { ok: false, message: 'Only HR/Admin can import a roster.' };
     }
@@ -2523,6 +2567,8 @@ export function AppProvider({ children }) {
         uploadedBy: currentUser.uid,
         uploadedByName: currentUser.name || currentUser.email,
         onProgress,
+        fileBytes,
+        fileName,
       });
       // Jump the desk to the month that was just imported.
       setRosterMonth(report.month);
@@ -3165,12 +3211,13 @@ export function AppProvider({ children }) {
     adminCreateEmployee,
     adminApplyInvite,
     adminDismissInvite,
+    hideCancelledRides,
+    unhideCancelledRides,
     adminRemoveEmployee,
     getCabById,
     myBookings,
     myActiveBookings,
     trackableBooking,
-    addFeedback,
     addRating,
     // Live location sharing (driver)
     sharingLocation,

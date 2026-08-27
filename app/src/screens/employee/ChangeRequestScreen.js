@@ -15,12 +15,13 @@
 // tells them, so a shift extension doesn't feel like it vanished.
 // ---------------------------------------------------------------------------
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View, ScrollView, Pressable } from 'react-native';
 import {
   Text, Card, Button, Chip, TextInput, HelperText, Snackbar, Divider,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { useApp } from '../../context/AppContext';
 import Dropdown from '../../components/Dropdown';
 import {
@@ -43,7 +44,7 @@ function formatWhen(ts) {
   return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}`;
 }
 
-export default function ChangeRequestScreen({ navigation }) {
+export default function ChangeRequestScreen({ navigation, route }) {
   const {
     myChangeRequests, raiseChangeRequest, myBookings, shiftPolicy, currentUser,
   } = useApp();
@@ -57,6 +58,34 @@ export default function ChangeRequestScreen({ navigation }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [snack, setSnack] = useState('');
+  // Whether the three-way type picker is expanded. Open by default — someone who
+  // opened this screen cold still has to choose. It is only closed when Home has
+  // ALREADY chosen (see the focus effect below), which is the case where showing
+  // the choice again is just asking the same question twice.
+  const [pickerOpen, setPickerOpen] = useState(true);
+
+  // ARRIVING WITH A TYPE ALREADY CHOSEN.
+  //
+  // Home links straight at a type — its tiles ARE "Cancel one ride" and "Shift
+  // changed" — so the form opens on the thing that was tapped instead of making
+  // someone pick it a second time. Arriving with no type (MySchedule's link, or
+  // the browser URL) still opens the picker cold, which is why this is guarded
+  // rather than unconditional.
+  //
+  // The param is CONSUMED once applied. Without that, tapping the same Home tile
+  // again would navigate with an identical `type`, the dependency wouldn't change,
+  // and the tile would silently fail to reselect after the employee had switched
+  // to a different type on this screen.
+  useFocusEffect(
+    useCallback(() => {
+      const wanted = route.params?.type;
+      if (!wanted || !OFFERED_REQUESTS.some((r) => r.type === wanted)) return;
+      setType(wanted);
+      setError('');
+      setPickerOpen(false);
+      navigation.setParams({ type: undefined });
+    }, [route.params?.type, navigation])
+  );
 
   const meta = type ? requestMeta(type) : null;
   const needs = (field) => !!meta?.form.includes(field);
@@ -109,7 +138,36 @@ export default function ChangeRequestScreen({ navigation }) {
     [myBookings, date]
   );
 
+  // WHAT'S STILL OUTSTANDING — not everything ever raised.
+  //
+  // This card is the ONLY place a PENDING request is visible anywhere in the app:
+  // raising one sends no notification (see raiseChangeRequest), so between hitting
+  // Send and the desk acting, this list is the sole evidence the request exists.
+  // It also stops a dead end — raiseChangeRequest refuses a second request for the
+  // same date + type, and seeing the first one here beats filling the whole form
+  // and being bounced at submit.
+  //
+  // Settled rows are dropped because they earn nothing here: resolving a request
+  // already sends a REQUEST_RESOLVED notification carrying the outcome AND the
+  // desk's note, so the history was a second copy of something already delivered
+  // — and it pushed the one row that matters off the bottom of the screen.
+  //
+  // Filtered by EXCLUDING the settled statuses rather than by `=== PENDING`: the
+  // job of this card is to not lose track of something outstanding, so a status
+  // this screen doesn't recognise should surface, not silently vanish.
+  const openRequests = useMemo(
+    () =>
+      (myChangeRequests || []).filter(
+        (r) =>
+          r.status !== REQUEST_STATUS.RESOLVED && r.status !== REQUEST_STATUS.REJECTED
+      ),
+    [myChangeRequests]
+  );
+
   function reset() {
+    // Back to no type means back to the picker: a summary row for a type that is
+    // no longer selected would be a header for nothing.
+    setPickerOpen(true);
     setType(null);
     setReason('');
     setComments('');
@@ -145,21 +203,55 @@ export default function ChangeRequestScreen({ navigation }) {
         {/* ---- Pick a type ---- */}
         <Card mode="outlined" style={styles.card}>
           <Card.Content>
-            <Text variant="titleMedium">What's changed?</Text>
-            <Text variant="bodySmall" style={styles.sub}>
-              Your shifts come from the roster HR uploads. Tell the desk when a day
-              is different.
-            </Text>
+            {/* ARRIVED WITH THE CHOICE ALREADY MADE?
+                Home's tiles ARE "Cancel one ride" and "Shift changed", so laying
+                the same three tiles out again asks a question that was answered
+                one tap ago. Collapsed to a summary row naming what was picked,
+                with a way back to the full picker — the other types stay reachable,
+                they're just no longer in the way. Opening the screen cold (from My
+                Shift Calendar, or the URL) still shows the picker, because then
+                nothing has been chosen yet. */}
+            {!pickerOpen && meta ? (
+              <View style={styles.chosenRow}>
+                <MaterialCommunityIcons name={meta.icon} size={22} color={colors.primary} />
+                <Text variant="titleMedium" style={styles.chosenLabel}>
+                  {meta.label}
+                </Text>
+                <Button
+                  compact
+                  mode="text"
+                  onPress={() => setPickerOpen(true)}
+                  accessibilityLabel="Change the request type"
+                >
+                  Change
+                </Button>
+              </View>
+            ) : null}
+
+            {pickerOpen ? (
+              <>
+                <Text variant="titleMedium">What's changed?</Text>
+                <Text variant="bodySmall" style={styles.sub}>
+                  Your shifts come from the roster HR uploads. Tell the desk when a
+                  day is different.
+                </Text>
+              </>
+            ) : null}
 
             {/* OFFERED_REQUESTS, not the whole catalogue — a retired type stays in
-                the catalogue so "My requests" below can still label and explain an
-                old row, but it must not be offered as a new choice. */}
-            <View style={styles.typeGrid}>
+                the catalogue so "My requests" below can still label and explain a
+                request of that type still sitting Pending, but it must not be
+                offered as a new choice. */}
+            <View style={[styles.typeGrid, !pickerOpen && styles.hidden]}>
               {OFFERED_REQUESTS.map((r) => {
                 const active = type === r.type;
                 return (
                   <Pressable
                     key={r.type}
+                    // Picking here does NOT re-collapse. The picker is only open
+                    // when nobody has chosen yet, or when someone asked for it
+                    // back — in both cases they are choosing deliberately and
+                    // having the tiles fold away under the tap is a surprise.
                     onPress={() => {
                       setType(r.type);
                       setError('');
@@ -327,12 +419,13 @@ export default function ChangeRequestScreen({ navigation }) {
         <Card mode="outlined" style={styles.card}>
           <Card.Content>
             <Text variant="titleMedium">My requests</Text>
-            {myChangeRequests.length === 0 ? (
+            {openRequests.length === 0 ? (
               <Text variant="bodySmall" style={styles.sub}>
-                Nothing raised yet.
+                Nothing pending. You'll get a notification when the desk acts on a
+                request.
               </Text>
             ) : (
-              myChangeRequests.map((r) => {
+              openRequests.map((r) => {
                 const st = STATUS_STYLE[r.status] || STATUS_STYLE[REQUEST_STATUS.PENDING];
                 return (
                   <View key={r.id} style={[styles.reqRow, { borderLeftColor: st.fg }]}>
@@ -419,6 +512,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   typeLabelActive: { color: '#FFFFFF' },
+
+  // The collapsed stand-in for the picker: the chosen type, and the way back.
+  chosenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  chosenLabel: { flex: 1, minWidth: 0, color: colors.text, fontFamily: font.semibold },
+  // display:none rather than unmounting the grid — React Native Web honours it,
+  // and keeping the tiles mounted means expanding again doesn't re-run their
+  // layout or lose the hover state mid-press.
+  hidden: { display: 'none' },
 
   blurbBox: {
     flexDirection: 'row',

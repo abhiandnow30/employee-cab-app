@@ -42,6 +42,31 @@ import { directoryEmail, isGuestDirectoryEmail } from '../utils/directoryEmail';
 const ROSTERS = 'rosters';
 const IMPORTS = 'rosterImports';
 
+// The uploaded spreadsheet itself, one document per import, keyed by the SAME id
+// as its rosterImports row. Kept out of that collection on purpose — the history
+// list subscribes to every row of it, and bytes riding along would be re-read on
+// every page open. See the file-keeping block in importRoster.
+const IMPORT_FILES = 'rosterImportFiles';
+
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+// A Firestore document is capped at 1 MiB TOTAL, and base64 costs about a third
+// on top of the raw bytes — so this is the raw size that still leaves room for
+// the encoding and the handful of other fields. A 250-person .xlsx is around
+// 60 KB, so this is far above any real roster; it exists so a wrong file (a
+// workbook full of images, say) fails with a sentence rather than a Firestore
+// error nobody can act on.
+export const MAX_STORED_FILE_BYTES = 600 * 1024;
+
+// Raw byte count of a base64 string, without decoding it — 4 characters encode
+// 3 bytes, minus whatever the trailing '=' padding stands in for.
+function base64ByteLength(b64) {
+  const s = String(b64 || '');
+  if (!s) return 0;
+  const padding = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0;
+  return Math.floor((s.length * 3) / 4) - padding;
+}
+
 // Firestore commits at most 500 writes per batch.
 const BATCH_LIMIT = 450;
 
@@ -1014,7 +1039,10 @@ export function validateRoster(parsed, employees, policy, routeOptions = []) {
 // `onProgress(done, total)` fires after each committed batch, in rows — a
 // 250-row roster is one batch (one call), a 1000+ row one reports as it goes.
 // Returns { imported, skipped, importId }.
-export async function importRoster(report, { uploadedBy, uploadedByName, onProgress } = {}) {
+export async function importRoster(
+  report,
+  { uploadedBy, uploadedByName, onProgress, fileBytes, fileName, contentType } = {}
+) {
   if (!firestore) throw new Error('Backend not configured.');
   // A valid row with no employeeId is somebody who was just invited and has not
   // signed in yet — "No account yet" is a warning now, not an error, so these
@@ -1131,9 +1159,66 @@ export async function importRoster(report, { uploadedBy, uploadedByName, onProgr
   }
   await flush();
 
+  // KEEP THE FILE HR ACTUALLY UPLOADED.
+  //
+  // Everything above turns the sheet into roster documents; none of it keeps the
+  // sheet. Before this, the only copy of the uploaded bytes lived in a browser
+  // localStorage draft that clearDraft() wipes the moment an import succeeds, so
+  // the file ceased to exist anywhere the second it was imported — and the
+  // download button on a history row could only ever rebuild a NEW sheet out of
+  // Firestore and hand that back under a different name.
+  //
+  // A SEPARATE COLLECTION, NOT A FIELD ON THE IMPORT LOG. subscribeImportHistory
+  // subscribes to every rosterImports document; a few hundred KB of base64 on
+  // each one would re-download every file ever imported each time the Upload
+  // Roster screen opens. Kept apart, the history list stays as light as it was
+  // and the bytes are read only when somebody actually clicks Download.
+  //
+  // BEST EFFORT, NEVER FATAL. The roster rows are already committed at this
+  // point and they are the thing that matters — a file that could not be stored
+  // must not report the import as failed. The caller is told either way.
+  let fileStored = false;
+  let fileSkipped = '';
+  if (fileBytes) {
+    const rawBytes = base64ByteLength(fileBytes);
+    if (rawBytes > MAX_STORED_FILE_BYTES) {
+      fileSkipped =
+        `the file is ${Math.round(rawBytes / 1024)} KB, over the ` +
+        `${Math.round(MAX_STORED_FILE_BYTES / 1024)} KB a Firestore document can hold`;
+    } else {
+      try {
+        await setDoc(doc(firestore, IMPORT_FILES, importRef.id), {
+          importId: importRef.id,
+          month: report.month,
+          fileName: fileName || report.fileName || 'roster.xlsx',
+          contentType: contentType || XLSX_MIME,
+          // The raw size, not the base64 length — this is what to show a human.
+          size: rawBytes,
+          data: fileBytes,
+          uploadedBy: uploadedBy || null,
+          uploadedAt: serverTimestamp(),
+        });
+        fileStored = true;
+      } catch (e) {
+        fileSkipped = e?.message || 'the file could not be saved';
+      }
+    }
+  } else {
+    fileSkipped = 'the original bytes were no longer in hand';
+  }
+
   await setDoc(
     doc(firestore, IMPORTS, importRef.id),
-    { status: 'imported', importedCount: imported, routedCount: routed },
+    {
+      status: 'imported',
+      importedCount: imported,
+      routedCount: routed,
+      // Written only once the file document is actually there, so the history row
+      // can offer Download without reading the file collection to find out — and
+      // can never offer it for a file that isn't stored.
+      hasOriginalFile: fileStored,
+      originalFileName: fileStored ? fileName || report.fileName || '' : '',
+    },
     { merge: true }
   );
 
@@ -1144,7 +1229,17 @@ export async function importRoster(report, { uploadedBy, uploadedByName, onProgr
     // Invited but not signed in yet, so their shifts are still to come.
     waiting,
     importId: importRef.id,
+    fileStored,
+    fileSkipped,
   };
+}
+
+// Read one import's original spreadsheet back. Returns null when nothing was
+// stored — every import made before this existed, and any file that was too big.
+export async function fetchImportFile(importId) {
+  if (!firestore || !importId) return null;
+  const snap = await getDoc(doc(firestore, IMPORT_FILES, importId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
 // --- Who the sheet no longer mentions ---------------------------------------
@@ -1278,6 +1373,12 @@ export function subscribeImportHistory(cb, onError) {
 // the audit trail, not an undo of the import itself.
 export async function deleteImportHistoryEntry(importId) {
   if (!firestore) throw new Error('Backend not configured.');
+  // The stored spreadsheet goes with its row. Leaving it behind would orphan a
+  // document nothing links to and nothing can reach — the only handle on it is
+  // the import id that is about to be deleted. Deleted FIRST so a failure here
+  // surfaces while the row is still visible to try again; deleteDoc on a
+  // document that was never stored is a no-op, so pre-file imports are fine.
+  await deleteDoc(doc(firestore, IMPORT_FILES, importId));
   return deleteDoc(doc(firestore, IMPORTS, importId));
 }
 

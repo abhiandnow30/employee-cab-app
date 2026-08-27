@@ -32,9 +32,7 @@ import LoginScreen from './src/screens/LoginScreen';
 import DriverLoginScreen from './src/screens/DriverLoginScreen';
 import CoordinatorLoginScreen from './src/screens/CoordinatorLoginScreen';
 import EmployeeHomeScreen from './src/screens/employee/EmployeeHomeScreen';
-import FeedbackScreen from './src/screens/employee/FeedbackScreen';
 import MyRidesScreen from './src/screens/employee/MyRidesScreen';
-import RosterHistoryScreen from './src/screens/employee/RosterHistoryScreen';
 import TrackCabScreen from './src/screens/employee/TrackCabScreen';
 import RateUsScreen from './src/screens/employee/RateUsScreen';
 import ProfileScreen from './src/screens/employee/ProfileScreen';
@@ -88,9 +86,7 @@ const linking = {
       ChangeRequest: 'change-request',
       CabServiceRequest: 'cab-service-request',
       Notifications: 'notifications',
-      Feedback: 'feedback',
       MyRides: 'my-rides',
-      RosterHistory: 'roster-history',
       TrackCab: 'track',
       RateUs: 'rate-us',
       Profile: 'profile',
@@ -691,19 +687,9 @@ function RootNavigator() {
               options={{ title: 'Notifications' }}
             />
             <Stack.Screen
-              name="Feedback"
-              component={FeedbackScreen}
-              options={{ title: 'Feedback' }}
-            />
-            <Stack.Screen
               name="MyRides"
               component={MyRidesScreen}
               options={{ title: 'My Rides' }}
-            />
-            <Stack.Screen
-              name="RosterHistory"
-              component={RosterHistoryScreen}
-              options={{ title: 'Ride History' }}
             />
             <Stack.Screen
               name="TrackCab"

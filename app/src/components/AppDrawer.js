@@ -42,8 +42,10 @@ export const DRAWER_ITEMS = [
   { label: 'Home', icon: 'home', screen: 'EmployeeHome' },
   { label: 'Profile', icon: 'account', screen: 'Profile' },
   { label: 'My Rides', icon: 'calendar-search', screen: 'MyRides' },
-  { label: 'Notifications', icon: 'bell', screen: 'Notifications' },
-  { label: 'Ride History', icon: 'history', screen: 'RosterHistory' },
+  // NO "Notifications" ROW. The header bell goes to the same screen and is the
+  // one worth keeping: it carries the unread badge and sits on every screen,
+  // including on phones where this menu is shut behind the hamburger. A second,
+  // unbadged door to the same room only made the menu longer.
   { label: 'Track Cab', icon: 'map-marker-radius', screen: 'TrackCab' },
   { label: 'Rate Us', icon: 'star', screen: 'RateUs' },
 ];
@@ -134,14 +136,39 @@ export const ADMIN_DRAWER_ITEMS = [
 // records.
 export const COORDINATOR_DRAWER_ITEMS = [
   { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
-  { label: 'Ride Cancel Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
-  // The coordinator is who knows which route an address is on, so they triage
-  // these even though HR does the approving.
-  { label: 'New Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
+  // BOTH REQUEST QUEUES LEFT THIS MENU (Aug 2026, at explicit request) — they are
+  // HR's now. Ride Cancel Requests moved to HR when the approval flow was made
+  // "employee asks → admin approves"; New Cab Requests followed, so every queue
+  // that needs a decision sits with one desk instead of being half-owned.
+  //
+  // NEITHER SCREEN IS DELETED. Both are still registered in App.js for this role
+  // and still reachable at /requests and /cab-requests, so an existing link or a
+  // bookmark keeps working rather than dead-ending — the same treatment "All
+  // Bookings" got when it left HR's menu. Restoring either is one line here.
+  //
+  // WHAT THE COORDINATOR CAN NO LONGER DO FROM THE MENU, recorded because both
+  // are things they were the right person for:
+  //   • settle a leave / cancel-one-ride / shift-changed request while running
+  //     the day — the desk they sit at is where those land in practice;
+  //   • propose the route on a new cab request. They are who knows which route an
+  //     address belongs to (the rules let them write `proposedRoute` and nothing
+  //     else), so HR now picks that themselves when approving.
   { label: 'All Bookings', icon: 'view-list', screen: 'Bookings' },
   { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
   { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
-  { label: 'Messages', icon: 'email-outline', screen: 'Messages' },
+  // MESSAGES LEFT THIS MENU TOO (Aug 2026, at explicit request).
+  //
+  // READ THIS BEFORE ASSUMING SOMEBODY ELSE PICKS IT UP: this was the ONLY menu
+  // entry pointing at the Contact Us inbox anywhere in the app. HR has never had
+  // a Messages row, so with this line gone nothing an employee sends from Contact
+  // Us is reachable from any menu, for any role — those messages still arrive and
+  // are still stored, they are simply no longer in front of anyone.
+  //
+  // The screen stays registered for this role in App.js, so /messages still opens
+  // for a coordinator who has the link. Putting the inbox back in front of a desk
+  // is one line: restore this row, or add the same entry to ADMIN_DRAWER_ITEMS
+  // (MessagesScreen is registered in the desk-shared branch, so it works there
+  // without any other change).
   { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
 ];
 

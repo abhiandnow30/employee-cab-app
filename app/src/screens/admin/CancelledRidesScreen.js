@@ -12,9 +12,9 @@
 // Data is the same live bookings list the admin already has — just filtered.
 // ---------------------------------------------------------------------------
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { StyleSheet, View, FlatList } from 'react-native';
-import { Text, Card, Chip } from 'react-native-paper';
+import { Text, Card, Chip, Button, Dialog, Portal, Snackbar } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { colors, font, radius, shadow, spacing } from '../../theme';
@@ -34,12 +34,31 @@ function formatWhen(ts) {
 }
 
 export default function CancelledRidesScreen() {
-  const { bookings } = useApp();
+  const { bookings, currentUser, hideCancelledRides, unhideCancelledRides } = useApp();
+  const isAdmin = currentUser?.role === 'admin';
+
+  const [busy, setBusy] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [snack, setSnack] = useState('');
+  // The ids cleared by the last press, so it can be undone without another read.
+  // Session-only: the flag lives on the booking, so a reload simply shows the
+  // tidied list, which is the point of having pressed it.
+  const [lastCleared, setLastCleared] = useState([]);
+
+  // Rows the desk has tidied away. `hiddenFromLog` is a DISPLAY flag and nothing
+  // more — the ride is still Cancelled, still off the board, still in Reports.
+  // See hideCancelledFromLog in services/bookings.js for why the alternative
+  // (deleting the bookings) would put every one of these riders back on the
+  // coordinator's board as an active ride.
+  const hidden = useMemo(
+    () => bookings.filter((b) => b.status === 'Cancelled' && b.hiddenFromLog).map((b) => b.id),
+    [bookings]
+  );
 
   // Only cancelled rides, newest cancellation first (fall back to booking order).
   const cancelled = useMemo(() => {
     return bookings
-      .filter((b) => b.status === 'Cancelled')
+      .filter((b) => b.status === 'Cancelled' && !b.hiddenFromLog)
       .sort((a, b) => {
         // cancelledAt first: a DESK cancellation writes only that one, deliberately
         // (it must not touch the employee's request fields), so without it here every
@@ -112,6 +131,40 @@ export default function CancelledRidesScreen() {
           <Text variant="bodySmall" style={styles.hint}>
             Rides employees have cancelled. Newest first.
           </Text>
+          {/* THE BUTTON is HR's, because tidying the log is housekeeping on HR's
+              own screen. THE EFFECT is not: `hiddenFromLog` lives on the booking,
+              so a cleared row leaves the coordinator's copy of this list too (they
+              see it as a tab inside Requests). That is deliberate — one log, one
+              state, the same reason both desks share one change-request queue —
+              but it means Clear is not a private view setting, and "Show cleared"
+              is how either of them gets a row back. */}
+          {isAdmin && cancelled.length ? (
+            <Button
+              mode="text"
+              icon="broom"
+              compact
+              disabled={busy}
+              onPress={() => setConfirmClear(true)}
+            >
+              Clear list
+            </Button>
+          ) : null}
+          {isAdmin && hidden.length ? (
+            <Button
+              mode="text"
+              icon="eye-outline"
+              compact
+              disabled={busy}
+              onPress={async () => {
+                setBusy(true);
+                const res = await unhideCancelledRides(hidden);
+                setBusy(false);
+                setSnack(res?.ok ? `${res.shown} row(s) back on the list.` : res?.message || 'Could not restore.');
+              }}
+            >
+              Show {hidden.length} cleared
+            </Button>
+          ) : null}
           <Chip compact icon="car-off" style={styles.countChip}>
             {cancelled.length}
           </Chip>
@@ -131,6 +184,70 @@ export default function CancelledRidesScreen() {
           }
         />
       </View>
+
+      {/* Says what it actually does. "Clear" on a screen full of records reads as
+          "delete", and the whole point of this action is that it is not one. */}
+      <Portal>
+        <Dialog visible={confirmClear} onDismiss={() => setConfirmClear(false)}>
+          <Dialog.Title>Clear this list?</Dialog.Title>
+          <Dialog.Content>
+            <Text variant="bodyMedium">
+              Hides all {cancelled.length} row{cancelled.length === 1 ? '' : 's'} from this
+              screen. Nothing is deleted: the rides stay cancelled, stay off the
+              coordinator&apos;s board, keep who cancelled them and when, and still
+              count in Reports. You can bring them back with &ldquo;Show cleared&rdquo;.
+            </Text>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setConfirmClear(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              loading={busy}
+              disabled={busy}
+              onPress={async () => {
+                const ids = cancelled.map((c) => c.id);
+                setBusy(true);
+                const res = await hideCancelledRides(ids);
+                setBusy(false);
+                setConfirmClear(false);
+                if (res?.ok) {
+                  setLastCleared(ids);
+                  setSnack(
+                    `Cleared ${res.hidden} row${res.hidden === 1 ? '' : 's'}` +
+                      (res.failed ? ` · ${res.failed} could not be cleared` : '')
+                  );
+                } else {
+                  setSnack(res?.message || 'Could not clear the list.');
+                }
+              }}
+            >
+              Clear
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      <Snackbar
+        visible={!!snack}
+        onDismiss={() => setSnack('')}
+        duration={5000}
+        action={
+          lastCleared.length
+            ? {
+                label: 'Undo',
+                onPress: async () => {
+                  const ids = lastCleared;
+                  setLastCleared([]);
+                  await unhideCancelledRides(ids);
+                },
+              }
+            : undefined
+        }
+      >
+        {snack}
+      </Snackbar>
     </View>
   );
 }

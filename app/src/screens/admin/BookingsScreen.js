@@ -113,7 +113,7 @@ export default function BookingsScreen({ navigation }) {
   //
   // The cut-off for this screen is the DAY, not the minute. Earlier days are left
   // out — the desk acts on today and later here, and that data isn't deleted:
-  // Ride History, No-Shows and Cancelled Rides still show it. But a ride whose
+  // My Rides, No-Shows and Cancelled Rides still show it. But a ride whose
   // shift time passed an hour ago is still TODAY's work and stays on the board,
   // selectable, so a cab can still be sent (see canSelect). Filtering by the
   // minute instead was why an unassigned 8:00 PM ride vanished from the desk's

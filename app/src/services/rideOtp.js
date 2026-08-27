@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // RIDE-START OTP
 //
-// The six digits the rider reads out when the cab pulls up, and the driver types
+// The four digits the rider reads out when the cab pulls up, and the driver types
 // in to move the trip to "On board". It is the only proof the system has that a
 // person actually got into the vehicle — every other signal on a trip is the
 // driver's own tap.

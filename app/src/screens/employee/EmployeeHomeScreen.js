@@ -2,18 +2,24 @@
 // EMPLOYEE HOME
 //   Header:  name + employee id
 //   Tiles:   MY SHIFT CALENDAR | CHANGE REQUEST | FEEDBACK
-//   Section: the rides the roster has generated for them
 // Employees don't create rides any more — HR uploads a monthly shift roster and
 // the rides follow from it. This screen is view-and-flag, not book.
+//
+// NO RIDE LIST HERE. This used to carry a "My Scheduled Rides" card listing the
+// roster rides, but My Rides already lists the same bookings — every status, not
+// just the roster ones — off the same myBookings() call, split into Upcoming and
+// Past. Printing a subset of that list on the landing screen made Home long
+// without showing anything My Rides didn't, so Home is now the shortcut deck and
+// the list lives on its own screen.
 // ---------------------------------------------------------------------------
 
-import React, { useState } from 'react';
-import { StyleSheet, View, Pressable, ScrollView } from 'react-native';
-import { Text, Card, Chip, Divider, IconButton } from 'react-native-paper';
+import React from 'react';
+import { StyleSheet, View, ScrollView } from 'react-native';
+import { Text, Card } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { SOURCE } from '../../data/mockData';
-import { statusColors, colors, font, radius, shadow, spacing } from '../../theme';
+import { REQUEST_TYPES } from '../../data/changeRequests';
+import { colors, font, radius, shadow, spacing } from '../../theme';
 
 // One of the square action tiles at the top.
 function Tile({ icon, label, onPress }) {
@@ -31,78 +37,8 @@ function Tile({ icon, label, onPress }) {
   );
 }
 
-// A "My ORS" / "My Adhoc" section with refresh + collapse controls.
-function RideSection({ title, rides, emptyText, onOpen }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [, setRefreshTick] = useState(0); // refresh just re-renders (data is live)
-
-  return (
-    <Card style={styles.section} mode="elevated">
-      <Card.Content>
-        <View style={styles.sectionHeader}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            {title}
-          </Text>
-          <View style={styles.sectionIcons}>
-            <IconButton
-              icon="refresh"
-              size={18}
-              onPress={() => setRefreshTick((t) => t + 1)}
-            />
-            <IconButton
-              icon={collapsed ? 'plus' : 'minus'}
-              size={18}
-              onPress={() => setCollapsed((c) => !c)}
-            />
-          </View>
-        </View>
-
-        {!collapsed && (
-          <>
-            <Divider style={styles.sectionDivider} />
-            {rides.length === 0 ? (
-              <Text variant="bodyMedium" style={styles.emptyText}>
-                {emptyText}
-              </Text>
-            ) : (
-              rides.map((r, i) => (
-                <Pressable
-                  key={r.id}
-                  style={[styles.rideRow, i > 0 && styles.rideRowDivided]}
-                  onPress={onOpen}
-                >
-                  <View style={styles.rideInfo}>
-                    <Text variant="bodyMedium" style={styles.rideTitle}>
-                      {r.date} · {r.direction}
-                    </Text>
-                    <Text variant="bodySmall" style={styles.rideSub}>
-                      {r.shift}
-                    </Text>
-                  </View>
-                  <Chip
-                    compact
-                    style={{ backgroundColor: statusColors[r.status] || colors.disabled }}
-                    textStyle={styles.chipText}
-                  >
-                    {r.status}
-                  </Chip>
-                </Pressable>
-              ))
-            )}
-          </>
-        )}
-      </Card.Content>
-    </Card>
-  );
-}
-
 export default function EmployeeHomeScreen({ navigation }) {
-  const { currentUser, myBookings } = useApp();
-
-  const rides = myBookings();
-  const rosterRides = rides.filter((r) => r.source === SOURCE.ROSTER);
-
-  const openRides = () => navigation.navigate('MyRides');
+  const { currentUser } = useApp();
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -122,31 +58,38 @@ export default function EmployeeHomeScreen({ navigation }) {
         </View>
 
         {/* Top action tiles. Employees no longer book rides — their shifts come
-            from the roster HR uploads — so these are view + exception, not create. */}
+            from the roster HR uploads — so these are view + exception, not create.
+
+            The two exception tiles name the ACTUAL exception rather than the form
+            that holds it. A generic "Change request" tile opened a screen whose
+            first job was to ask which kind, so the two people actually raise —
+            dropping one leg, or working a different shift — cost two taps and a
+            decision on a screen they hadn't seen yet. These land on the form with
+            that type already selected; the other types are still on the screen, so
+            nothing is cut off, it's just no longer the first thing asked. */}
         <View style={styles.tileRow}>
           <Tile
             icon="calendar-month"
             label="MY SHIFT CALENDAR"
             onPress={() => navigation.navigate('MySchedule')}
           />
+          {/* Icons match the ones the form's own type tiles use, so the tile that
+              was tapped is recognisable as the one that ends up selected. */}
           <Tile
-            icon="calendar-edit"
-            label="CHANGE REQUEST"
-            onPress={() => navigation.navigate('ChangeRequest')}
+            icon="car-off"
+            label="CANCEL ONE RIDE"
+            onPress={() =>
+              navigation.navigate('ChangeRequest', { type: REQUEST_TYPES.CANCEL_RIDE })
+            }
           />
           <Tile
-            icon="message-draw"
-            label="FEEDBACK"
-            onPress={() => navigation.navigate('Feedback')}
+            icon="swap-horizontal"
+            label="SHIFT CHANGED"
+            onPress={() =>
+              navigation.navigate('ChangeRequest', { type: REQUEST_TYPES.SHIFT_CHANGED })
+            }
           />
         </View>
-
-        <RideSection
-          title="My Scheduled Rides"
-          rides={rosterRides}
-          emptyText="No scheduled rides yet."
-          onOpen={openRides}
-        />
       </View>
     </ScrollView>
   );
@@ -174,7 +117,7 @@ const styles = StyleSheet.create({
   greetingText: { flex: 1, minWidth: 0 },
   empName: { fontFamily: font.bold, color: colors.text },
   services: { color: colors.muted, marginTop: 1 },
-  tileRow: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.xl },
+  tileRow: { flexDirection: 'row', gap: spacing.md },
   tile: {
     flex: 1,
     borderRadius: radius.lg,
@@ -208,38 +151,4 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     letterSpacing: 0.3,
   },
-  section: {
-    marginBottom: spacing.lg,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadow.sm,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  sectionTitle: { color: colors.text, flex: 1, minWidth: 0 },
-  sectionIcons: { flexDirection: 'row' },
-  sectionDivider: {
-    marginTop: spacing.xs,
-    marginBottom: spacing.md,
-    backgroundColor: colors.border,
-  },
-  emptyText: { color: colors.muted, paddingVertical: spacing.sm },
-  rideRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.md,
-  },
-  // Hairline between rows only — never above the first one, which would read
-  // as a second divider directly under the section rule.
-  rideRowDivided: { borderTopWidth: 1, borderTopColor: colors.border },
-  rideInfo: { flex: 1, paddingRight: spacing.md },
-  rideTitle: { color: colors.text, fontFamily: font.medium },
-  rideSub: { color: colors.muted, marginTop: 2 },
-  chipText: { color: '#FFFFFF', fontSize: 11.5, fontFamily: font.semibold },
 });

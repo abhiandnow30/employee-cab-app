@@ -71,8 +71,26 @@ export default function CoordinatorDashboardScreen({ navigation }) {
     ridesOn, assignCabToRides, cabs, rosterMonth, setRosterMonth, monthRosters,
     routeOptions, setEmployeeRoute, employeeCancellationsOn, getCabById,
     employees, shiftPolicy, addRiderToDay, deskCancelRide,
-    restoreDeskCancelledRide, deskCancelState,
+    restoreDeskCancelledRide, deskCancelState, currentUser,
   } = useApp();
+
+  // "ADD A RIDER" IS HR'S ONLY (Aug 2026, at explicit request).
+  //
+  // A UI DECISION, AND IT TAKES A REAL CAPABILITY AWAY — say so plainly rather
+  // than letting the next reader assume it was tidying. firestore.rules has
+  // `coordinatorAddingRider()`, written specifically so a coordinator CAN create
+  // rosters/<month>_<uid> for a single day (one key in `days`, stamped with their
+  // own uid). That rule is untouched and still permits it; this only removes the
+  // button that used it, so the ability now rests with HR alone.
+  //
+  // What that costs, since the coordinator is the one on the board at 9 PM: a
+  // walk-up who is not on the month's sheet cannot be added to tonight by the
+  // person who just found out about them. It has to go through HR — who reach
+  // the same screen from their own menu, where the button still shows.
+  //
+  // Hidden, not disabled: a greyed button on the header of a screen they run all
+  // day reads as "you could do this", which is the opposite of what is meant.
+  const canAddRider = currentUser?.role === 'admin';
 
   // PHONE OR NOT. One breakpoint, matching ShiftPolicyScreen's — this board is
   // either being read on a desk monitor or on the coordinator's phone in a car
@@ -984,15 +1002,17 @@ export default function CoordinatorDashboardScreen({ navigation }) {
               isMobile && styles.legRowRightMobile,
             ]}
           >
-            <Button
-              compact
-              mode="text"
-              icon="account-plus"
-              onPress={openAddRider}
-              style={styles.addRider}
-            >
-              Add a rider
-            </Button>
+            {canAddRider ? (
+              <Button
+                compact
+                mode="text"
+                icon="account-plus"
+                onPress={openAddRider}
+                style={styles.addRider}
+              >
+                Add a rider
+              </Button>
+            ) : null}
           </View>
         </View>
 

@@ -491,6 +491,45 @@ export async function restoreDeskCancelledBooking(bookingId, { uid, role }) {
   });
 }
 
+// --- Clearing the Cancelled Rides list --------------------------------------
+//
+// TIDYING THE LIST IS NOT DELETING THE RIDE, AND IT MUST NOT BE.
+//
+// The obvious way to clear this screen — remove the booking documents — is a
+// trap, and an expensive one. A cancelled booking is the ONLY thing keeping that
+// ride off the board: rides are derived live from the roster, and ridesForDate()
+// drops one because its booking says 'Cancelled'. Delete the booking and the
+// roster derives the ride again with nothing attached, so it returns as an
+// ACTIVE, unassigned ride. Clearing a list of cancellations would put every one
+// of those riders back on the coordinator's board waiting for a cab. (It is also
+// simply not possible through the app: `allow delete: if false` on bookings.)
+//
+// So this hides the ROW, not the ride. `hiddenFromLog` is a display flag and
+// nothing else reads it: the status stays 'Cancelled', the seat stays freed, the
+// audit fields (who cancelled, when, in what role) stay exactly as they were,
+// Reports keep counting it, and the rider's own ride card is unchanged.
+//
+// The rules already allow this with no change: touchingDeskCancellation() only
+// routes writes that touch `cancellationSource` or `cancelledByRole` into the
+// stricter branch, so a desk write adding an unrelated field passes under
+// deskEditing() as it stands.
+export async function hideCancelledFromLog(bookingId, { uid } = {}) {
+  if (!firestore) throw new Error('Backend not configured.');
+  return updateDoc(doc(firestore, COL, bookingId), {
+    hiddenFromLog: true,
+    hiddenFromLogAt: serverTimestamp(),
+    hiddenFromLogBy: uid || null,
+  });
+}
+
+// Put a hidden row back on the list. The flag is the only thing that moves —
+// there is nothing to restore about the ride itself, because nothing about it
+// changed when it was hidden.
+export async function unhideCancelledFromLog(bookingId) {
+  if (!firestore) throw new Error('Backend not configured.');
+  return updateDoc(doc(firestore, COL, bookingId), { hiddenFromLog: false });
+}
+
 // Admin approves or rejects a pending cancellation request.
 //   approve → the booking is Cancelled and the request marked Approved
 //   reject  → the request is marked Rejected; the booking stays active

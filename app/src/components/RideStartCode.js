@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// RideStartCode — the six digits that start a ride, shown to the two parties
+// RideStartCode — the digits that start a ride, shown to the two parties
 // allowed to see them: the rider it belongs to, and the desk, who read it down
 // the phone when a rider's battery has died.
 //

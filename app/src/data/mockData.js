@@ -82,11 +82,42 @@ export const STATUS = {
   CANCELLED: 'Cancelled',
 };
 
-// How many digits the ride-start OTP has. SIX, not four, is deliberate: the code
-// is checked by `firestore.rules`, and rules cannot count failed attempts, so the
-// only thing standing between a scripted client and a guessed code is the size of
-// the space. Four digits is 10,000 tries; six is a million.
-export const RIDE_OTP_LENGTH = 6;
+// How many digits the ride-start OTP has. FOUR, changed from six in Aug 2026 at
+// explicit request, because four is what a rider can actually read out through a
+// car window at night.
+//
+// WHAT THAT COSTS, recorded here because the previous six was deliberate and this
+// reverses it. The code is checked by `firestore.rules`, and rules cannot count
+// failed attempts — there is no rate limiting anywhere — so the only thing
+// between a scripted client and a guessed code is the size of the space. Six
+// digits was a million tries at one network round-trip each: hours of traffic
+// against a single document, and loud in usage metrics. Four is TEN THOUSAND,
+// which is minutes. A success marks a rider as boarded who never got in.
+//
+// If that ever needs buying back, the fix is a brake rather than length: a rule
+// that refuses another attempt within N seconds of the last failed one, using a
+// timestamp written on the booking.
+export const RIDE_OTP_LENGTH = 4;
+
+// LENGTHS THE DRIVER'S KEYPAD MUST STILL ACCEPT.
+//
+// Shortening the code does not shorten the codes already issued. Every ride that
+// had a cab assigned before this change carries a live SIX-digit code in
+// bookings/<id>/private/otp, and nothing rewrites it — a re-assignment re-issues
+// at the new length, but a ride that simply sits there keeps what it was given.
+//
+// Without this the driver's input would cap at four characters and its Board
+// button would only enable at exactly four, so a rider holding a six-digit code
+// could not be boarded at all: the driver stands at the kerb with no way forward
+// but a no-show. The rules already make the same allowance in the other
+// direction (see driverStartingRide, which lets through rides that predate the
+// OTP entirely).
+//
+// Drop the 6 once no unfinished ride can still be holding one — in practice a
+// day or two after release.
+export const LEGACY_RIDE_OTP_LENGTHS = [6];
+export const ACCEPTED_RIDE_OTP_LENGTHS = [RIDE_OTP_LENGTH, ...LEGACY_RIDE_OTP_LENGTHS];
+export const MAX_RIDE_OTP_LENGTH = Math.max(...ACCEPTED_RIDE_OTP_LENGTHS);
 
 // Employees must book a ride at least this many hours before it starts.
 export const BOOKING_LEAD_HOURS = 9;

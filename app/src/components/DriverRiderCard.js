@@ -22,7 +22,9 @@
 import React, { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text, Button, TextInput, ActivityIndicator } from 'react-native-paper';
-import { RIDE_OTP_LENGTH, STATUS } from '../data/mockData';
+import {
+  RIDE_OTP_LENGTH, MAX_RIDE_OTP_LENGTH, ACCEPTED_RIDE_OTP_LENGTHS, STATUS,
+} from '../data/mockData';
 import { statusColors, colors, font, radius, shadow, spacing } from '../theme';
 import { tripPickupPoint, tripDropPoint, tripPlaceLabels } from '../services/directions';
 import { openDirections } from '../utils/externalLinks';
@@ -192,9 +194,16 @@ export default function DriverRiderCard({
         </Button>
       ) : atKerb ? (
         <>
-          {/* The rider reads six digits off their own screen. The check happens
+          {/* The rider reads their code off their own screen. The check happens
               in firestore.rules against a document this app cannot read, so
-              there is nothing here to work around — the write is what's judged. */}
+              there is nothing here to work around — the write is what's judged.
+
+              THE KEYPAD IS DELIBERATELY LOOSER THAN THE CURRENT LENGTH. Codes
+              issued before the switch to four digits are still live on any ride
+              already assigned, so it accepts up to MAX_RIDE_OTP_LENGTH and enables
+              at any accepted length. Capping at four would leave a rider holding a
+              six-digit code unboardable — the driver at the kerb with nothing to
+              do but mark a no-show. See ACCEPTED_RIDE_OTP_LENGTHS. */}
           <Text variant="bodySmall" style={styles.otpIntro}>
             Ask them for the {RIDE_OTP_LENGTH}-digit code in their app.
           </Text>
@@ -207,10 +216,10 @@ export default function DriverRiderCard({
               value={code}
               onChangeText={(t) => {
                 setErr('');
-                setCode(t.replace(/[^0-9]/g, '').slice(0, RIDE_OTP_LENGTH));
+                setCode(t.replace(/[^0-9]/g, '').slice(0, MAX_RIDE_OTP_LENGTH));
               }}
               keyboardType="number-pad"
-              maxLength={RIDE_OTP_LENGTH}
+              maxLength={MAX_RIDE_OTP_LENGTH}
               autoComplete="off"
               style={styles.otpInput}
               contentStyle={styles.otpInputText}
@@ -225,7 +234,7 @@ export default function DriverRiderCard({
               contentStyle={styles.mainBtnContent}
               labelStyle={styles.mainBtnLabel}
               loading={busy}
-              disabled={busy || code.length !== RIDE_OTP_LENGTH}
+              disabled={busy || !ACCEPTED_RIDE_OTP_LENGTHS.includes(code.length)}
               onPress={submit}
             >
               On board

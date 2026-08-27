@@ -25,27 +25,64 @@ import { colors, font, radius, shadow, spacing } from '../../theme';
 import { ADMIN_HISTORY_DAYS } from '../../services/bookings';
 import { todayKey, shiftDateKey, prettyDateKey } from '../../utils/datetime';
 import CalendarFilter from '../../components/CalendarFilter';
+import TrendChart from '../../components/TrendChart';
 import {
   PERIOD, PERIOD_LABEL, periodRange, rangeLabel, bookingsInRange,
   summarise, breakdown, downloadRideReport,
+  dailySeries, seriesStats, SERIES_METRIC, SERIES_METRIC_LABEL,
 } from '../../services/reports';
+
+// Which figure the Overview line plots. Kept to the four worth a trend: the
+// others (Pickups, Drops, Rows total) either mirror one of these or are a
+// property of the shift policy rather than of how the month went.
+const SERIES_CHOICES = [
+  SERIES_METRIC.RAN,
+  SERIES_METRIC.COMPLETED,
+  SERIES_METRIC.NO_SHOW,
+  SERIES_METRIC.CANCELLED,
+];
+
+// The line takes the colour of what it plots, so switching the metric re-tints
+// the whole card and there is never a red no-show line drawn in brand blue.
+const SERIES_TONE = {
+  [SERIES_METRIC.RAN]: colors.primary,
+  [SERIES_METRIC.COMPLETED]: colors.success,
+  [SERIES_METRIC.NO_SHOW]: colors.danger,
+  [SERIES_METRIC.CANCELLED]: colors.muted,
+};
 
 // The four the desk actually asks for. "Last 30 days" and a custom range live
 // behind the date picker rather than adding two more segments to a control that
 // has to stay readable on a laptop.
 const QUICK = [PERIOD.THIS_WEEK, PERIOD.LAST_WEEK, PERIOD.THIS_MONTH, PERIOD.LAST_MONTH];
 
-// One headline number. `tone` carries the meaning — a no-show count is not good
-// news at 12 the way a completed count is.
-function Stat({ label, value, tone = colors.text, hint }) {
+// One headline number, as its own card. `tone` carries the meaning — a no-show
+// count is not good news at 12 the way a completed count is — and the icon
+// repeats it in a second channel, so the card is still readable to someone who
+// cannot separate the reds from the greens.
+//
+// `hint` is a plain-English gloss under the label rather than a tooltip. Every
+// number on this page has been misread at least once (see the Rides run note in
+// services/reports.js); a caption that is always visible is worth more than one
+// that has to be hunted for, and it costs a line of text.
+function Stat({ label, value, tone = colors.text, hint, icon, soft }) {
   return (
     <View style={styles.stat}>
-      <Text style={[styles.statValue, { color: tone }]}>{value}</Text>
-      <Text variant="bodySmall" style={styles.statLabel}>
-        {label}
-      </Text>
+      <View style={styles.statHead}>
+        {icon ? (
+          <View style={[styles.statIcon, { backgroundColor: soft || colors.primarySofter }]}>
+            <MaterialCommunityIcons name={icon} size={19} color={tone} />
+          </View>
+        ) : null}
+        <View style={styles.statText}>
+          <Text style={[styles.statValue, { color: tone }]}>{value}</Text>
+          <Text variant="bodySmall" style={styles.statLabel} numberOfLines={1}>
+            {label}
+          </Text>
+        </View>
+      </View>
       {hint ? (
-        <Text variant="bodySmall" style={styles.statHint}>
+        <Text variant="bodySmall" style={styles.statHint} numberOfLines={2}>
           {hint}
         </Text>
       ) : null}
@@ -53,9 +90,37 @@ function Stat({ label, value, tone = colors.text, hint }) {
   );
 }
 
+// The three numbers under the chart: the busiest day, the quietest, and what a
+// normal one looks like. They are what turn a line into a decision — a peak of
+// 46 against an average of 28 is the case for another cab; the same 43 rides
+// spread evenly is not.
+function Peak({ label, value, sub, tone }) {
+  return (
+    <View style={[styles.peak, { borderColor: tone }]}>
+      <Text variant="labelSmall" style={[styles.peakLabel, { color: tone }]}>
+        {label}
+      </Text>
+      <Text style={styles.peakValue}>{value}</Text>
+      <Text variant="bodySmall" style={styles.peakSub} numberOfLines={1}>
+        {sub}
+      </Text>
+    </View>
+  );
+}
+
 // A breakdown table. Same shape whichever way the rides are split, so the eye
 // learns it once.
-function Table({ title, icon, rows, emptyText, nameHeader }) {
+//
+// `limit` collapses a long list to its busiest few with a link to the rest.
+// Routes are the case that needs it: a dozen of them push the chart beside this
+// card off the fold, and the tail is a row of zeroes nobody scrolls for. The
+// count in the link is the number HIDDEN, not the total — "+5 more routes"
+// answers "is it worth expanding" where "11 routes" does not.
+function Table({ title, icon, rows, emptyText, nameHeader, limit }) {
+  const [expanded, setExpanded] = useState(false);
+  const hidden = limit && !expanded ? Math.max(0, rows.length - limit) : 0;
+  const shown = hidden ? rows.slice(0, limit) : rows;
+
   return (
     <Card style={styles.card} mode="elevated">
       <Card.Content>
@@ -78,10 +143,17 @@ function Table({ title, icon, rows, emptyText, nameHeader }) {
           <Text variant="labelSmall" style={[styles.colNum, styles.headCell]}>
             NO-SHOW
           </Text>
+          {/* Cancelled per row, which the tiles only give as one total. It is
+              how a route with a standing problem shows itself — one route
+              carrying most of the month's cancellations is a conversation, the
+              same number spread evenly is not. */}
+          <Text variant="labelSmall" style={[styles.colNum, styles.headCell]}>
+            CANCELLED
+          </Text>
         </View>
         <Divider style={styles.divider} />
-        {rows.length ? (
-          rows.map((r) => (
+        {shown.length ? (
+          shown.map((r) => (
             <View key={r.key || '—'} style={styles.row}>
               <Text variant="bodyMedium" style={styles.colName} numberOfLines={1}>
                 {r.label || '—'}
@@ -98,6 +170,12 @@ function Table({ title, icon, rows, emptyText, nameHeader }) {
               >
                 {r.noShow}
               </Text>
+              <Text
+                variant="bodyMedium"
+                style={[styles.colNum, r.cancelled ? styles.colNumMuted : null]}
+              >
+                {r.cancelled}
+              </Text>
             </View>
           ))
         ) : (
@@ -105,6 +183,17 @@ function Table({ title, icon, rows, emptyText, nameHeader }) {
             {emptyText}
           </Text>
         )}
+        {hidden || expanded ? (
+          <Button
+            mode="text"
+            compact
+            style={styles.moreBtn}
+            contentStyle={styles.moreContent}
+            onPress={() => setExpanded((v) => !v)}
+          >
+            {hidden ? `+ ${hidden} more` : 'Show fewer'}
+          </Button>
+        ) : null}
       </Card.Content>
     </Card>
   );
@@ -132,25 +221,39 @@ export default function ReportsScreen() {
   const routeOf = (b) => routeByEmployee.get(b.employeeId) || b.route || '';
 
   const rows = useMemo(() => bookingsInRange(bookings, range), [bookings, range]);
-  const stats = useMemo(() => summarise(rows), [rows]);
+  // `today` is threaded in rather than left to the default so every figure on
+  // the page splits "no outcome yet" from "no outcome and the day has gone"
+  // against one clock — see summarise().
+  const stats = useMemo(() => summarise(rows, today), [rows, today]);
 
   const byRoute = useMemo(
-    () => breakdown(rows, routeOf, (k) => k || 'No route set'),
-    [rows, routeByEmployee]
+    () => breakdown(rows, routeOf, (k) => k || 'No route set', today),
+    [rows, routeByEmployee, today]
   );
   const byCab = useMemo(
     () =>
       breakdown(
         rows,
         (b) => b.assignedCabId || '',
-        (k) => (k ? getCabById(k)?.cabNumber || 'Cab removed' : 'No cab assigned')
+        (k) => (k ? getCabById(k)?.cabNumber || 'Cab removed' : 'No cab assigned'),
+        today
       ),
-    [rows, getCabById]
+    [rows, getCabById, today]
   );
   // People, worst first — the point of this table is spotting the handful of
   // riders a cab keeps being sent to for nothing.
+  // The Overview line. `metric` is local to the card — changing it re-plots and
+  // touches nothing else on the page, which is what makes it safe to flip
+  // between while reading.
+  const [metric, setMetric] = useState(SERIES_METRIC.RAN);
+  const series = useMemo(
+    () => dailySeries(rows, range, metric, today),
+    [rows, range, metric, today]
+  );
+  const peaks = useMemo(() => seriesStats(series), [series]);
+
   const byEmployee = useMemo(() => {
-    const all = breakdown(rows, (b) => b.employeeId || '', (k) => k);
+    const all = breakdown(rows, (b) => b.employeeId || '', (k) => k, today);
     const named = new Map();
     rows.forEach((b) => {
       if (b.employeeId && !named.has(b.employeeId)) named.set(b.employeeId, b.employeeName || b.empId || '—');
@@ -185,9 +288,12 @@ export default function ReportsScreen() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.col}>
           <Text variant="bodySmall" style={styles.intro}>
-            Everything the cabs actually ran, over a period. Cancelled rides are
-            counted separately — nobody travelled — so "Rides run" is the figure to
-            plan on.
+            What the cabs were scheduled to run, over a period. &ldquo;Rides
+            run&rdquo; is every ride that wasn&rsquo;t cancelled — the figure to plan
+            capacity on. It is not the same as rides anyone confirmed: only
+            Completed and No-shows have a recorded outcome, and
+            &ldquo;Unconfirmed&rdquo; counts the ones whose day has passed with no
+            outcome at all, usually a driver who never closed the trip out.
           </Text>
 
           <SegmentedButtons
@@ -225,26 +331,100 @@ export default function ReportsScreen() {
 
           <Card style={styles.card} mode="elevated">
             <Card.Content>
+              {/* Rides run, then the three things it is made of. The hint under
+                  the headline is load-bearing: "Rides run" on its own reads as
+                  "rides that happened", and it means "not cancelled" — see
+                  summarise(). Unconfirmed is the one to act on, so it is amber
+                  and sits beside the outcomes it is missing from. */}
               <View style={styles.stats}>
-                <Stat label="Rides run" value={stats.ran} tone={colors.primary} />
-                <Stat label="Completed" value={stats.completed} tone={colors.success} />
+                <Stat
+                  label="Rides run"
+                  value={stats.ran}
+                  tone={colors.primary}
+                  soft={colors.primarySofter}
+                  icon="car-multiple"
+                  hint="Scheduled and not cancelled"
+                />
+                <Stat
+                  label="Completed"
+                  value={stats.completed}
+                  tone={colors.success}
+                  soft={colors.successSoft}
+                  icon="check-circle-outline"
+                  hint="Driver confirmed the trip"
+                />
                 <Stat
                   label="No-shows"
                   value={stats.noShow}
                   tone={stats.noShow ? colors.danger : colors.text}
+                  soft={colors.dangerSoft}
+                  icon="account-alert-outline"
+                  hint="Cab went, nobody there"
                 />
-                <Stat label="Cancelled" value={stats.cancelled} tone={colors.muted} />
+                <Stat
+                  label="Unconfirmed"
+                  value={stats.unconfirmed}
+                  tone={stats.unconfirmed ? colors.warning : colors.text}
+                  soft={colors.warningSoft}
+                  icon="progress-question"
+                  hint="Day passed, no outcome recorded"
+                />
               </View>
               <Divider style={styles.divider} />
               <View style={styles.stats}>
-                <Stat label="Pickups" value={stats.inbound} />
-                <Stat label="Drops" value={stats.outbound} />
+                <Stat
+                  label="Cancelled"
+                  value={stats.cancelled}
+                  tone={colors.muted}
+                  soft={colors.surfaceAlt}
+                  icon="close-circle-outline"
+                  hint="Nobody travelled"
+                />
+                <Stat
+                  label="Pickups"
+                  value={stats.inbound}
+                  tone={colors.info}
+                  soft={colors.infoSoft}
+                  icon="home-export-outline"
+                  hint="Home to office"
+                />
+                <Stat
+                  label="Drops"
+                  value={stats.outbound}
+                  tone={colors.info}
+                  soft={colors.infoSoft}
+                  icon="office-building-outline"
+                  hint="Office to home"
+                />
                 <Stat
                   label="No cab given"
                   value={stats.unassigned}
                   tone={stats.unassigned ? colors.warning : colors.text}
+                  soft={colors.warningSoft}
+                  icon="car-off"
+                  hint="Never assigned a vehicle"
                 />
-                <Stat label="Rows total" value={stats.total} hint="incl. cancelled" />
+                {/* Only when there is something in it. On a finished period this
+                    is always zero, and a permanent zero is a figure to explain
+                    rather than one to read. */}
+                {stats.upcoming ? (
+                  <Stat
+                    label="Still to come"
+                    value={stats.upcoming}
+                    tone={colors.text}
+                    soft={colors.primarySofter}
+                    icon="clock-outline"
+                    hint="Not due yet"
+                  />
+                ) : null}
+                <Stat
+                  label="Rows total"
+                  value={stats.total}
+                  tone={colors.text}
+                  soft={colors.primarySofter}
+                  icon="table"
+                  hint="Including cancelled"
+                />
               </View>
 
               {Platform.OS === 'web' ? (
@@ -269,13 +449,89 @@ export default function ReportsScreen() {
             </Card.Content>
           </Card>
 
-          <Table
-            title="By route"
-            icon="map-marker-path"
-            nameHeader="ROUTE"
-            rows={byRoute}
-            emptyText="No rides in this period."
-          />
+          {/* OVERVIEW AND BY ROUTE SHARE A ROW ON A WIDE SCREEN. They answer the
+              same question from two directions — "when was it busy" and "where"
+              — and reading one usually prompts the other. `chartRow` wraps, so on
+              a narrow window they stack and each takes the full width rather
+              than squeezing into two unreadable halves. */}
+          <View style={styles.chartRow}>
+            <Card style={[styles.card, styles.chartCard]} mode="elevated">
+              <Card.Content>
+                <View style={styles.chartHead}>
+                  <View style={styles.tableHead}>
+                    <MaterialCommunityIcons
+                      name="chart-line"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <Text variant="titleMedium" style={styles.tableTitle}>
+                      Overview
+                    </Text>
+                  </View>
+                  {/* Plain segmented text rather than a dropdown: four options
+                      that fit, and one tap to compare instead of two. */}
+                  <View style={styles.metricRow}>
+                    {SERIES_CHOICES.map((m) => (
+                      <Button
+                        key={m}
+                        mode="text"
+                        compact
+                        onPress={() => setMetric(m)}
+                        labelStyle={[
+                          styles.metricLabel,
+                          metric === m ? { color: SERIES_TONE[m] } : styles.metricIdle,
+                        ]}
+                      >
+                        {SERIES_METRIC_LABEL[m]}
+                      </Button>
+                    ))}
+                  </View>
+                </View>
+
+                <TrendChart
+                  series={series}
+                  label={SERIES_METRIC_LABEL[metric]}
+                  tone={SERIES_TONE[metric] || colors.primary}
+                />
+
+                {/* Only with a real spread to describe. On a single day, or a
+                    period with nothing in it, "highest 0 on 27 Aug" is noise. */}
+                {series.length > 1 ? (
+                  <View style={styles.peaks}>
+                    <Peak
+                      label="Highest"
+                      tone={colors.success}
+                      value={peaks.peak?.value ?? 0}
+                      sub={peaks.peak ? `on ${prettyDateKey(peaks.peak.date)}` : '—'}
+                    />
+                    <Peak
+                      label="Lowest"
+                      tone={colors.danger}
+                      value={peaks.low?.value ?? 0}
+                      sub={peaks.low ? `on ${prettyDateKey(peaks.low.date)}` : '—'}
+                    />
+                    <Peak
+                      label="Daily avg."
+                      tone={colors.primary}
+                      value={peaks.average}
+                      sub={`over ${series.length} day${series.length === 1 ? '' : 's'}`}
+                    />
+                  </View>
+                ) : null}
+              </Card.Content>
+            </Card>
+
+            <View style={styles.routeCard}>
+              <Table
+                title="By route"
+                icon="map-marker-path"
+                nameHeader="ROUTE"
+                rows={byRoute}
+                limit={7}
+                emptyText="No rides in this period."
+              />
+            </View>
+          </View>
           <Table
             title="By cab"
             icon="car-multiple"
@@ -336,11 +592,66 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     ...shadow.sm,
   },
-  stats: { flexDirection: 'row', flexWrap: 'wrap', rowGap: spacing.md },
-  stat: { flexGrow: 1, flexBasis: 120, alignItems: 'center' },
-  statValue: { fontFamily: font.bold, fontSize: 30, lineHeight: 38 },
+  stats: { flexDirection: 'row', flexWrap: 'wrap', rowGap: spacing.md, gap: spacing.md },
+  // flexBasis 190 rather than 120: each tile now carries an icon, a number, a
+  // label and a caption, and below about 180 the caption wraps to three lines and
+  // the row loses its rhythm. Four per row on a laptop, two on a tablet, one on a
+  // phone — all from flexWrap, no breakpoints.
+  stat: {
+    flexGrow: 1,
+    flexBasis: 190,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  statHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  statIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statText: { flex: 1, minWidth: 0 },
+  statValue: { fontFamily: font.bold, fontSize: 26, lineHeight: 32 },
   statLabel: { color: colors.muted, letterSpacing: 0.3 },
-  statHint: { color: colors.disabled, fontSize: 11 },
+  statHint: { color: colors.disabled, fontSize: 11, marginTop: spacing.xs, lineHeight: 15 },
+
+  // --- Overview chart -------------------------------------------------------
+  chartRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.lg },
+  // flexBasis 420 is the narrowest the chart stays readable at; below that the
+  // two cards stack instead of splitting the row.
+  chartCard: { flexGrow: 3, flexBasis: 420, marginBottom: 0 },
+  routeCard: { flexGrow: 2, flexBasis: 340 },
+  chartHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  metricRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  metricLabel: { fontSize: 12, marginHorizontal: spacing.xs },
+  metricIdle: { color: colors.muted },
+  peaks: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.lg },
+  peak: {
+    flexGrow: 1,
+    flexBasis: 110,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderLeftWidth: 3,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+  },
+  peakLabel: { fontFamily: font.semibold, letterSpacing: 0.3 },
+  peakValue: { fontFamily: font.bold, fontSize: 22, lineHeight: 28, color: colors.text },
+  peakSub: { color: colors.muted, fontSize: 11 },
+  moreBtn: { alignSelf: 'flex-start', marginTop: spacing.xs },
+  moreContent: { paddingHorizontal: 0 },
   exportBtn: { marginTop: spacing.lg, borderRadius: radius.md, ...shadow.brand },
   exportContent: { paddingVertical: 6 },
   exportNote: { color: colors.muted, marginTop: spacing.lg, textAlign: 'center' },
@@ -357,6 +668,10 @@ const styles = StyleSheet.create({
   colName: { flex: 1, minWidth: 0, color: colors.text },
   colNum: { width: 76, textAlign: 'right', color: colors.textSecondary },
   colNumBad: { color: colors.danger, fontFamily: font.semibold },
+  // Cancellations are grey, not red. A route with cancellations is information;
+  // a route with no-shows is a problem. Colouring both alike would flatten the
+  // difference the two columns exist to show.
+  colNumMuted: { color: colors.muted, fontFamily: font.semibold },
   divider: { backgroundColor: colors.border, marginVertical: spacing.sm },
   empty: { color: colors.muted, paddingVertical: spacing.md },
 });

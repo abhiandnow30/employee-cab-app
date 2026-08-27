@@ -129,18 +129,55 @@ export const bookingsInRange = (bookings, range) =>
 // cancelled ride is a row in the collection but not a journey anybody made, and
 // counting it would inflate every figure a report is used for. A no-show DID
 // run — the cab drove there — so it counts as run and is called out separately.
-export function summarise(bookings) {
+//
+// WHAT `ran` DOES NOT MEAN, and why the three counters below exist.
+//
+// It means NOT CANCELLED — nothing stronger. `Booked`, `Cab assigned`, `On the
+// way`, `Arrived` and `On board` are all counted as run, because the cab was
+// scheduled and nobody called it off. That is a defensible figure to plan
+// capacity on, but it was the ONLY figure on the page, and the label "Rides run"
+// invited a reading it cannot support: a month showing 43 run had just 11 rides
+// with an outcome anybody had actually recorded.
+//
+// The other 32 were two unrelated things wearing one number:
+//   • rides NOT DUE YET — today's drops, later tonight. Entirely normal.
+//   • rides whose date has PASSED with no outcome — the driver never advanced
+//     the trip past "Cab assigned". The ride almost certainly happened; what is
+//     missing is the record of it. That is a data-quality problem, and until now
+//     it was invisible.
+//
+// So `settled` / `upcoming` / `unconfirmed` partition `ran` exactly:
+//     ran === settled + upcoming + unconfirmed
+//     total === ran + cancelled
+// `ran` itself is deliberately unchanged — the breakdown tables and the export
+// already lean on it, and quietly redefining it would move numbers somebody may
+// have written down last week.
+//
+// `today` is a parameter with a default rather than being read inside, exactly
+// as periodRange() takes one: it keeps this testable with a pinned clock and
+// keeps the module free of anything that isn't arithmetic.
+export function summarise(bookings, today = todayKey()) {
   const s = {
     total: 0, ran: 0, completed: 0, noShow: 0, cancelled: 0,
     inbound: 0, outbound: 0, unassigned: 0,
+    settled: 0, upcoming: 0, unconfirmed: 0,
   };
   (bookings || []).forEach((b) => {
     s.total += 1;
     if (b.status === STATUS.CANCELLED) s.cancelled += 1;
     else {
       s.ran += 1;
+      const done = b.status === STATUS.COMPLETED || b.status === STATUS.NO_SHOW;
       if (b.status === STATUS.COMPLETED) s.completed += 1;
       if (b.status === STATUS.NO_SHOW) s.noShow += 1;
+      // An outcome was recorded, whichever way it went.
+      if (done) s.settled += 1;
+      // No outcome. Which of the two it is turns purely on the date: string
+      // compare is correct on 'YYYY-MM-DD' and avoids parsing into a Date, which
+      // is how timezone bugs get in (same reasoning as inRange above). A booking
+      // with no date at all counts as unconfirmed rather than vanishing.
+      else if (String(b.date || '') >= today) s.upcoming += 1;
+      else s.unconfirmed += 1;
       if (!b.assignedCabId) s.unassigned += 1;
       if (b.direction === DIRECTION.OUT) s.outbound += 1;
       else s.inbound += 1;
@@ -151,7 +188,10 @@ export function summarise(bookings) {
 
 // Group by anything and count the same way, so every table on the screen reads
 // identically whether it is split by route, by cab or by person.
-export function breakdown(bookings, keyOf, labelOf = (k) => k) {
+//
+// `today` is threaded through rather than left to the default so a table can
+// never disagree with the tiles above it about which side of "now" a ride sits.
+export function breakdown(bookings, keyOf, labelOf = (k) => k, today = todayKey()) {
   const groups = new Map();
   (bookings || []).forEach((b) => {
     const k = keyOf(b) ?? '';
@@ -159,10 +199,107 @@ export function breakdown(bookings, keyOf, labelOf = (k) => k) {
     groups.get(k).push(b);
   });
   return [...groups.entries()]
-    .map(([k, rows]) => ({ key: k, label: labelOf(k), ...summarise(rows) }))
+    .map(([k, rows]) => ({ key: k, label: labelOf(k), ...summarise(rows, today) }))
     // Busiest first — a report is read from the top, and the top should be the
     // route or the cab carrying the most people.
     .sort((a, b) => b.ran - a.ran || String(a.label).localeCompare(String(b.label)));
+}
+
+// ---------------------------------------------------------------------------
+// THE DAILY SERIES — what the totals look like day by day.
+//
+// The tiles answer "how many", one number each. They cannot answer "is this
+// normal", which is the question somebody actually asks before adding a cab: a
+// month that ran 43 rides evenly is a different operation from one that ran 46
+// on a single Wednesday and 12 the day after, and the tiles show both as 43.
+//
+// EVERY DAY IN THE RANGE, INCLUDING THE EMPTY ONES. Grouping only the days that
+// have bookings would draw a line straight over a Sunday with no rides, which
+// reads as "steady" when the truth is "closed" — so the range is walked and days
+// with nothing get an explicit zero. That is also what makes the x-axis evenly
+// spaced without the chart having to do date maths.
+// ---------------------------------------------------------------------------
+
+// The figures a day can be plotted by. Keys match the counters summarise()
+// returns, so adding one here is all it takes to offer it in the picker.
+export const SERIES_METRIC = {
+  RAN: 'ran',
+  COMPLETED: 'completed',
+  NO_SHOW: 'noShow',
+  CANCELLED: 'cancelled',
+  UNCONFIRMED: 'unconfirmed',
+};
+
+export const SERIES_METRIC_LABEL = {
+  [SERIES_METRIC.RAN]: 'Rides run',
+  [SERIES_METRIC.COMPLETED]: 'Completed',
+  [SERIES_METRIC.NO_SHOW]: 'No-shows',
+  [SERIES_METRIC.CANCELLED]: 'Cancelled',
+  [SERIES_METRIC.UNCONFIRMED]: 'Unconfirmed',
+};
+
+// [{ date, value }] for every day from range.start to range.end inclusive.
+//
+// Guarded at 400 days: the subscription only holds 180, and a custom range typed
+// back-to-front or spanning years would otherwise spin building an array nothing
+// can usefully draw.
+const MAX_SERIES_DAYS = 400;
+
+export function dailySeries(bookings, range, metric = SERIES_METRIC.RAN, today = todayKey()) {
+  if (!range?.start || !range?.end || range.start > range.end) return [];
+
+  // Bucket once by date, then read the buckets — one pass over the bookings
+  // rather than one filter per day, which on a month of a few hundred rides is
+  // the difference between 1 walk and 31.
+  const byDate = new Map();
+  (bookings || []).forEach((b) => {
+    const d = String(b?.date || '');
+    if (!d || d < range.start || d > range.end) return;
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push(b);
+  });
+
+  const out = [];
+  let cursor = range.start;
+  while (cursor <= range.end && out.length < MAX_SERIES_DAYS) {
+    const rows = byDate.get(cursor);
+    out.push({
+      date: cursor,
+      value: rows ? summarise(rows, today)[metric] || 0 : 0,
+    });
+    cursor = shiftDateKey(cursor, 1);
+  }
+  return out;
+}
+
+// Highest / lowest / average for the cards under the chart.
+//
+// The average is over EVERY day in the range, empty ones included — an average
+// that skipped the quiet days would always flatter the service, and the number
+// is being read as "what a normal day looks like". Rounded to a whole ride
+// because half a ride is not a thing anybody can plan for.
+//
+// `peak` and `low` carry their date so the card can say which day it was, and
+// ties resolve to the EARLIEST day — arbitrary, but stable, so the card does not
+// change its mind between renders.
+export function seriesStats(series) {
+  const points = series || [];
+  if (!points.length) return { peak: null, low: null, average: 0, total: 0 };
+
+  let peak = points[0];
+  let low = points[0];
+  let total = 0;
+  points.forEach((p) => {
+    total += p.value;
+    if (p.value > peak.value) peak = p;
+    if (p.value < low.value) low = p;
+  });
+  return {
+    peak,
+    low,
+    total,
+    average: Math.round(total / points.length),
+  };
 }
 
 // ---------------------------------------------------------------------------

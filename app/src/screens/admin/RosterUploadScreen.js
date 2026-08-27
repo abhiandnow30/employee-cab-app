@@ -45,7 +45,7 @@ import { useApp } from '../../context/AppContext';
 import {
   parseRosterFile, validateRoster, ERROR_KINDS,
   fetchMonthRosters, summariseStoredRoster, downloadStoredRoster,
-  rosterOrphans, removeRosterEntries,
+  rosterOrphans, removeRosterEntries, fetchImportFile,
 } from '../../services/roster';
 import { subscribeEmployees, adminInviteEmployees } from '../../services/profile';
 import { ALL_SHIFT_CODES, SHIFT_COLORS, shiftSummary } from '../../data/shifts';
@@ -446,8 +446,13 @@ export default function RosterUploadScreen({ navigation }) {
     }
 
     setImportProgress({ done: 0, total: report.valid });
+    // THE BYTES HAVE TO TRAVEL WITH THE IMPORT. dismiss() below clears the draft
+    // they live in, so this is the last moment the uploaded file exists at all —
+    // after this the only copy is the one importRoster stores.
     const res = await importRoster(report, {
       onProgress: (done, total) => setImportProgress({ done, total }),
+      fileBytes,
+      fileName: picked?.name || report.fileName || '',
     });
     setBusy(false);
     setImportProgress(null);
@@ -463,6 +468,16 @@ export default function RosterUploadScreen({ navigation }) {
           // profiles and not something HR should have to discover later.
           (res.routed ? ` · ${res.routed} routed from the sheet` : '')
       );
+      // A file that could not be kept is worth saying out loud, once, here. It is
+      // NOT an error — every roster row is already written — but Import history
+      // will show no Download for this row, and silence would leave that looking
+      // like the button was broken again.
+      if (!res.fileStored) {
+        setError(
+          `The roster imported, but the original file was not kept — ${res.fileSkipped || 'unknown reason'}. ` +
+            'Import history can still rebuild this month from what was stored.'
+        );
+      }
       // The sheet has served its purpose and is now recorded in Import history;
       // keeping the draft would offer to re-import what's already in.
       dismiss();
@@ -537,6 +552,47 @@ export default function RosterUploadScreen({ navigation }) {
   // so this reads them back out of Firestore first. That's the same read the
   // verify dialog does, and it's the honest source: what's stored is what the
   // coordinator's board sees, which is not necessarily what the file said.
+  // THE ORIGINAL FILE, BYTE FOR BYTE — the one HR actually uploaded.
+  //
+  // Distinct from downloadMonth() below, and the two are not interchangeable:
+  //   • this hands back the exact spreadsheet that was imported, under its own
+  //     name, frozen at the moment of upload. It is the audit answer — "what did
+  //     we actually send?" — and it is what "download the uploaded xlsx" means.
+  //   • downloadMonth() rebuilds a sheet from the roster documents as they stand
+  //     right now. That is the round-trip answer — add a joiner, upload it back —
+  //     and it deliberately includes every change made since the import.
+  //
+  // Only imports made after file-keeping existed have one, so the button is
+  // driven by `hasOriginalFile` on the history row rather than by trying the read
+  // and failing.
+  async function downloadOriginal(entry) {
+    if (!entry?.id || downloadingId) return;
+    setDownloadingId(entry.id);
+    setError('');
+    try {
+      const file = await fetchImportFile(entry.id);
+      if (!file?.data) {
+        setError(
+          'The original file for this import was not stored — it predates file-keeping, ' +
+            'or it was too large. Use the sheet icon to download this month as it stands now.'
+        );
+        return;
+      }
+      const name = file.fileName || entry.fileName || 'roster.xlsx';
+      // Same helper the "open the file I just chose" button uses, so the original
+      // is handed back exactly one way in this screen.
+      if (!openOriginalFile(file.data, name)) {
+        setError('The browser refused the download. Check your pop-up/download settings.');
+        return;
+      }
+      setSnack(`Downloaded ${name} — the original file, exactly as uploaded.`);
+    } catch (e) {
+      setError(e?.message || 'Could not fetch that file.');
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
   async function downloadMonth(entry) {
     if (!entry?.month || downloadingId) return;
     setDownloadingId(entry.id);
@@ -1482,120 +1538,170 @@ export default function RosterUploadScreen({ navigation }) {
               </Text>
             ) : (
               <>
-                <ScrollView horizontal>
-                  <View>
-                    <DataTable style={styles.historyTable}>
-                      <DataTable.Header>
-                        <DataTable.Title style={styles.histColMonth}>Month</DataTable.Title>
-                        <DataTable.Title style={styles.histColFile}>File</DataTable.Title>
-                        {/* NOT `numeric`. Right-aligning this pushed "11
-                            Employees" flush against the left-aligned Date cell
-                            beside it, so the two read as one run-together value
-                            ("11 Employees06 Aug 2026") and the headers as
-                            "ImportedDate". */}
-                        <DataTable.Title style={styles.histColImported}>
-                          Imported
-                        </DataTable.Title>
-                        <DataTable.Title style={styles.histColDate}>Date</DataTable.Title>
-                        <DataTable.Title style={styles.histColStatus}>Status</DataTable.Title>
-                        <DataTable.Title style={styles.histColActions}> </DataTable.Title>
-                      </DataTable.Header>
-                      {shownHistory.map((h) => {
-                        const ok = h.status === 'imported';
-                        return (
-                          <DataTable.Row key={h.id}>
-                            <DataTable.Cell style={styles.histColMonth}>
+                {/* A LIST OF ROWS, NOT A DataTable — and the reason is a bug, not taste.
+                    Paper's DataTable.Cell wraps whatever you give it in a <Text>
+                    with numberOfLines={1}. Text is not a layout container: the
+                    File cell's two-line block (name over uploader) had no width to
+                    truncate against, so the filename ran straight over the
+                    "Imported" column — "roster-2026-08 addresses.exinent.xlsx"
+                    printed on top of "14 employees" — and the three action buttons,
+                    also inside that Text, got clipped with a stray ellipsis between
+                    them. Six flex columns sharing 720px could not hold a real
+                    filename either, so the whole table needed a horizontal
+                    scrollbar to show a handful of rows.
+
+                    Each import is one record, so it is now one row: what was
+                    imported on the left, the controls on the right, and every piece
+                    of text bounded by a View that can actually clip it. No columns
+                    to collide, nothing to scroll sideways, and it stays readable
+                    when the sidebar squeezes the page. */}
+                <View style={styles.histList}>
+                  {shownHistory.map((h) => {
+                    const ok = h.status === 'imported';
+                    const count = h.importedCount ?? h.valid;
+                    return (
+                      <View key={h.id} style={styles.histRow}>
+                        <View style={styles.histBody}>
+                          <View style={styles.histTopLine}>
+                            <Text variant="labelLarge" style={styles.histMonth}>
                               {h.monthLabel || h.month}
-                            </DataTable.Cell>
-                            <DataTable.Cell style={styles.histColFile}>
-                              <View>
-                                <Text variant="bodySmall" numberOfLines={1} style={styles.histFileName}>
-                                  {h.fileName || 'file'}
-                                </Text>
-                                <Text variant="bodySmall" style={styles.histFileMeta} numberOfLines={1}>
-                                  {h.uploadedByName || 'admin'}
-                                </Text>
-                              </View>
-                            </DataTable.Cell>
-                            <DataTable.Cell style={styles.histColImported}>
-                              {ok ? `${h.importedCount ?? h.valid} employees` : '—'}
-                            </DataTable.Cell>
-                            <DataTable.Cell style={styles.histColDate}>
-                              {formatDateOnly(h.uploadedAt)}
-                            </DataTable.Cell>
-                            <DataTable.Cell style={styles.histColStatus}>
-                              <View style={styles.histStatusRow}>
-                                <MaterialCommunityIcons
-                                  name={ok ? 'check-circle' : 'progress-clock'}
-                                  size={15}
-                                  color={ok ? colors.success : '#B26A00'}
-                                />
-                                <Text
-                                  variant="bodySmall"
-                                  style={{ color: ok ? colors.success : '#B26A00' }}
-                                >
-                                  {ok ? 'Success' : h.status}
-                                </Text>
-                              </View>
-                            </DataTable.Cell>
-                            <DataTable.Cell style={styles.histColActions}>
-                              {/* "Success" only means the write didn't error.
-                                  This opens what actually landed in Firestore
-                                  for that month, which is the thing worth
-                                  checking. */}
+                            </Text>
+                            {/* The status reads as a chip rather than a bare
+                                tick-and-word: at the top of the row it answers
+                                "did this land?" before the eye down to the detail. */}
+                            <View
+                              style={[
+                                styles.histChip,
+                                { backgroundColor: ok ? colors.successSoft : colors.warningSoft },
+                              ]}
+                            >
+                              <MaterialCommunityIcons
+                                name={ok ? 'check-circle' : 'progress-clock'}
+                                size={13}
+                                color={ok ? colors.success : colors.warning}
+                              />
+                              <Text
+                                variant="bodySmall"
+                                style={{ color: ok ? colors.success : colors.warning }}
+                              >
+                                {ok ? 'Success' : h.status}
+                              </Text>
+                            </View>
+                          </View>
+                          {/* numberOfLines works here because the parent View
+                              gives it a real width to truncate against. */}
+                          <Text variant="bodySmall" numberOfLines={1} style={styles.histFileName}>
+                            {h.fileName || 'file'}
+                          </Text>
+                          {/* One meta line instead of three columns. Each value
+                              says what it is, so the headers they needed are gone
+                              with them. */}
+                          <Text variant="bodySmall" numberOfLines={1} style={styles.histFileMeta}>
+                            {ok ? `${count} employee${count === 1 ? '' : 's'}` : 'Not imported'}
+                            {' · '}
+                            {formatDateOnly(h.uploadedAt)}
+                            {' · '}
+                            {h.uploadedByName || 'admin'}
+                          </Text>
+                        </View>
+
+                        <View style={styles.histActions}>
+                          {/* "Success" only means the write didn't error.
+                              This opens what actually landed in Firestore
+                              for that month, which is the thing worth
+                              checking. */}
+                          <Tooltip title="See what was actually saved for this month">
+                            <IconButton
+                              icon="table-eye"
+                              size={18}
+                              iconColor={colors.primary}
+                              style={styles.histIcon}
+                              onPress={() => openVerify(h)}
+                              accessibilityLabel="See what was imported for this month"
+                            />
+                          </Tooltip>
+                          {/* TWO DOWNLOADS, AND THEY ANSWER DIFFERENT QUESTIONS.
+                              This one is the ORIGINAL FILE — the exact
+                              spreadsheet uploaded, under its own name, frozen at
+                              upload time. It belongs to its own row (every row
+                              kept its own file), so unlike the rebuild below it
+                              is NOT restricted to the newest row per month.
+                              Rows imported before file-keeping existed have
+                              nothing to give and say so rather than failing on
+                              click. */}
+                          {downloadingId === h.id ? (
+                            <ActivityIndicator size={16} style={styles.histSpinner} />
+                          ) : h.hasOriginalFile ? (
+                            <Tooltip title={`Download the original file — ${h.fileName || 'as uploaded'}`}>
                               <IconButton
-                                icon="table-eye"
+                                icon="file-download-outline"
                                 size={18}
                                 iconColor={colors.primary}
-                                onPress={() => openVerify(h)}
-                                accessibilityLabel="See what was imported for this month"
+                                style={styles.histIcon}
+                                disabled={!!downloadingId}
+                                onPress={() => downloadOriginal(h)}
+                                accessibilityLabel="Download the original uploaded file"
                               />
-                              {/* Download this month as a sheet to edit and
-                                  re-upload. Built from what's STORED, not from
-                                  the file that was uploaded — the original bytes
-                                  are never kept, and after an edit the two are
-                                  different documents anyway. Every row for the
-                                  same month reads the same current documents, so
-                                  only the most recent row offers it — otherwise
-                                  an older row's button silently hands back
-                                  today's data under its own upload's name, which
-                                  looks like the button is stuck on one file. */}
-                              {downloadingId === h.id ? (
-                                <ActivityIndicator size={16} style={styles.histSpinner} />
-                              ) : latestHistoryIdByMonth.get(h.month) === h.id ? (
-                                <IconButton
-                                  icon="download"
-                                  size={18}
-                                  iconColor={colors.primary}
-                                  disabled={!!downloadingId}
-                                  onPress={() => downloadMonth(h)}
-                                  accessibilityLabel="Download this month's roster to edit and re-upload"
-                                />
-                              ) : (
-                                <Tooltip title="Superseded by a later upload for this month — use the eye icon to see what's stored now, or download from that row instead.">
-                                  <IconButton
-                                    icon="download"
-                                    size={18}
-                                    iconColor={colors.muted}
-                                    disabled
-                                    accessibilityLabel="Superseded by a later upload for this month"
-                                  />
-                                </Tooltip>
-                              )}
+                            </Tooltip>
+                          ) : (
+                            <Tooltip title="The original file wasn't kept for this import — only imports made from now on store it. Use the sheet icon to download this month as it stands.">
                               <IconButton
-                                icon="delete"
+                                icon="file-download-outline"
                                 size={18}
-                                iconColor={colors.danger}
-                                onPress={() => setDeleteFor(h)}
-                                accessibilityLabel="Remove this import record"
+                                iconColor={colors.muted}
+                                style={styles.histIcon}
+                                disabled
+                                accessibilityLabel="Original file not stored for this import"
                               />
-                            </DataTable.Cell>
-                          </DataTable.Row>
-                        );
-                      })}
-                    </DataTable>
-                  </View>
-                </ScrollView>
+                            </Tooltip>
+                          )}
+                          {/* And this one rebuilds the month from what's STORED
+                              — the round trip: download, add the joiner, upload
+                              it back. It deliberately reflects every change made
+                              since the import, so every row for a month gives
+                              back the same current data; only the most recent
+                              row offers it, or an older row's button would
+                              silently hand back today's data under its own
+                              upload's name and look stuck on one file. */}
+                          {latestHistoryIdByMonth.get(h.month) === h.id ? (
+                            <Tooltip title="Download this month as it is stored NOW — edit it and upload it again to replace the month">
+                              <IconButton
+                                icon="table-arrow-down"
+                                size={18}
+                                iconColor={colors.primary}
+                                style={styles.histIcon}
+                                disabled={!!downloadingId}
+                                onPress={() => downloadMonth(h)}
+                                accessibilityLabel="Download this month's roster as stored, to edit and re-upload"
+                              />
+                            </Tooltip>
+                          ) : (
+                            <Tooltip title="Superseded by a later upload for this month — rebuild it from that row instead. The original file above is still this upload's own.">
+                              <IconButton
+                                icon="table-arrow-down"
+                                size={18}
+                                iconColor={colors.muted}
+                                style={styles.histIcon}
+                                disabled
+                                accessibilityLabel="Superseded by a later upload for this month"
+                              />
+                            </Tooltip>
+                          )}
+                          <Tooltip title="Remove this record from the history">
+                            <IconButton
+                              icon="delete"
+                              size={18}
+                              iconColor={colors.danger}
+                              style={styles.histIcon}
+                              onPress={() => setDeleteFor(h)}
+                              accessibilityLabel="Remove this import record"
+                            />
+                          </Tooltip>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
                 {history.length > 5 ? (
                   <Button mode="text" onPress={() => setShowAllHistory((v) => !v)}>
                     {showAllHistory ? 'Show less' : `View all ${history.length}`}
@@ -2157,23 +2263,50 @@ const styles = StyleSheet.create({
   vColName: { flex: 2.2 },
   vColRoute: { flex: 1.6 },
   vColNum: { flex: 0.7, justifyContent: 'center' },
-  historyTable: { minWidth: 720 },
-  histColMonth: { flex: 1.1 },
-  histColFile: { flex: 2 },
-  // paddingRight keeps the count clear of the date column even if this table is
-  // ever squeezed narrower than its minWidth.
-  histColImported: { flex: 1.4, paddingRight: 12 },
-  histColDate: { flex: 1.2 },
-  histColStatus: { flex: 1.2 },
-  // Three actions now (verify, download, remove), so this needs more room than
-  // the two it was sized for or the last one clips.
-  histColActions: { flex: 1.5, justifyContent: 'flex-end' },
+  // --- Import history rows ---------------------------------------------------
+  // Hairline separators rather than a bordered box per row: these are entries in
+  // one log, and boxing each of them made four uploads of the same month look
+  // like four unrelated things.
+  histList: { marginTop: spacing.sm },
+  histRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  // flex:1 AND minWidth:0 together. flex alone still lets a long filename push
+  // the row wider than its parent on web (min-width defaults to auto, so the
+  // content floor wins), which is what allowed the overlap in the first place —
+  // minWidth:0 is what actually lets numberOfLines clip instead.
+  histBody: { flex: 1, minWidth: 0 },
+  histTopLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: 2,
+  },
+  histMonth: { color: colors.text, fontFamily: font.semibold },
+  histChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  histFileName: { color: colors.textSecondary },
+  histFileMeta: { color: colors.muted, marginTop: 1 },
+  // Fixed, never flexed: the controls must stay put down the column so the eye
+  // icon on row one sits above the eye icon on row two.
+  histActions: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
+  // Paper gives IconButton a 6px margin all round, which spaced three of them
+  // out far enough to look unrelated to each other and to their own row.
+  histIcon: { margin: 0 },
   // Stands in for the download IconButton while its month is being read back,
   // sized to match so the row doesn't jump.
-  histSpinner: { marginHorizontal: 14 },
-  histFileName: { fontFamily: font.semibold, color: colors.text },
-  histFileMeta: { color: colors.muted, marginTop: 1 },
-  histStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  histSpinner: { width: 40, marginHorizontal: 0 },
 
   centerWrap: {
     flex: 1,
