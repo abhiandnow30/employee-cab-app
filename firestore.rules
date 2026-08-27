@@ -215,6 +215,38 @@ service cloud.firestore {
       // import wrote — this only lets HR tidy the list, not undo an import.
       allow delete: if isAdmin();
     }
+
+    // --- The uploaded spreadsheet itself ------------------------------------
+    // THE FILE HR ACTUALLY UPLOADED, kept so Import history can hand it back
+    // byte for byte. One document per import, sharing its rosterImports id.
+    //
+    // WHY IT IS ITS OWN COLLECTION rather than a `data` field on the row above:
+    // the history screen subscribes to every rosterImports document, so bytes
+    // living there would be re-downloaded on every page open. Separated, they
+    // are read only when somebody clicks Download.
+    //
+    //   read   → the desk. A roster sheet carries names, employee ids, phone
+    //            numbers and home addresses — the same data the employees
+    //            collection guards — so this is deliberately NOT readable by the
+    //            employees named in it, exactly as their own roster rows are not.
+    //   create → admin only, stamped with their own uid, and pinned to the id of
+    //            the import it belongs to so a file cannot be filed against
+    //            somebody else's upload.
+    //   update → never. The point of keeping the file is that it is the record
+    //            of what was sent; a mutable one would prove nothing.
+    //   delete → admin, so removing a history row takes its file with it rather
+    //            than orphaning a document nothing can reach.
+    match /rosterImportFiles/{importId} {
+      allow read: if isDesk();
+      allow create: if isAdmin()
+        && request.resource.data.uploadedBy == request.auth.uid
+        && request.resource.data.importId == importId
+        && request.resource.data.data is string
+        && isServerTime('uploadedAt');
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
     // --- Change requests (the exception workflow) ---------------------------
     // How reality differs from the roster on one day: leave, absent, a shift that
     // ran long, an emergency ride. The employee raises it; the desk resolves it.
@@ -877,7 +909,7 @@ service cloud.firestore {
       }
 
       // ---- THE RIDE-START OTP ---------------------------------------------
-      // The rider reads six digits off their own screen; the driver types them
+      // The rider reads their code off their own screen; the driver types them
       // in. Only then does the trip become "On board".
       //
       // The driver can read this booking document, so the code is NOT on it — it
@@ -1036,9 +1068,20 @@ service cloud.firestore {
         // re-issued when the ride moves to another cab. Nobody else writes it —
         // a rider who could set their own code could hand a driver a boarding
         // they never made.
+        //
+        // THE LENGTH IS PINNED IN TWO PLACES AND THEY MUST MOVE TOGETHER. Rules
+        // cannot import a constant, so this number mirrors RIDE_OTP_LENGTH in
+        // app/src/data/mockData.js by hand. Change one without the other and
+        // every cab assignment fails outright — the code is written in the SAME
+        // atomic commit as the assignment, so a refused code refuses the
+        // assignment with it. (4 since Aug 2026; was 6.)
+        //
+        // Only what is ISSUED is pinned. Codes already stored at the old length
+        // are still read and still matched by startOtpMatches(), so a ride
+        // assigned before the change can still be boarded.
         allow create, update: if signedIn() && isDesk()
           && request.resource.data.code is string
-          && request.resource.data.code.size() == 6;
+          && request.resource.data.code.size() == 4;
         allow delete: if false;
       }
     }
