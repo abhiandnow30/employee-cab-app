@@ -349,7 +349,7 @@ export default function ManageCabsScreen() {
           <Text variant="bodySmall" style={styles.hint}>
             {readOnly
               ? "The fleet and who is driving each vehicle. The coordinator maintains this — you're seeing it as it stands."
-              : "The vehicles you assign each day. Linking a driver switches on that cab's live tracking and lets them sign in with this cab's last 4 digits followed by their mobile number."}
+              : "Linking a driver turns on live tracking and sets their sign-in code: this cab's last 4 digits plus their mobile number."}
           </Text>
           {readOnly ? null : (
             <Button mode="contained" icon="plus" onPress={openAdd}>

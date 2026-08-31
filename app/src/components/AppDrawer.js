@@ -81,10 +81,10 @@ export const ADMIN_DRAWER_ITEMS = [
   // rider's cancellation REQUEST, and the by-cab view of the last 180 days.
   { label: "Today's Rides", icon: 'view-dashboard', screen: 'CoordinatorHome' },
   { label: 'Employees', icon: 'account-cog', screen: 'EmployeeManagement' },
-  // The transport desk itself. Its own screen rather than a role toggle inside
-  // Add Employee: a coordinator is an account but not a rider, so none of the
-  // rider fields on that form apply to them.
-  { label: 'Coordinators', icon: 'headset', screen: 'ManageCoordinators' },
+  // No separate "Coordinators" row any more (Sep 2026) — there are usually only
+  // a handful of them, so managing their accounts is now an admin-only tab
+  // inside Cabs, Drivers & Coordinators (ManageFleetScreen) instead of its own
+  // menu entry — which is also why that item's label grew to name it.
   // RIDE CHANGE REQUESTS — leave, drop one ride, shift changed. On HR's menu at
   // explicit request (Aug 2026): the desired flow is the plain one, employee asks
   // to cancel a cab → admin approves or rejects → the cab is cancelled.
@@ -95,19 +95,26 @@ export const ADMIN_DRAWER_ITEMS = [
   // roster can be granted — but it never applied to these three, which only ever
   // cancel or re-code a ride the roster already produces.
   //
-  // The coordinator keeps the same queue on their own menu; both roles read one
-  // shared list (pendingForDesk) rather than two half-lists, so a request can't be
-  // decided twice or sit unseen because each desk assumed the other had it.
-  { label: 'Ride Cancel Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
-  { label: 'Address Requests', icon: 'home-edit', screen: 'AddressRequests' },
-  // People who signed in with their company account but were never entered by
-  // HR, so they have no address or route and no cab can be sent for them. HR
-  // approves; the coordinator sets the route (same screen, see its header).
-  { label: 'New Cab Requests', icon: 'car-clock', screen: 'CabRequests' },
+  // The coordinator keeps the same ride-change queue on their own menu; both
+  // roles read one shared list (pendingForDesk) rather than two half-lists, so
+  // a request can't be decided twice or sit unseen because each desk assumed
+  // the other had it.
+  //
+  // ONE ROW FOR THREE QUEUES (Sep 2026). Ride changes, cab setup and address
+  // changes each used to have their own drawer row; each is rarely full enough
+  // on its own to earn one, so they're now tabs inside a single screen — see
+  // RequestsInboxScreen.js. The badge is the sum of all three (menuCounts.
+  // Requests, computed differently for admin than for the coordinator's own
+  // separate Requests screen — see AppContext.js).
+  { label: 'Requests', icon: 'clipboard-list-outline', screen: 'Requests' },
   // HR needs to SEE who is driving what — which cab a ride was given to, and which
-  // driver account is behind it — without owning the fleet. These two screens
-  // render read-only for the admin role; the coordinator keeps the controls.
-  { label: 'Cabs & Drivers', icon: 'car-multiple', screen: 'ManageFleet' },
+  // driver account is behind it — without owning the fleet. The Cabs and Drivers
+  // tabs render read-only for the admin role; the coordinator keeps the controls
+  // there. Coordinators (the tab, not the coordinator ROLE) is admin-only in the
+  // other direction — see ManageFleetScreen's own header comment for why. Named
+  // for all three tabs since HR, unlike the coordinator, actually owns every one
+  // of them.
+  { label: 'Cabs, Drivers & Coordinators', icon: 'car-multiple', screen: 'ManageFleet' },
   { label: 'Live Tracking', icon: 'map-marker-radius', screen: 'TrackCabs' },
   // No "Cab Routes" screen. The route list is no longer edited in the app: the
   // monthly sheet carries a Route column, and the names it may use are the fixed

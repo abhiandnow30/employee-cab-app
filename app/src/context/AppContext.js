@@ -3018,16 +3018,32 @@ export function AppProvider({ children }) {
   // What is waiting on the signed-in desk user, keyed by SCREEN NAME so the drawer
   // can badge the right row. Both of these queues were previously invisible until
   // somebody thought to open them.
+  const pendingAddressCount = addressRequests.filter(
+    (r) => r.status === ADDRESS_STATUS.PENDING
+  ).length;
+  const pendingRideChangeCount = pendingForDesk(changeRequests).length;
+  // Somebody is signed in and cannot be sent a cab until this is dealt with, so
+  // it badges for both desk roles.
+  const pendingCabCount = cabServiceRequests.filter(
+    (r) => r.status === CAB_REQUEST_STATUS.PENDING
+  ).length;
+
   const menuCounts = isDeskRole(currentUser?.role)
     ? {
-        AddressRequests: addressRequests.filter((r) => r.status === ADDRESS_STATUS.PENDING)
-          .length,
-        Requests: pendingForDesk(changeRequests).length,
-        // Somebody is signed in and cannot be sent a cab until this is dealt
-        // with, so it badges for both desk roles.
-        CabRequests: cabServiceRequests.filter(
-          (r) => r.status === CAB_REQUEST_STATUS.PENDING
-        ).length,
+        AddressRequests: pendingAddressCount,
+        CabRequests: pendingCabCount,
+        // ADMIN'S "Requests" drawer row is now ONE merged inbox (ride changes +
+        // cab setup + address changes — see RequestsInboxScreen), so its badge
+        // is the total across all three, not just ride changes. The
+        // COORDINATOR's "Requests" route is untouched — still the older
+        // Change-Requests-plus-Cancelled-Rides shell (RequestsScreen.js), which
+        // never included cab/address requests, so its badge stays narrow. Same
+        // key, two different screens behind it — see App.js's own comment on
+        // why both roles share the literal route name "Requests".
+        Requests:
+          currentUser?.role === 'admin'
+            ? pendingRideChangeCount + pendingCabCount + pendingAddressCount
+            : pendingRideChangeCount,
       }
     : {};
 

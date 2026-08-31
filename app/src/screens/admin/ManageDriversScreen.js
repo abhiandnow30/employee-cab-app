@@ -247,7 +247,7 @@ export default function ManageDriversScreen({ navigation }) {
           <Text variant="bodySmall" style={styles.hint}>
             {readOnly
               ? 'The people who drive, and the cab each one is on. The coordinator maintains this list.'
-              : 'The people who drive. Which cab each one takes is set on the Fleet screen — this is the same link seen from the driver’s side. They sign in with their cab’s last 4 digits followed by their own mobile number.'}
+              : 'Set the cab link on the Cabs tab — each driver signs in with that cab’s last 4 digits plus their own mobile number.'}
           </Text>
           {readOnly ? null : (
             <Button mode="contained" icon="account-plus" onPress={openAdd}>

@@ -38,12 +38,10 @@ import RateUsScreen from './src/screens/employee/RateUsScreen';
 import ProfileScreen from './src/screens/employee/ProfileScreen';
 import BookingsScreen from './src/screens/admin/BookingsScreen';
 import ManageFleetScreen from './src/screens/admin/ManageFleetScreen';
-import ManageCoordinatorsScreen from './src/screens/admin/ManageCoordinatorsScreen';
 import CancelledRidesScreen from './src/screens/admin/CancelledRidesScreen';
 import TrackCabsScreen from './src/screens/admin/TrackCabsScreen';
 import FeedbackInboxScreen from './src/screens/admin/FeedbackInboxScreen';
 import EmployeeManagementScreen from './src/screens/admin/EmployeeManagementScreen';
-import AddressChangeRequestsScreen from './src/screens/admin/AddressChangeRequestsScreen';
 import MessagesScreen from './src/screens/admin/MessagesScreen';
 import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
 import DriverShareLocationScreen from './src/screens/driver/DriverShareLocationScreen';
@@ -53,7 +51,7 @@ import ShiftPolicyScreen from './src/screens/admin/ShiftPolicyScreen';
 import ReportsScreen from './src/screens/admin/ReportsScreen';
 import CoordinatorDashboardScreen from './src/screens/coordinator/CoordinatorDashboardScreen';
 import RequestsScreen from './src/screens/coordinator/RequestsScreen';
-import ChangeRequestQueueScreen from './src/screens/coordinator/ChangeRequestQueueScreen';
+import RequestsInboxScreen from './src/screens/admin/RequestsInboxScreen';
 import ChangeRequestScreen from './src/screens/employee/ChangeRequestScreen';
 import NotificationsScreen from './src/screens/employee/NotificationsScreen';
 import CabServiceRequestScreen from './src/screens/employee/CabServiceRequestScreen';
@@ -95,12 +93,16 @@ const linking = {
       Reports: 'reports',
       Bookings: 'bookings',
       ManageFleet: 'fleet',
-      ManageCoordinators: 'coordinators',
+      // Coordinators no longer has its own route — folded into the Cabs &
+      // Drivers tabs (ManageFleetScreen) — so /coordinators is deliberately
+      // gone, not an oversight.
       CancelledRides: 'cancelled-rides',
       TrackCabs: 'track-cabs',
       FeedbackInbox: 'feedback-inbox',
       EmployeeManagement: 'employees',
-      AddressRequests: 'address-requests',
+      // Address requests no longer has its own route — folded into the
+      // Requests inbox (see the Stack.Screen comment below) — so /address-
+      // requests is deliberately gone, not an oversight.
       CabRequests: 'cab-requests',
       Messages: 'messages',
       // Coordinator — and HR/Admin. The screen NAME still says CoordinatorHome
@@ -753,35 +755,35 @@ function RootNavigator() {
                   component={EmployeeManagementScreen}
                   options={{ title: 'Employee Management' }}
                 />
-                <Stack.Screen
-                  name="ManageCoordinators"
-                  component={ManageCoordinatorsScreen}
-                  options={{ title: 'Coordinators' }}
-                />
-                <Stack.Screen
-                  name="AddressRequests"
-                  component={AddressChangeRequestsScreen}
-                  options={{ title: 'Address Change Requests' }}
-                />
-                {/* RIDE CHANGE REQUESTS, NOW ON HR'S DESK TOO (requested Aug 2026).
-                    Leave / cancel one ride / shift changed used to be the
-                    coordinator's alone. HR asked for the plain approval flow —
-                    employee requests, admin approves or rejects, the cab is
-                    cancelled — so the same queue is registered here.
+                {/* REQUESTS INBOX — one merged screen replacing three separate
+                    drawer rows (Ride Cancel Requests, Address Requests, New Cab
+                    Requests), tabbed inside RequestsInboxScreen. Each used to
+                    be its own Stack.Screen; folded into one route (Sep 2026)
+                    because each queue is rarely full enough on its own to
+                    justify a dedicated place in the drawer.
 
-                    ChangeRequestQueueScreen directly, NOT the coordinator's
-                    RequestsScreen: that one is a tab shell pairing this queue
-                    with Cancelled Rides, and HR already has Cancelled Rides as
-                    its own menu entry. Same route name as the coordinator's, so
-                    /requests and the menu badge work for both without a second
-                    linking entry. Routing is untouched — every request is still
-                    written routedTo 'coordinator'; both desks simply read one
-                    queue now (see pendingForDesk), and the rules already allowed
-                    either of them to resolve it. */}
+                    Address Change Requests' standalone route is gone —
+                    admin-only in every sense (rules, drawer, registration), so
+                    there was no other role's bookmark to preserve. Cab
+                    Requests' OWN standalone route stays registered below
+                    (shared "desk screens" block) purely because the
+                    coordinator still reaches it there — unrelated to this
+                    consolidation, not touched by it.
+
+                    Same route name ("Requests") the coordinator's branch
+                    below also uses, so /requests and the menu badge work for
+                    both roles without a second linking entry — see
+                    menuCounts.Requests in AppContext.js for how the SAME key
+                    carries a different (wider, for admin) number depending on
+                    which of the two screens is actually behind it. Routing
+                    of ride-change requests is untouched — every request is
+                    still written routedTo 'coordinator'; both desks simply
+                    read one queue (see pendingForDesk), and the rules already
+                    allowed either of them to resolve it. */}
                 <Stack.Screen
                   name="Requests"
-                  component={ChangeRequestQueueScreen}
-                  options={{ title: 'Ride Cancel Requests' }}
+                  component={RequestsInboxScreen}
+                  options={{ title: 'Requests' }}
                 />
                 <Stack.Screen
                   name="FeedbackInbox"
