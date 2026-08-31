@@ -3028,25 +3028,6 @@ export function AppProvider({ children }) {
         CabRequests: cabServiceRequests.filter(
           (r) => r.status === CAB_REQUEST_STATUS.PENDING
         ).length,
-        // HOW THE DESK IS TOLD ABOUT A NO-SHOW. A driver marking someone absent
-        // used to be silent to everyone; this is the desk's half of fixing that
-        // (the rider's half is a notification — see markNoShow).
-        //
-        // A BADGE RATHER THAN A NOTIFICATION, for a reason that is not laziness:
-        // neither desk role has a notification inbox, and the driver's app could
-        // not address one to them if they did — the rules deliberately stop a
-        // driver reading employee profiles, so it cannot find out who the admins
-        // are. The desk already reads every booking, so the count is derivable
-        // on their own device with no write and no rules change at all.
-        //
-        // TODAY ONLY, and that is what makes it usable. The other counts here
-        // clear when the item is actioned; a no-show is never "actioned", so an
-        // all-time count would be a number that only ever grows and stops being
-        // read. Scoped to today it means "tonight's runs have lost this many
-        // people", and it empties itself at midnight.
-        NoShows: bookings.filter(
-          (b) => b.status === STATUS.NO_SHOW && String(b.date || '') === todayKey()
-        ).length,
       }
     : {};
 

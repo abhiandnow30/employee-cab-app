@@ -58,7 +58,7 @@ app/
                  ContactUs, Profile
       admin/     Bookings (home), AssignCab, ManageDrivers ("Drivers" — driver accounts),
                  ManageCabs ("Fleet" — vehicles + the driver↔cab link),
-                 ManageTimings, CancelledRides, NoShows, TrackCabs, FeedbackInbox,
+                 ManageTimings, CancelledRides, TrackCabs, FeedbackInbox,
                  EmployeeManagement, AddressChangeRequests, Messages
       driver/    DriverHome (My Trips), DriverShareLocation
     components/  AppDrawer, Dropdown, ScreenContainer, ErrorBoundary, leaflet.js (shared web-map loader),

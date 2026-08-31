@@ -116,7 +116,6 @@ export const ADMIN_DRAWER_ITEMS = [
   // new pickup area is now a code change, deliberately, rather than a field
   // anyone can type into and split a carpool across two spellings.
   { label: 'Cancelled Rides', icon: 'car-off', screen: 'CancelledRides' },
-  { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
   // NEAR THE BOTTOM ON PURPOSE. What the shift codes MEAN — the hours each one
   // runs and which of them get a cab — is set once and then left alone for months,
   // whereas everything above it is opened daily or weekly. It sat second, directly
@@ -169,7 +168,6 @@ export const COORDINATOR_DRAWER_ITEMS = [
   // is one line: restore this row, or add the same entry to ADMIN_DRAWER_ITEMS
   // (MessagesScreen is registered in the desk-shared branch, so it works there
   // without any other change).
-  { label: 'No-Shows', icon: 'account-alert', screen: 'NoShows' },
 ];
 
 const EMPTY_PW = { current: '', next: '', confirm: '' };

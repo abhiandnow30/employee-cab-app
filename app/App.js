@@ -40,7 +40,6 @@ import BookingsScreen from './src/screens/admin/BookingsScreen';
 import ManageFleetScreen from './src/screens/admin/ManageFleetScreen';
 import ManageCoordinatorsScreen from './src/screens/admin/ManageCoordinatorsScreen';
 import CancelledRidesScreen from './src/screens/admin/CancelledRidesScreen';
-import NoShowsScreen from './src/screens/admin/NoShowsScreen';
 import TrackCabsScreen from './src/screens/admin/TrackCabsScreen';
 import FeedbackInboxScreen from './src/screens/admin/FeedbackInboxScreen';
 import EmployeeManagementScreen from './src/screens/admin/EmployeeManagementScreen';
@@ -98,7 +97,6 @@ const linking = {
       ManageFleet: 'fleet',
       ManageCoordinators: 'coordinators',
       CancelledRides: 'cancelled-rides',
-      NoShows: 'no-shows',
       TrackCabs: 'track-cabs',
       FeedbackInbox: 'feedback-inbox',
       EmployeeManagement: 'employees',
@@ -837,11 +835,6 @@ function RootNavigator() {
               name="CancelledRides"
               component={CancelledRidesScreen}
               options={{ title: 'Cancelled Rides' }}
-            />
-            <Stack.Screen
-              name="NoShows"
-              component={NoShowsScreen}
-              options={{ title: 'No-Shows' }}
             />
             <Stack.Screen
               name="TrackCabs"
