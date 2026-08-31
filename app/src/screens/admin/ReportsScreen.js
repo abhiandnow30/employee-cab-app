@@ -19,38 +19,18 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import {
-  Text, Card, Button, SegmentedButtons, Divider, Portal, Dialog, TextInput,
+  Text, Card, Button, Divider, Portal, Dialog,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
-import { STATUS } from '../../data/mockData';
 import { colors, font, radius, shadow, spacing, statusColors } from '../../theme';
 import { ADMIN_HISTORY_DAYS } from '../../services/bookings';
 import { todayKey, shiftDateKey, prettyDateKey } from '../../utils/datetime';
 import CalendarFilter from '../../components/CalendarFilter';
 import {
-  PERIOD, PERIOD_LABEL, periodRange, rangeLabel, bookingsInRange, summarise, breakdown,
+  PERIOD, periodRange, rangeLabel, bookingsInRange, summarise, breakdown,
 } from '../../services/reports';
 
-// The four the desk actually asks for. "Last 30 days" and a custom range live
-// behind the date picker rather than adding two more segments to a control that
-// has to stay readable on a laptop.
-const QUICK = [PERIOD.THIS_WEEK, PERIOD.LAST_WEEK, PERIOD.THIS_MONTH, PERIOD.LAST_MONTH];
-
-const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-// Firestore Timestamp → "24-Jul, 02:15 PM" — when a no-show was actually
-// flagged, not just which day it belongs to (prettyDateKey only has the day).
-function formatFlaggedAt(ts) {
-  const secs = ts?.seconds;
-  if (!secs) return '';
-  const d = new Date(secs * 1000);
-  let h = d.getHours();
-  const m = String(d.getMinutes()).padStart(2, '0');
-  const ap = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return `${String(d.getDate()).padStart(2, '0')}-${MONTHS_SHORT[d.getMonth()]}, ${String(h).padStart(2, '0')}:${m} ${ap}`;
-}
 
 // Hex → rgba string at a given alpha. Every status already has exactly ONE
 // color, in statusColors (theme.js) — this is what turns that single hex into
@@ -114,29 +94,17 @@ function Avatar({ name }) {
 // because RIDES does not mean the same thing in every Table on the page: By
 // cab and By route both count TRIPS (one per departure, however many people
 // shared it), because both group people into shared cabs and a leg count would
-// over-count exactly the same way in both. Most no-shows counts ride-LEGS (one
-// per employee per direction — see summarise() in services/reports.js), but
-// that isn't an inconsistency either: a single employee can't carpool with
-// themselves, so their own leg count already IS their trip count. See the
-// byRoute/byCab comments in ReportsScreen for the full reasoning.
+// over-count exactly the same way in both — see the byRoute/byCab comments in
+// ReportsScreen for the full reasoning.
 // `countNoun` names one row for the header badge ("7 routes", "5 cabs") —
-// purely cosmetic, so it's optional. `searchable` adds a name filter above the
-// column headers — for a list long enough that scrolling past `limit` to find
-// one person beats typing their name (Most no-shows, once it stopped capping
-// at 10, is exactly that case; By route/By cab don't need it yet).
+// purely cosmetic, so it's optional.
 function Table({
   title, icon, rows, emptyText, nameHeader, limit, onRowPress, extraColumn, hint,
-  countNoun, searchable, searchPlaceholder = 'Search by name',
+  countNoun,
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [search, setSearch] = useState('');
-  const term = search.trim().toLowerCase();
-  const filtered = term ? rows.filter((r) => String(r.label || '').toLowerCase().includes(term)) : rows;
-  // Expanding/collapsing "+N more" makes no sense mid-search — a filtered list
-  // is usually already short, and re-expanding after clearing the search would
-  // otherwise leave `expanded` stuck true from an unrelated moment.
-  const hidden = limit && !expanded && !term ? Math.max(0, filtered.length - limit) : 0;
-  const shown = hidden ? filtered.slice(0, limit) : filtered;
+  const hidden = limit && !expanded ? Math.max(0, rows.length - limit) : 0;
+  const shown = hidden ? rows.slice(0, limit) : rows;
 
   // A nonzero NO-SHOW/CANCELLED count is a pill (soft tint + icon + number); a
   // zero stays a quiet, uncolored digit. Reserving color for "something actually
@@ -183,18 +151,6 @@ function Table({
           <Text variant="bodySmall" style={styles.tableHint}>
             {hint}
           </Text>
-        ) : null}
-        {searchable ? (
-          <TextInput
-            mode="outlined"
-            dense
-            value={search}
-            onChangeText={setSearch}
-            placeholder={searchPlaceholder}
-            left={<TextInput.Icon icon="magnify" />}
-            right={search ? <TextInput.Icon icon="close" onPress={() => setSearch('')} /> : null}
-            style={styles.searchInput}
-          />
         ) : null}
         <View style={styles.headRow}>
           <Text variant="labelSmall" style={[styles.colName, styles.headCell]}>
@@ -289,7 +245,7 @@ function Table({
           })
         ) : (
           <Text variant="bodySmall" style={styles.empty}>
-            {term ? `No match for "${search.trim()}".` : emptyText}
+            {emptyText}
           </Text>
         )}
         {hidden || expanded ? (
@@ -331,12 +287,12 @@ export default function ReportsScreen() {
   const rows = useMemo(() => bookingsInRange(bookings, range), [bookings, range]);
 
   // Raw rides per route, for both the RIDES count below and the "By route"
-  // drill-down — same reason ridesByCab/rowsByEmployee exist: breakdown() only
-  // keeps summarised counts, not the bookings themselves.
+  // drill-down — same reason ridesByCab exists: breakdown() only keeps
+  // summarised counts, not the bookings themselves.
   //
   // ACTUAL ROUTES ONLY. A ride nobody has routed yet isn't a route to report
   // on — same call as excluding "No cab assigned" from By cab. Those rides are
-  // still counted in Most no-shows and By cab; this table's own total will be
+  // still counted in By cab; this table's own total will be
   // smaller as a result, which is the correct trade for not showing a row
   // nobody can act on. An unrouted rider is a real defect worth fixing at the
   // source (Employee Management / roster upload), not something this report
@@ -499,46 +455,6 @@ export default function ReportsScreen() {
 
   const [selectedCab, setSelectedCab] = useState(null); // { cabId, label } | null
 
-  // EVERY employee with a no-show, not just the worst 10 — this used to be
-  // capped, which meant anyone outside the top 10 for the selected period was
-  // invisible here with no other screen to find them on (that screen, the
-  // standalone No-Shows list, existed for exactly that gap and was retired once
-  // this stopped capping — see Table's `limit`/`search` for how a long list
-  // stays usable instead of just dumping everyone on screen at once).
-  const byEmployee = useMemo(() => {
-    const all = breakdown(rows, (b) => b.employeeId || '', (k) => k, today);
-    const named = new Map();
-    rows.forEach((b) => {
-      if (b.employeeId && !named.has(b.employeeId)) named.set(b.employeeId, b.employeeName || b.empId || '—');
-    });
-    return all
-      .map((r) => ({ ...r, label: named.get(r.key) || '—' }))
-      .filter((r) => r.noShow > 0)
-      .sort((a, b) => b.noShow - a.noShow);
-  }, [rows]);
-
-  // Raw rides per employee, for the "Most no-shows" drill-down — same reason
-  // ridesByCab exists for "By cab": breakdown() only keeps the summarised
-  // counts, not the bookings themselves.
-  const rowsByEmployee = useMemo(() => {
-    const m = new Map();
-    rows.forEach((b) => {
-      if (!b.employeeId) return;
-      if (!m.has(b.employeeId)) m.set(b.employeeId, []);
-      m.get(b.employeeId).push(b);
-    });
-    return m;
-  }, [rows]);
-
-  // Just this person's no-shows in the period, newest flag first.
-  function noShowsOf(employeeId) {
-    return (rowsByEmployee.get(employeeId) || [])
-      .filter((b) => b.status === STATUS.NO_SHOW)
-      .sort((a, b) => (b.noShowAt?.seconds ?? 0) - (a.noShowAt?.seconds ?? 0));
-  }
-
-  const [selectedEmployee, setSelectedEmployee] = useState(null); // { employeeId, label } | null
-
   // The window is real and worth saying out loud: HR's subscription fetches 180
   // days, so a range reaching past that would silently under-report rather than
   // fail. Better to name the edge than to hand someone a confident wrong total.
@@ -553,16 +469,6 @@ export default function ReportsScreen() {
             How the cabs ran, over a period — by route, by cab, and who kept
             getting missed.
           </Text>
-
-          <SegmentedButtons
-            value={QUICK.includes(period) ? period : ''}
-            onValueChange={(v) => {
-              setCustom(null);
-              setPeriod(v);
-            }}
-            style={styles.periods}
-            buttons={QUICK.map((p) => ({ value: p, label: PERIOD_LABEL[p] }))}
-          />
 
           <View style={styles.rangeRow}>
             <CalendarFilter
@@ -597,18 +503,6 @@ export default function ReportsScreen() {
             hint="RIDES is how many separate trips each cab made — a carpool of several people sharing one trip counts as 1. Tap a cab to see each trip and who was on it."
             onRowPress={(r) => setSelectedCab({ cabId: r.key, label: r.label })}
             extraColumn={{ header: 'EMPLOYEES', valueOf: (r) => ridersOf(r.key).length }}
-          />
-          <Table
-            title="Most no-shows"
-            icon="account-alert"
-            nameHeader="EMPLOYEE"
-            rows={byEmployee}
-            limit={10}
-            searchable
-            searchPlaceholder="Search employee name"
-            countNoun="person"
-            emptyText="Nobody was marked absent in this period."
-            onRowPress={(r) => setSelectedEmployee({ employeeId: r.key, label: r.label })}
           />
           <Table
             title="By route"
@@ -835,85 +729,6 @@ export default function ReportsScreen() {
         </Dialog>
       </Portal>
 
-      {/* Every no-show THIS employee was flagged for in the period — the detail
-          behind the row in "Most no-shows", same relationship the cab dialog
-          above has to "By cab". */}
-      <Portal>
-        <Dialog
-          visible={!!selectedEmployee}
-          onDismiss={() => setSelectedEmployee(null)}
-          style={styles.cabDialog}
-        >
-          <Dialog.Title>{selectedEmployee?.label || 'Employee'}</Dialog.Title>
-          <Dialog.ScrollArea style={styles.cabDialogArea}>
-            <ScrollView contentContainerStyle={styles.cabDialogBody}>
-              {(() => {
-                if (!selectedEmployee) return null;
-                const incidents = noShowsOf(selectedEmployee.employeeId);
-                if (!incidents.length) {
-                  return (
-                    <Text variant="bodySmall" style={styles.empty}>
-                      No no-shows recorded for this employee in the selected period.
-                    </Text>
-                  );
-                }
-                return (
-                  <>
-                    <View style={styles.noShowCountBadge}>
-                      <MaterialCommunityIcons name="account-alert" size={13} color={colors.danger} />
-                      <Text style={styles.noShowCountBadgeText}>
-                        {incidents.length} no-show{incidents.length === 1 ? '' : 's'} in this period
-                      </Text>
-                    </View>
-                    {incidents.map((b, i) => {
-                      const cab = b.assignedCabId ? getCabById(b.assignedCabId) : null;
-                      const when = formatFlaggedAt(b.noShowAt);
-                      return (
-                        <View
-                          key={b.id}
-                          style={[styles.tripBlock, i > 0 && styles.tripBlockSpaced]}
-                        >
-                          <View style={[styles.tripAccent, styles.tripAccentDanger]} />
-                          <Text style={[styles.tripEyebrow, styles.tripEyebrowDanger]}>NO-SHOW</Text>
-                          <Text variant="bodyMedium" style={styles.tripDate}>
-                            {prettyDateKey(b.date)}
-                          </Text>
-                          <Text variant="bodySmall" style={styles.tripDirection}>
-                            {b.shift ? `${b.shift} · ` : ''}
-                            {b.direction || 'Direction not recorded'}
-                          </Text>
-                          <View style={styles.tripCabRow}>
-                            <MaterialCommunityIcons name="map-marker" size={12} color={colors.textSecondary} />
-                            <Text variant="bodySmall" style={styles.noShowDetail}>
-                              {b.pickup || '—'}
-                              {cab ? ` · Cab ${cab.cabNumber || cab.id}` : ''}
-                              {cab?.driverName ? ` · ${cab.driverName}` : ''}
-                            </Text>
-                          </View>
-                          <View style={styles.noShowReasonBox}>
-                            <MaterialCommunityIcons
-                              name="account-alert"
-                              size={15}
-                              color={colors.danger}
-                            />
-                            <Text variant="bodySmall" style={styles.noShowReasonText}>
-                              Employee wasn't at the pickup
-                              {when ? `  ·  flagged ${when}` : ''}
-                            </Text>
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </>
-                );
-              })()}
-            </ScrollView>
-          </Dialog.ScrollArea>
-          <Dialog.Actions>
-            <Button onPress={() => setSelectedEmployee(null)}>Close</Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
     </View>
   );
 }
@@ -923,7 +738,6 @@ const styles = StyleSheet.create({
   scroll: { padding: spacing.lg, paddingBottom: spacing.xxl, alignItems: 'center' },
   col: { width: '100%', maxWidth: 900 },
   intro: { color: colors.muted, lineHeight: 20, marginBottom: spacing.lg },
-  periods: { marginBottom: spacing.md },
   rangeRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -985,7 +799,6 @@ const styles = StyleSheet.create({
   },
   tableCountBadgeText: { color: colors.textSecondary, fontSize: 11.5, fontFamily: font.semibold },
   tableHint: { color: colors.muted, lineHeight: 17, marginBottom: spacing.sm },
-  searchInput: { backgroundColor: colors.surface, marginBottom: spacing.sm },
   headRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm },
   // Only applied when a row is tappable — a negative horizontal margin/padding
@@ -1131,35 +944,11 @@ const styles = StyleSheet.create({
   repeatBadgeText: { color: colors.warning, fontSize: 11, fontFamily: font.semibold },
   // The "N no-shows in this period" strip atop the employee dialog — same
   // pill-with-icon language as the table's own StatCell pills.
-  noShowCountBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.dangerSoft,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  noShowCountBadgeText: { color: colors.danger, fontFamily: font.semibold, fontSize: 12.5 },
-  noShowDetail: { color: colors.muted, marginTop: 2 },
-  noShowReasonBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-    backgroundColor: colors.dangerSoft,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-  },
-  noShowReasonText: { flex: 1, color: colors.danger, lineHeight: 18 },
   // `position: relative` is what lets tripAccent (an absolutely-positioned
   // timeline bar) anchor to this block rather than the whole scroll view.
   tripBlock: { paddingBottom: spacing.sm, paddingLeft: spacing.md, position: 'relative' },
   tripBlockSpaced: { marginTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md },
-  // The timeline bar itself — neutral brand tint for an ordinary trip, red for
-  // a no-show incident (tripAccentDanger), so the employee dialog's list reads
-  // as "these were all a problem" before a single word is read.
+  // The timeline bar itself, a neutral brand tint.
   tripAccent: {
     position: 'absolute',
     left: 0,
@@ -1169,7 +958,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: colors.primarySoft,
   },
-  tripAccentDanger: { backgroundColor: colors.dangerSoft, top: 2, bottom: 2 },
   tripEyebrow: {
     color: colors.muted,
     fontSize: 10.5,
@@ -1178,7 +966,6 @@ const styles = StyleSheet.create({
     fontFamily: font.semibold,
     marginBottom: 2,
   },
-  tripEyebrowDanger: { color: colors.danger },
   tripCabRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
   tripHead: {
     flexDirection: 'row',

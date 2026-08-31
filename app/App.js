@@ -748,7 +748,7 @@ function RootNavigator() {
                 <Stack.Screen
                   name="Reports"
                   component={ReportsScreen}
-                  options={{ title: 'Reports' }}
+                  options={{ title: 'History' }}
                 />
                 <Stack.Screen
                   name="EmployeeManagement"

@@ -132,7 +132,7 @@ export const ADMIN_DRAWER_ITEMS = [
   // rides did we do last month" — the day board shows one day and All Bookings
   // shows rows, not counts. Sits with the other look-back screens rather than
   // with the daily work.
-  { label: 'Reports', icon: 'chart-box-outline', screen: 'Reports' },
+  { label: 'History', icon: 'chart-box-outline', screen: 'Reports' },
   { label: 'Shift Timings', icon: 'clock-edit-outline', screen: 'ShiftPolicy' },
   { label: 'Feedback & Ratings', icon: 'message-star', screen: 'FeedbackInbox' },
 ];
@@ -275,7 +275,7 @@ function ChangePasswordDialog({ visible, onDismiss, onChangePassword }) {
 
 // Friendly label for a role.
 const ROLE_LABEL = {
-  admin: 'HR / Admin',
+  admin: 'Admin',
   coordinator: 'Transport Coordinator',
   driver: 'Driver',
   employee: 'Employee',
