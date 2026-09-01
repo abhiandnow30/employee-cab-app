@@ -195,29 +195,20 @@ export default function CoordinatorDashboardScreen({ navigation }) {
   );
 
   const visible = useMemo(() => {
-    // A CANCELLED RIDE IS SHOWN WHATEVER THE COARSE FILTER SAYS.
-    //
-    // The point of keeping it on the board is that the desk can see what they
-    // just stood down and put it back. Run through the filter normally it would
-    // disappear the instant it was cancelled — it is neither Waiting (no cab
-    // needed) nor Assigned — which is the same "where did it go?" the banner
-    // above the board used to cause. It is excluded from every COUNT instead
-    // (see rideStats), so the tiles still only measure real work.
-    //
-    // The bypass is deliberately limited to the two COARSE buckets. Picking an
-    // exact status from the dropdown means "only this status", so letting
-    // cancelled rides through there would make "On the way" show cancelled rows.
+    // NO BYPASS ANY MORE (changed at explicit request): a cancelled ride shows
+    // in exactly one tab — Cancelled — whether or not it had a cab when it was
+    // stood down. Waiting and Assigned are strictly "still needs a cab" and
+    // "has one right now"; Cancelled is the one place to review and restore a
+    // cancellation. Only "All" (the Rides tile) sees every bucket at once.
     const isCancelled = (r) => r.status === STATUS.CANCELLED;
     const byStatus =
       rideFilter === 'all'
         ? legRides
         : rideFilter === 'waiting'
-        ? legRides.filter((r) => !r.assignedCabId || isCancelled(r))
+        ? legRides.filter((r) => !r.assignedCabId && !isCancelled(r))
         : rideFilter === 'assigned'
-        ? legRides.filter((r) => r.assignedCabId || isCancelled(r))
-        : // 'cancelled' — the one tile that shows cancelled rides ALONE, with no
-          // bypass, so it is the place to review what has been stood down.
-          legRides.filter(isCancelled);
+        ? legRides.filter((r) => r.assignedCabId && !isCancelled(r))
+        : legRides.filter(isCancelled);
     const byCab = cabFilter ? byStatus.filter((r) => r.assignedCabId === cabFilter) : byStatus;
     return searchWords.length ? byCab.filter(matches) : byCab;
   }, [legRides, rideFilter, cabFilter, searchWords, matches]);
@@ -778,6 +769,8 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                         textColor={colors.primary}
                         onPress={() => setRestoreFor(item.booking || item)}
                         disabled={busy}
+                        style={styles.cardActionBtn}
+                        contentStyle={styles.cardActionContent}
                         labelStyle={styles.cardActionLabel}
                       >
                         Put back
@@ -790,6 +783,8 @@ export default function CoordinatorDashboardScreen({ navigation }) {
                         textColor={colors.danger}
                         onPress={() => openDeskCancel(item)}
                         disabled={busy}
+                        style={styles.cardActionBtn}
+                        contentStyle={styles.cardActionContent}
                         labelStyle={styles.cardActionLabel}
                       >
                         Cancel
@@ -1035,7 +1030,13 @@ export default function CoordinatorDashboardScreen({ navigation }) {
         <View style={[styles.stats, isMobile && styles.statsGrid]}>
           <Stat
             label="Rides"
-            value={stats.total}
+            // Waiting + Assigned + Cancelled — every ride today, this direction,
+            // whatever became of it. rideStats() keeps `total` as pending +
+            // assigned ONLY (excluding cancelled), because the empty-state copy
+            // below still needs "are there any LIVE rides this direction" as its
+            // own question; this tile answers a different one, so it adds
+            // `cancelled` back in rather than changing what `total` means.
+            value={stats.total + stats.cancelled}
             active={rideFilter === 'all'}
             onPress={() => changeRideFilter('all')}
             showsLabel="every ride"
@@ -1059,11 +1060,10 @@ export default function CoordinatorDashboardScreen({ navigation }) {
             showsLabel="only rides that already have a cab"
             half={isMobile}
           />
-          {/* Counted apart from the other three on purpose — a cancelled ride is
+          {/* Counted apart from Waiting/Assigned on purpose — a cancelled ride is
               neither work to do nor work covered (see rideStats), so it is in
-              none of their totals. Tapping it is the one place that shows ONLY
-              cancelled rides; they also stay visible under Waiting and Assigned
-              so a card does not vanish the moment the desk stands it down. */}
+              neither of their totals, and it no longer shows under either tab
+              either. This tile is its one and only home besides "Rides". */}
           <Stat
             label="Cancelled"
             value={stats.cancelled}
@@ -1938,6 +1938,13 @@ const styles = StyleSheet.create({
     marginLeft: 22,
     marginRight: 8,
   },
+  // Paper's compact text button collapses to well under the Chip beside it
+  // (marginVertical: 0 above is what shrank the label, but the button's own
+  // touch target stayed tiny) — these two put the height back so "Cancel" /
+  // "Put back" reads as the same size control as "Pending" / "Cancelled",
+  // not a smaller afterthought next to it.
+  cardActionBtn: { justifyContent: 'center', minHeight: 32 },
+  cardActionContent: { height: 32 },
   rowBetween: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1967,7 +1974,13 @@ const styles = StyleSheet.create({
   // OWN style, so it survives the row being restyled or stacked.
   // flexShrink: 0 keeps the two chips full-size and on one line; they are short
   // and squeezing "Pending" is never the right sacrifice.
-  chips: { flexDirection: 'row', gap: spacing.sm, marginLeft: 'auto', flexShrink: 0 },
+  chips: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginLeft: 'auto',
+    flexShrink: 0,
+  },
   // Stacked, the row above is a COLUMN — and an auto left margin in a column
   // pushes across the cross axis, which would fling the badges to the far right
   // on their own line, adrift from the name they describe. Back to zero so they

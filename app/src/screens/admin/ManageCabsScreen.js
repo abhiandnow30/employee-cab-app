@@ -429,13 +429,29 @@ export default function ManageCabsScreen() {
           </Dialog.Actions>
         </Dialog>
 
-        {/* Moving a driver who is already on another cab */}
-        <Dialog visible={!!moveFor} onDismiss={() => !busy && setMoveFor(null)} style={styles.dialog}>
-          <Dialog.Title>
-            Move {moveDriver?.name || 'this driver'} to {moveToCab?.cabNumber || 'this cab'}?
-          </Dialog.Title>
+        {/* Moving a driver who is already on another cab. Styled as a WARNING,
+            deliberately more pointed than the app's other confirmations — this
+            is the one dropdown pick that reaches past the cab being edited and
+            silently disables a second one, so the dialog has to read as a stop
+            sign, not a routine "are you sure". */}
+        <Dialog
+          visible={!!moveFor}
+          onDismiss={() => !busy && setMoveFor(null)}
+          style={[styles.dialog, styles.warningDialog]}
+        >
+          <View style={styles.warningHeader}>
+            <View style={styles.warningIconChip}>
+              <MaterialCommunityIcons name="alert-decagram" size={22} color={colors.danger} />
+            </View>
+            <View style={styles.warningHeaderText}>
+              <Text style={styles.warningEyebrow}>Driver already assigned</Text>
+              <Text variant="titleMedium" style={styles.warningTitle}>
+                Move {moveDriver?.name || 'this driver'} to {moveToCab?.cabNumber || 'this cab'}?
+              </Text>
+            </View>
+          </View>
           <Dialog.Content>
-            <Text variant="bodyMedium">
+            <Text variant="bodyMedium" style={styles.warningBody}>
               {moveDriver?.name || 'This driver'} is currently driving{' '}
               <Text style={styles.strong}>{moveFor?.from?.cabNumber}</Text>. A driver
               can only be on one cab, so {moveFor?.from?.cabNumber} will be left with
@@ -444,7 +460,7 @@ export default function ManageCabsScreen() {
             </Text>
             {strandedRides > 0 ? (
               <View style={styles.moveWarn}>
-                <MaterialCommunityIcons name="alert" size={16} color="#B26A00" />
+                <MaterialCommunityIcons name="alert-circle" size={16} color={colors.danger} />
                 <Text variant="bodySmall" style={styles.moveWarnText}>
                   {moveFor?.from?.cabNumber} has {strandedRides} upcoming ride
                   {strandedRides === 1 ? '' : 's'} assigned. Nobody will be able to see
@@ -455,16 +471,20 @@ export default function ManageCabsScreen() {
             ) : null}
           </Dialog.Content>
           <Dialog.Actions>
-            <Button onPress={() => setMoveFor(null)} disabled={busy}>
+            <Button onPress={() => setMoveFor(null)} disabled={busy} style={styles.footBtn}>
               Cancel
             </Button>
             <Button
               mode="contained"
+              buttonColor={colors.danger}
+              icon="swap-horizontal"
               onPress={() => doLink(moveFor.cabId, moveFor.uid)}
               loading={busy}
               disabled={busy}
+              style={styles.footBtn}
+              labelStyle={styles.footLabel}
             >
-              Move driver
+              Move Driver
             </Button>
           </Dialog.Actions>
         </Dialog>
@@ -518,18 +538,56 @@ const styles = StyleSheet.create({
   hint: { color: colors.muted, flex: 1, minWidth: 200, lineHeight: 19 },
   linkStatic: { color: colors.text, fontFamily: font.medium, flex: 1 },
   strong: { fontFamily: font.semibold },
+  // The move-driver dialog reads as a warning: a red top edge on the dialog
+  // itself (clipped by overflow: hidden so it follows the rounded corners),
+  // plus a custom header in place of Dialog.Title — an icon chip, a small
+  // red eyebrow naming what triggered this, and the question itself.
+  warningDialog: {
+    borderTopWidth: 4,
+    borderTopColor: colors.danger,
+    overflow: 'hidden',
+  },
+  warningHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    paddingHorizontal: 24,
+    paddingTop: spacing.lg,
+  },
+  warningIconChip: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.pill,
+    backgroundColor: colors.dangerSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  warningHeaderText: { flex: 1, minWidth: 0, paddingTop: 2 },
+  warningEyebrow: {
+    color: colors.danger,
+    fontSize: 11.5,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    fontFamily: font.semibold,
+    marginBottom: 2,
+  },
+  warningTitle: { color: colors.text, fontFamily: font.semibold },
+  warningBody: { color: colors.textSecondary, lineHeight: 20 },
   moveWarn: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
     marginTop: spacing.lg,
-    backgroundColor: colors.warningSoft,
+    backgroundColor: colors.dangerSoft,
     borderWidth: 1,
-    borderColor: '#F2E3C4',
+    borderColor: '#F5C2BE',
     borderRadius: radius.md,
     padding: spacing.md,
   },
-  moveWarnText: { color: colors.warning, flex: 1, lineHeight: 19 },
+  moveWarnText: { color: colors.danger, flex: 1, lineHeight: 19 },
+  footBtn: { borderRadius: radius.md, minWidth: 110 },
+  footLabel: { fontFamily: font.semibold },
   list: { padding: spacing.lg, paddingBottom: spacing.xxl },
   card: {
     marginBottom: spacing.md,

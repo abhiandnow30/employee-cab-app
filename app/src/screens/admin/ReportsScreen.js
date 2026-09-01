@@ -19,11 +19,12 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import {
-  Text, Card, Button, Divider, Portal, Dialog,
+  Text, Card, Button, Divider, Portal, Dialog, TextInput,
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../../context/AppContext';
 import { colors, font, radius, shadow, spacing, statusColors } from '../../theme';
+import { STATUS } from '../../data/mockData';
 import { ADMIN_HISTORY_DAYS } from '../../services/bookings';
 import { todayKey, shiftDateKey, prettyDateKey } from '../../utils/datetime';
 import CalendarFilter from '../../components/CalendarFilter';
@@ -48,6 +49,22 @@ function initials(name) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return '?';
   return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+}
+
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Firestore Timestamp → "24-Jul, 02:15 PM" — the exact moment a no-show was
+// flagged, distinct from the ride's own date (already shown next to it).
+function formatFlaggedAt(ts) {
+  if (!ts?.toDate) return '';
+  const d = ts.toDate();
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = MONTHS_SHORT[d.getMonth()];
+  let hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${day}-${month}, ${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
 }
 
 // One status pill, reused everywhere a booking status is shown in this screen's
@@ -100,11 +117,15 @@ function Avatar({ name }) {
 // purely cosmetic, so it's optional.
 function Table({
   title, icon, rows, emptyText, nameHeader, limit, onRowPress, extraColumn, hint,
-  countNoun,
+  countNoun, searchable, searchPlaceholder,
 }) {
   const [expanded, setExpanded] = useState(false);
-  const hidden = limit && !expanded ? Math.max(0, rows.length - limit) : 0;
-  const shown = hidden ? rows.slice(0, limit) : rows;
+  const [term, setTerm] = useState('');
+  const filtered = searchable && term.trim()
+    ? rows.filter((r) => String(r.label || '').toLowerCase().includes(term.trim().toLowerCase()))
+    : rows;
+  const hidden = limit && !expanded ? Math.max(0, filtered.length - limit) : 0;
+  const shown = hidden ? filtered.slice(0, limit) : filtered;
 
   // A nonzero NO-SHOW/CANCELLED count is a pill (soft tint + icon + number); a
   // zero stays a quiet, uncolored digit. Reserving color for "something actually
@@ -151,6 +172,17 @@ function Table({
           <Text variant="bodySmall" style={styles.tableHint}>
             {hint}
           </Text>
+        ) : null}
+        {searchable ? (
+          <TextInput
+            mode="outlined"
+            dense
+            placeholder={searchPlaceholder || 'Search'}
+            value={term}
+            onChangeText={setTerm}
+            left={<TextInput.Icon icon="magnify" />}
+            style={styles.searchInput}
+          />
         ) : null}
         <View style={styles.headRow}>
           <Text variant="labelSmall" style={[styles.colName, styles.headCell]}>
@@ -245,7 +277,7 @@ function Table({
           })
         ) : (
           <Text variant="bodySmall" style={styles.empty}>
-            {emptyText}
+            {searchable && term.trim() ? `No match for "${term.trim()}".` : emptyText}
           </Text>
         )}
         {hidden || expanded ? (
@@ -360,6 +392,50 @@ export default function ReportsScreen() {
   }, [rowsByRoute, today]);
 
   const [selectedRoute, setSelectedRoute] = useState(null); // { routeKey, label } | null
+
+  // Raw rides per employee, for the "Most no-shows" table and its drill-down —
+  // same reason ridesByCab/rowsByRoute exist by hand rather than through
+  // breakdown(): the table needs the bookings themselves, not just the counts.
+  // Keyed the same way ridersOf() dedupes a rider on the cab dialog, so a
+  // self-provisioned employee with no profile id still gets one row.
+  const rowsByEmployee = useMemo(() => {
+    const m = new Map();
+    rows.forEach((b) => {
+      const key = b.employeeId || `name:${(b.employeeName || '').toLowerCase()}`;
+      if (!m.has(key)) m.set(key, []);
+      m.get(key).push(b);
+    });
+    return m;
+  }, [rows]);
+
+  // NOT capped, unlike the tables above — this is the one place the desk goes
+  // looking for a SPECIFIC name, and a hidden tail would defeat that. Worst
+  // first, so a repeat offender is the first thing seen rather than something
+  // found by scrolling.
+  const byEmployee = useMemo(() => {
+    return [...rowsByEmployee.keys()]
+      .map((key) => {
+        const empRows = rowsByEmployee.get(key);
+        return {
+          key,
+          label: empRows[0]?.employeeName || '—',
+          ...summarise(empRows, today),
+        };
+      })
+      .filter((r) => r.noShow > 0)
+      .sort((a, b) => b.noShow - a.noShow || String(a.label).localeCompare(String(b.label)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowsByEmployee, today]);
+
+  const [selectedEmployee, setSelectedEmployee] = useState(null); // { employeeId, label } | null
+
+  // Every no-show THIS employee actually has in the period, newest flagged
+  // first — the drill-down behind clicking their row.
+  function noShowsOf(employeeKey) {
+    return (rowsByEmployee.get(employeeKey) || [])
+      .filter((b) => b.status === STATUS.NO_SHOW)
+      .sort((a, b) => (b.noShowAt?.toMillis?.() || 0) - (a.noShowAt?.toMillis?.() || 0));
+  }
 
   // CURRENT FLEET ONLY. Two kinds of row are excluded on purpose, and neither
   // exclusion hides the rides from the report as a whole — only from this one
@@ -503,6 +579,18 @@ export default function ReportsScreen() {
             hint="RIDES is how many separate trips each cab made — a carpool of several people sharing one trip counts as 1. Tap a cab to see each trip and who was on it."
             onRowPress={(r) => setSelectedCab({ cabId: r.key, label: r.label })}
             extraColumn={{ header: 'EMPLOYEES', valueOf: (r) => ridersOf(r.key).length }}
+          />
+          <Table
+            title="Most no-shows"
+            icon="account-alert"
+            nameHeader="EMPLOYEE"
+            rows={byEmployee}
+            limit={10}
+            searchable
+            searchPlaceholder="Search employee name"
+            countNoun="person"
+            emptyText="Nobody was marked absent in this period."
+            onRowPress={(r) => setSelectedEmployee({ employeeId: r.key, label: r.label })}
           />
           <Table
             title="By route"
@@ -729,6 +817,89 @@ export default function ReportsScreen() {
         </Dialog>
       </Portal>
 
+      {/* Every NO-SHOW this employee has in the period — one status, listed as a
+          timeline, so no per-rider Avatar/StatusPill chrome is needed here the
+          way the cab/route dialogs need it for a whole carpool. */}
+      <Portal>
+        <Dialog
+          visible={!!selectedEmployee}
+          onDismiss={() => setSelectedEmployee(null)}
+          style={styles.cabDialog}
+        >
+          <Dialog.Title>{selectedEmployee?.label || 'Employee'}</Dialog.Title>
+          <Dialog.ScrollArea style={styles.cabDialogArea}>
+            <ScrollView contentContainerStyle={styles.cabDialogBody}>
+              {(() => {
+                if (!selectedEmployee) return null;
+                const incidents = noShowsOf(selectedEmployee.employeeId);
+                if (!incidents.length) {
+                  return (
+                    <Text variant="bodySmall" style={styles.empty}>
+                      No no-shows recorded for this person in the selected period.
+                    </Text>
+                  );
+                }
+                return (
+                  <>
+                    <View style={styles.noShowCountBadge}>
+                      <MaterialCommunityIcons name="alert-circle" size={13} color={colors.danger} />
+                      <Text style={styles.noShowCountBadgeText}>
+                        {incidents.length} no-show{incidents.length === 1 ? '' : 's'} in this period
+                      </Text>
+                    </View>
+                    {incidents.map((b, i) => {
+                      const cab = b.assignedCabId ? getCabById(b.assignedCabId) : null;
+                      const cabLabel = b.assignedCabId
+                        ? cab?.cabNumber || 'Cab removed'
+                        : 'No cab assigned';
+                      return (
+                        <View
+                          key={b.id}
+                          style={[styles.tripBlock, i > 0 && styles.tripBlockSpaced]}
+                        >
+                          <View style={[styles.tripAccent, styles.tripAccentDanger]} />
+                          <View style={styles.noShowDetail}>
+                            <Text style={[styles.tripEyebrow, styles.tripEyebrowDanger]}>NO-SHOW</Text>
+                            <Text variant="bodyMedium" style={styles.tripDate}>
+                              {prettyDateKey(b.date)}
+                            </Text>
+                            <Text variant="bodySmall" style={styles.tripDirection}>
+                              {b.shift ? `${b.shift} · ` : ''}
+                              {b.direction || 'Direction not recorded'}
+                            </Text>
+                            {b.employeeAddress ? (
+                              <Text variant="bodySmall" style={styles.tripDirection}>
+                                {b.employeeAddress}
+                              </Text>
+                            ) : null}
+                            <View style={styles.tripCabRow}>
+                              <MaterialCommunityIcons name="car" size={12} color={colors.textSecondary} />
+                              <Text variant="bodySmall" style={styles.tripDirection}>
+                                {cabLabel}
+                                {cab?.driverName ? ` · ${cab.driverName}` : ''}
+                              </Text>
+                            </View>
+                            <View style={styles.noShowReasonBox}>
+                              <Text style={styles.noShowReasonText}>
+                                Employee wasn&apos;t at the pickup
+                                {b.noShowAt ? ` · flagged ${formatFlaggedAt(b.noShowAt)}` : ''}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </>
+                );
+              })()}
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button onPress={() => setSelectedEmployee(null)}>Close</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
     </View>
   );
 }
@@ -799,6 +970,7 @@ const styles = StyleSheet.create({
   },
   tableCountBadgeText: { color: colors.textSecondary, fontSize: 11.5, fontFamily: font.semibold },
   tableHint: { color: colors.muted, lineHeight: 17, marginBottom: spacing.sm },
+  searchInput: { marginBottom: spacing.sm, backgroundColor: colors.surface },
   headRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm },
   // Only applied when a row is tappable — a negative horizontal margin/padding
@@ -966,6 +1138,12 @@ const styles = StyleSheet.create({
     fontFamily: font.semibold,
     marginBottom: 2,
   },
+  // Red variants of tripAccent/tripEyebrow, for the no-shows dialog only — every
+  // other timeline block on this screen is neutral, but a no-show is the one
+  // outcome this screen singles out with color, matching the danger tint
+  // StatCell already uses for the same status in the tables above.
+  tripAccentDanger: { backgroundColor: colors.dangerSoft },
+  tripEyebrowDanger: { color: colors.danger },
   tripCabRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
   tripHead: {
     flexDirection: 'row',
@@ -991,4 +1169,32 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingLeft: spacing.md,
   },
+  // The employee dialog has no rider list to indent past — its whole timeline
+  // is one person's incidents — so its blocks sit slightly further from the
+  // accent bar than tripHeadText does, with room to breathe under each line.
+  noShowDetail: { paddingLeft: spacing.sm },
+  // "N no-shows in this period", atop the employee dialog — same pill-with-icon
+  // language as StatCell's own pills in the table above it.
+  noShowCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.dangerSoft,
+    borderRadius: radius.pill,
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    marginBottom: spacing.sm,
+  },
+  noShowCountBadgeText: { color: colors.danger, fontFamily: font.semibold, fontSize: 12 },
+  noShowReasonBox: {
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    marginTop: spacing.xs,
+  },
+  noShowReasonText: { color: colors.textSecondary, fontSize: 12.5, lineHeight: 17 },
 });
